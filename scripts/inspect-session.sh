@@ -54,7 +54,7 @@ fi
 # `RUN <cmd>` executes the command locally. This script used to support a
 # `--host prod` wrapper for a specific hosted deployment; trimmed for the
 # OSS release so the script only ever talks to local docker.
-RUN() { eval "$@"; }
+RUN() { eval "$*"; }
 
 # Single source-of-truth for the docker compose project's container names.
 SERVER_CTR="docker-server-1"
