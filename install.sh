@@ -154,7 +154,10 @@ if [[ "$ACTION" == "uninstall" ]]; then
   cd "$target"
   info "Stopping containers…"
   (cd docker && docker compose -f docker-compose.yml -f docker-compose.dev.yml down 2>&1 | tail -3) || true
-  docker rm -f vonzio-pg 2>/dev/null && info "Removed standalone postgres" || true
+  # Legacy standalone postgres from older installer versions. Today the
+  # compose stack brings its own postgres up; this remove is a no-op
+  # for fresh installs.
+  docker rm -f vonzio-pg 2>/dev/null && info "Removed legacy standalone postgres" || true
   if confirm "Remove postgres volume + agent session volumes? (irreversible)" "default-no"; then
     docker volume rm docker_pgdata 2>/dev/null || true
     docker volume ls -q | grep -E "^vonzio-(ws|sdk)-" | xargs -r docker volume rm 2>/dev/null || true
@@ -376,51 +379,15 @@ else
   ok "node_modules present — skipping npm install."
 fi
 
-# ─── Postgres ──────────────────────────────────────────────────────────
+# ─── Database (handled by compose) ─────────────────────────────────────
 step "[4/5] Database"
-PG_CONTAINER="vonzio-pg"
-
-if docker ps --format '{{.Names}}' | grep -q "^${PG_CONTAINER}\$"; then
-  ok "Postgres container '${PG_CONTAINER}' already running."
-elif docker ps -a --format '{{.Names}}' | grep -q "^${PG_CONTAINER}\$"; then
-  info "Postgres container exists but stopped — starting it."
-  docker start "$PG_CONTAINER" >/dev/null
-  ok "Postgres started."
-else
-  info "Starting postgres container '${PG_CONTAINER}' on :5432…"
-  docker run -d \
-    -e POSTGRES_DB=vonzio \
-    -e POSTGRES_USER=vonzio \
-    -e POSTGRES_PASSWORD=vonzio_dev \
-    -p 5432:5432 \
-    --name "$PG_CONTAINER" \
-    --restart=unless-stopped \
-    postgres:17-alpine >/dev/null
-  ok "Postgres started."
-fi
-
-info "Waiting for postgres to accept connections…"
-for i in {1..30}; do
-  if docker exec "$PG_CONTAINER" pg_isready -U vonzio >/dev/null 2>&1; then
-    ok "Postgres ready."
-    break
-  fi
-  sleep 1
-  if (( i == 30 )); then
-    err "Postgres didn't become ready in 30s. Check 'docker logs $PG_CONTAINER'."
-    exit 1
-  fi
-done
-
-# Better Auth schema migration (idempotent — only creates missing tables)
-info "Applying Better Auth schema migration…"
-if make better-auth-migrate >/tmp/vonzio-bauth.log 2>&1; then
-  ok "Better Auth tables ready."
-else
-  warn "make better-auth-migrate didn't exit cleanly. Last output:"
-  tail -20 /tmp/vonzio-bauth.log >&2
-  exit 1
-fi
+# docker-dev-oss brings up its OWN postgres inside the compose network
+# (container name docker-postgres-1). The Better Auth schema migration
+# is part of the dev container's startup wrapper (scripts/start-dev.sh)
+# so it runs against the compose pg automatically. We don't start a
+# standalone vonzio-pg here — that was a remnant of the host-mode dev
+# workflow and caused split-brain when docker-dev-oss came up.
+ok "Database setup is automatic — compose brings up postgres and the server runs Better Auth migrate on startup."
 
 # ─── Start stack ───────────────────────────────────────────────────────
 step "[5/5] Stack"

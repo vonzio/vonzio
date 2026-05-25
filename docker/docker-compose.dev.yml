@@ -24,6 +24,11 @@ services:
       - ../config:/app/config
       - ../tools:/app/tools
       - ../tsconfig.base.json:/app/tsconfig.base.json
+      # Startup wrapper (Better Auth migrate → server) + auth.ts the CLI
+      # reads. Mounted instead of COPY'd so script edits don't require an
+      # image rebuild.
+      - ../scripts/start-dev.sh:/app/scripts/start-dev.sh:ro
+      - ../auth.ts:/app/auth.ts:ro
       # Teller mTLS client cert + key. Lives at $HOME/.config/vonzio/teller/
       # on the dev host (out of the repo) and is bind-mounted read-only.
       # The server reads paths from TELLER_CERT_PATH + TELLER_KEY_PATH below.
@@ -34,12 +39,13 @@ services:
       # Docker / CI runners, `~` would bind a literal directory named
       # "~" inside the compose project. ${HOME} expands portably.
       - ${TELLER_CERT_HOST_DIR:-${HOME}/.config/vonzio/teller}:/run/secrets/teller:ro
-    # Override: run API (watch) + dashboard (vite) with hot reload
+    # Override: run Better Auth schema migration, then API (watch) +
+    # dashboard (vite) with hot reload. The wrapper script makes the
+    # Better Auth step a precondition for the stack — without it,
+    # migration 9 fails on "relation user does not exist". Idempotent
+    # at the Better Auth level (no-op if tables exist).
     stop_grace_period: 3s
-    command: >
-      npx concurrently --kill-others-on-fail --kill-signal SIGTERM --kill-timeout 2000 -n api,dash -c blue,magenta
-      "npx tsx watch --clear-screen=false packages/core-server/src/index.ts"
-      "cd packages/dashboard && npx vite --host 0.0.0.0"
+    command: ["/bin/sh", "/app/scripts/start-dev.sh"]
     environment:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-change-this-to-a-secure-32-char-secret!}

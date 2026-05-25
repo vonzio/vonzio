@@ -41,11 +41,20 @@ BETTER_AUTH_SECRET=$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-32)
 
 You can paste those into `.env` directly. Don't lose them — `ENCRYPTION_KEY` decrypts your stored API keys and secrets; losing it bricks every credential in the database.
 
-### 2. Start postgres
+### 2. Start the stack
 
-If you don't already have postgres running on `:5432`:
+For Docker mode (recommended — single command, no host postgres needed):
 
 ```bash
+make docker-dev-oss
+```
+
+The compose stack brings up its own postgres internally. The server container's startup wrapper runs Better Auth's schema migration before launching the API, so the four Better Auth tables (`user`, `session`, `account`, `verification`) exist before the Drizzle migrations look for them.
+
+For host mode (faster iteration, requires you to manage postgres yourself):
+
+```bash
+# Start a postgres reachable on localhost:5432
 docker run --rm -d \
   -e POSTGRES_DB=vonzio \
   -e POSTGRES_USER=vonzio \
@@ -53,39 +62,19 @@ docker run --rm -d \
   -p 5432:5432 \
   --name vonzio-pg \
   postgres:17-alpine
-```
 
-`docker-dev-oss` uses its own postgres in the compose stack — only run the standalone one above for `dev-oss` (host mode).
-
-### 3. Run Better Auth's one-time migration
-
-vonzio uses Better Auth for sessions, which needs four tables (`user`, `session`, `account`, `verification`) that aren't covered by the in-repo migrations. Run this once against a fresh database:
-
-```bash
+# One-time: create the Better Auth tables in that pg
 make better-auth-migrate
-```
 
-You'll see `🚀 migration was completed successfully!`. Skip this step and your first `make dev-oss` will fail on migration 9 with `relation "user" does not exist`.
-
-### 4. Start the stack
-
-Choose one:
-
-**Docker stack (recommended — full prod-shaped environment with Traefik):**
-```bash
-make docker-dev-oss
-```
-URL: `http://vonz.localhost`
-
-**Host mode (faster dashboard iteration, needs the standalone postgres from step 2):**
-```bash
+# Run host-mode dev (tsx watch + vite directly on your machine)
 make dev-oss
 ```
-URL: `http://localhost:5173`
+
+URL: `http://vonz.localhost` (Docker mode, via Traefik) or `http://localhost:5173` (host mode).
 
 First boot of `docker-dev-oss` builds the agent base image (~3 min cold on Apple Silicon, ~5 sec warm). Subsequent boots reuse the cached layer.
 
-### 5. Walk through the wizards
+### 3. Walk through the wizards
 
 Visit your URL. You'll see:
 
@@ -155,7 +144,7 @@ There's also a `deploy.sh` script that bootstraps a fresh Debian/Ubuntu server e
 
 ### "relation \"user\" does not exist" on first boot
 
-You skipped `make better-auth-migrate`. Run it now, then restart.
+The Better Auth schema migration didn't run. In Docker mode it's part of the container startup wrapper; if you see this it usually means the `scripts/start-dev.sh` mount is missing — check `docker compose config` and confirm `scripts/start-dev.sh` is bind-mounted at `/app/scripts/start-dev.sh`. In host mode, run `make better-auth-migrate` explicitly.
 
 ### Onboarding rejects my API key with "non-ASCII character"
 
