@@ -7,21 +7,25 @@ RUN apt-get update && apt-get install -y python3 make g++ procps && rm -rf /var/
 
 WORKDIR /app
 
-# Copy package files for dependency install
-COPY package.json package-lock.json tsconfig.base.json ./
+# Copy package manifests only — NOT package-lock.json. The lockfile is
+# typically generated on the host (macOS arm64 for most dev installs);
+# npm's optional-deps bug (https://github.com/npm/cli/issues/4828) means
+# `npm install` inside the linux container silently honors the lockfile's
+# "wanted: darwin-arm64" + "skipped: linux-*" entries for Rust-native
+# packages like @tailwindcss/oxide. The dashboard then crashes on boot
+# with "Cannot find native binding."
+#
+# Resolution: skip the host lockfile in the dev image. npm install
+# generates a fresh container-local lockfile with the right platform
+# variants. Slower first build, always works. Prod image (Dockerfile.server)
+# can use the committed lockfile because it's built in CI on Linux.
+COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
 COPY packages/widget/package.json packages/widget/
 COPY agent-runner/package.json agent-runner/
 
-# Install all dependencies. Using `npm install` (not `npm ci`) because the
-# lockfile is generated on macOS and `npm ci` triggers the cross-platform
-# optional-deps bug (https://github.com/npm/cli/issues/4828) where the
-# linux-arm64/linux-x64 native bindings for @tailwindcss/oxide (and any
-# other Rust-bound packages) silently fail to install. `npm install` is
-# forgiving about this and pulls the correct platform variant. Lockfile
-# strictness is enforced by the prod image (Dockerfile.server).
 RUN npm install
 
 # Source code is volume-mounted at runtime — no COPY of src
