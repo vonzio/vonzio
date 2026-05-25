@@ -188,13 +188,12 @@ export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker
     ],
     trustedOrigins: config.CORS_ORIGIN === "*"
       ? [
-          // App surface (dev)
-          "http://vonz.localhost",
-          // Vite dev server direct (when bypassing Traefik)
+          // Vite dev server (default OSS dashboard URL)
           "http://localhost:5173",
-          // Marketing site — for any cross-origin posts (waitlist, contact)
-          "http://vonzio.localhost",
-          // Whatever BETTER_AUTH_URL points at (e.g. ngrok tunnel for OAuth tests)
+          // API server (in case the dashboard ever talks to it directly)
+          "http://localhost:3000",
+          // Whatever BETTER_AUTH_URL points at (real domain in prod, ngrok
+          // tunnel for OAuth tests, etc.)
           config.BETTER_AUTH_URL,
         ]
       : config.CORS_ORIGIN.split(",").map((o) => o.trim()),

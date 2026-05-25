@@ -413,7 +413,7 @@ log ""
 ( sleep 10
   log ""
   ok "When you see 'Server listening' below, open:"
-  log "    ${C_BOLD}http://vonz.localhost${C_RESET}"
+  log "    ${C_BOLD}http://localhost:5173${C_RESET}"
   log "  First visit lands on /setup — create your admin account, then onboarding."
   log "" ) &
 

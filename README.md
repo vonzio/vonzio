@@ -48,7 +48,7 @@ cd core
 ./install.sh
 ```
 
-Visit **http://vonz.localhost** → `/setup` wizard creates your admin account → `/onboarding` walks you through adding an API key and picking a default model → you're in.
+Visit **http://localhost:5173** → `/setup` wizard creates your admin account → `/onboarding` walks you through adding an API key and picking a default model → you're in.
 
 Full self-host guide with env reference, upgrade path, and troubleshooting: **[docs/SELF_HOST.md](docs/SELF_HOST.md)**.
 

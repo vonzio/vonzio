@@ -90,12 +90,7 @@ docker-build: ## Build all Docker images (agent + server)
 docker-flavors: ## Build all flavored agent images (Go, Rust, Python-data, Java)
 	cd docker && docker compose --profile flavors build
 
-# Force-remove traefik before bringing the stack up. Compose's config-hash
-# check skips recreation when env-substituted labels resolve to identical
-# strings, which can leave a stale traefik container detached from
-# vonzio-network and not publishing :80. Recreating is cheap (no build).
-docker-dev: agent-base-local ## Start full stack with hot reload (Traefik + agents + watch mode)
-	@-cd docker && docker rm -f docker-traefik-1 2>/dev/null
+docker-dev: agent-base-local ## Start full stack with hot reload (postgres + agent + server, ports 3000/5173)
 	cd docker && docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 docker-prod: ## Build and start production stack with HTTPS

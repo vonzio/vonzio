@@ -107,7 +107,7 @@ export const swaggerOptions: FastifyDynamicSwaggerOptions = {
     },
     servers: [
       { url: "https://app.vonz.io", description: "Production" },
-      { url: "http://vonz.localhost", description: "Local dev" },
+      { url: "http://localhost:3000", description: "Local dev" },
     ],
     tags: [
       { name: "Profiles", description: "Agent profile management" },

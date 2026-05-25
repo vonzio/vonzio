@@ -46,11 +46,17 @@ services:
     # at the Better Auth level (no-op if tables exist).
     stop_grace_period: 3s
     command: ["/bin/sh", "/app/scripts/start-dev.sh"]
+    ports:
+      # Expose vite directly on the host. No Traefik in OSS dev — visit
+      # http://localhost:5173 for the dashboard. The dashboard's vite
+      # proxy forwards /v1, /api, /admin to the API on :3000 (also exposed
+      # by the base compose).
+      - "${DASHBOARD_PORT:-5173}:5173"
     environment:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-change-this-to-a-secure-32-char-secret!}
-      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://${DOMAIN:-vonz.localhost}}
-      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:5173}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173,http://localhost:3000}
       - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-true}
       - RESEND_API_KEY=${RESEND_API_KEY:-}
       - EMAIL_FROM=${EMAIL_FROM:-Vonzio <noreply@vonz.io>}
@@ -68,9 +74,10 @@ services:
       - POOL_MAX_SIZE=5
       - SESSION_IDLE_TTL_SECS=14400
       - MAX_SESSION_CONTAINERS=10
-      - PREVIEW_MODE=hostname
-      - PREVIEW_DOMAIN=${DOMAIN:-vonz.localhost}
-      - PREVIEW_URL_TEMPLATE=http://{container_id}-{port}.${DOMAIN:-vonz.localhost}
+      # Path-mode preview: no wildcard DNS needed. Agent dev servers
+      # are reachable through http://localhost:3000/preview/{container_id}/{port}/
+      - PREVIEW_MODE=path
+      - PREVIEW_URL_TEMPLATE=http://localhost:3000/preview/{container_id}/{port}/
       - INTERNAL_SERVER_URL=http://server:3000
       - TOOLS_DIR=/app/tools
       - SKILLS_DIR=/app/skills
@@ -112,19 +119,6 @@ services:
       # checkout can't accidentally pull live bank data. Set to
       # `development` in .env to link real banks on Teller's free tier.
       - TELLER_ENVIRONMENT=${TELLER_ENVIRONMENT:-sandbox}
-    labels:
-      - traefik.enable=true
-      # Dashboard via Vite dev server (port 5173) — with HMR WebSocket
-      - traefik.http.routers.vonzio.rule=Host(`${DOMAIN:-vonz.localhost}`)
-      - traefik.http.routers.vonzio.entrypoints=web
-      - traefik.http.routers.vonzio.service=vonzio
-      - traefik.http.services.vonzio.loadbalancer.server.port=5173
-      # Wildcard catch-all for preview URLs → API server (port 3000)
-      - traefik.http.routers.preview.rule=HostRegexp(`.+\.${DOMAIN:-vonz.localhost}`)
-      - traefik.http.routers.preview.entrypoints=web
-      - traefik.http.routers.preview.priority=1
-      - traefik.http.routers.preview.service=preview
-      - traefik.http.services.preview.loadbalancer.server.port=3000
 
   # Marketing site + public docs moved to the vonzio/web repo and deploys
   # to Cloudflare Pages. To work on it locally, clone vonzio/web and run

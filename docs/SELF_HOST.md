@@ -70,7 +70,7 @@ make better-auth-migrate
 make dev-oss
 ```
 
-URL: `http://vonz.localhost` (Docker mode, via Traefik) or `http://localhost:5173` (host mode).
+URL: `http://localhost:5173` (dashboard, both modes). API at `:3000`. No Traefik or wildcard DNS required in the OSS install.
 
 First boot of `docker-dev-oss` builds the agent base image (~3 min cold on Apple Silicon, ~5 sec warm). Subsequent boots reuse the cached layer.
 
