@@ -1,0 +1,160 @@
+services:
+  traefik:
+    image: traefik:3
+    restart: unless-stopped
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=vonzio-network
+      - --providers.docker.constraints=Label(`vonzio.managed`,`true`)
+      - --entrypoints.web.address=:80
+      - --log.level=INFO
+    ports:
+      - "${TRAEFIK_PORT:-80}:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - vonzio.managed=true
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`traefik.${MARKETING_DOMAIN:-vonzio.localhost}`)
+      - traefik.http.routers.dashboard.service=api@internal
+    networks:
+      - vonzio
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=vonzio
+      - POSTGRES_USER=vonzio
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-vonzio_dev}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - vonzio
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vonzio"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - vonzio-data:/app/data
+      - ../tools:/app/tools
+      - ../config:/app/config
+    environment:
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-change-this-to-a-secure-32-char-secret!}
+      - BETTER_AUTH_URL=http://${DOMAIN:-vonz.localhost}
+      - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-false}
+      - DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:-vonzio_dev}@postgres:5432/vonzio
+      - DOCKER_SOCKET=/var/run/docker.sock
+      - AGENT_IMAGE=vonzio-agent:latest
+      - DOCKER_ENABLED=true
+      - DOCKER_NETWORK=vonzio-network
+      - LOG_LEVEL=info
+      - PORT=3000
+      - HOST=0.0.0.0
+      - POOL_MIN_SIZE=2
+      - POOL_MAX_SIZE=5
+      - SESSION_IDLE_TTL_SECS=1800
+      - MAX_SESSION_CONTAINERS=10
+      - PREVIEW_MODE=hostname
+      - PREVIEW_DOMAIN=${DOMAIN:-vonz.localhost}
+      - PREVIEW_URL_TEMPLATE=http://{container_id}-{port}.${DOMAIN:-vonz.localhost}
+    labels:
+      - vonzio.managed=true
+      - traefik.enable=true
+      # App (dashboard SPA + API) — served on the app domain.
+      - traefik.http.routers.vonzio.rule=Host(`${DOMAIN:-vonz.localhost}`)
+      - traefik.http.routers.vonzio.entrypoints=web
+      - traefik.http.services.vonzio.loadbalancer.server.port=3000
+      # Wildcard catch-all for preview URLs: <short_id>-<port>.${DOMAIN}
+      - traefik.http.routers.preview.rule=HostRegexp(`.+\.${DOMAIN:-vonz.localhost}`)
+      - traefik.http.routers.preview.entrypoints=web
+      - traefik.http.routers.preview.priority=1
+      - traefik.http.routers.preview.service=vonzio
+    depends_on:
+      agent:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - vonzio
+
+  # Marketing site (Astro static). Lives on its own domain so the public site
+  # and the in-product app can evolve independently. Same Traefik, two
+  # routers — the wildcard cert on ${DOMAIN} doesn't change.
+  # The marketing site + public docs (the old `web:` service) now lives in
+  # the vonzio/web repo and deploys to Cloudflare Pages. vonzio.com no
+  # longer routes to this stack.
+
+  agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    image: vonzio-agent:latest
+    entrypoint: ["echo", "Agent image built"]
+    networks:
+      - vonzio
+
+  # Flavored agent images (build individually with: docker compose build agent-go)
+  agent-go:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent.go
+    image: vonzio-agent:go
+    entrypoint: ["echo", "Go agent image built"]
+    depends_on:
+      agent:
+        condition: service_completed_successfully
+    profiles: ["flavors"]
+
+  agent-rust:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent.rust
+    image: vonzio-agent:rust
+    entrypoint: ["echo", "Rust agent image built"]
+    depends_on:
+      agent:
+        condition: service_completed_successfully
+    profiles: ["flavors"]
+
+  agent-python-data:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent.python-data
+    image: vonzio-agent:python-data
+    entrypoint: ["echo", "Python data agent image built"]
+    depends_on:
+      agent:
+        condition: service_completed_successfully
+    profiles: ["flavors"]
+
+  agent-java:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent.java
+    image: vonzio-agent:java
+    entrypoint: ["echo", "Java agent image built"]
+    depends_on:
+      agent:
+        condition: service_completed_successfully
+    profiles: ["flavors"]
+
+networks:
+  vonzio:
+    name: vonzio-network
+
+volumes:
+  vonzio-data:
+  pgdata:

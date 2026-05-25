@@ -1,0 +1,125 @@
+## Dev overlay: hot reload + full Docker stack (Traefik, agent containers)
+##
+## Usage:
+##   docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up --build
+##   (or: make docker-dev)
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server.dev
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - vonzio-data:/app/data
+      # Mount source code for hot reload
+      - ../packages/shared/src:/app/packages/shared/src
+      - ../packages/core-server/src:/app/packages/core-server/src
+      - ../packages/dashboard/src:/app/packages/dashboard/src
+      - ../packages/dashboard/public:/app/packages/dashboard/public
+      - ../packages/dashboard/index.html:/app/packages/dashboard/index.html
+      - ../packages/dashboard/vite.config.ts:/app/packages/dashboard/vite.config.ts
+      - ../packages/widget/src:/app/packages/widget/src
+      - ../agent-runner/src:/app/agent-runner/src
+      - ../config:/app/config
+      - ../tools:/app/tools
+      - ../tsconfig.base.json:/app/tsconfig.base.json
+      # Teller mTLS client cert + key. Lives at $HOME/.config/vonzio/teller/
+      # on the dev host (out of the repo) and is bind-mounted read-only.
+      # The server reads paths from TELLER_CERT_PATH + TELLER_KEY_PATH below.
+      #
+      # Default uses ${HOME} explicitly because Docker Compose does NOT
+      # expand `~` in variable substitutions — it only "works" on Docker
+      # Desktop because the CLI happens to expand it. On plain Linux
+      # Docker / CI runners, `~` would bind a literal directory named
+      # "~" inside the compose project. ${HOME} expands portably.
+      - ${TELLER_CERT_HOST_DIR:-${HOME}/.config/vonzio/teller}:/run/secrets/teller:ro
+    # Override: run API (watch) + dashboard (vite) with hot reload
+    stop_grace_period: 3s
+    command: >
+      npx concurrently --kill-others-on-fail --kill-signal SIGTERM --kill-timeout 2000 -n api,dash -c blue,magenta
+      "npx tsx watch --clear-screen=false packages/core-server/src/index.ts"
+      "cd packages/dashboard && npx vite --host 0.0.0.0"
+    environment:
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-change-this-to-a-secure-32-char-secret!}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://${DOMAIN:-vonz.localhost}}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-true}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - EMAIL_FROM=${EMAIL_FROM:-Vonzio <noreply@vonz.io>}
+      - PLATFORM_TELEGRAM_BOT_TOKEN=${PLATFORM_TELEGRAM_BOT_TOKEN:-}
+      - PLATFORM_TELEGRAM_WEBHOOK_SECRET=${PLATFORM_TELEGRAM_WEBHOOK_SECRET:-}
+      - DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:-vonzio_dev}@postgres:5432/vonzio
+      - DOCKER_SOCKET=/var/run/docker.sock
+      - AGENT_IMAGE=vonzio-agent:latest
+      - DOCKER_ENABLED=true
+      - DOCKER_NETWORK=vonzio-network
+      - LOG_LEVEL=debug
+      - PORT=3000
+      - HOST=0.0.0.0
+      - POOL_MIN_SIZE=0
+      - POOL_MAX_SIZE=5
+      - SESSION_IDLE_TTL_SECS=14400
+      - MAX_SESSION_CONTAINERS=10
+      - PREVIEW_MODE=hostname
+      - PREVIEW_DOMAIN=${DOMAIN:-vonz.localhost}
+      - PREVIEW_URL_TEMPLATE=http://{container_id}-{port}.${DOMAIN:-vonz.localhost}
+      - INTERNAL_SERVER_URL=http://server:3000
+      - TOOLS_DIR=/app/tools
+      - SKILLS_DIR=/app/skills
+      # Slack Integration (optional)
+      - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
+      - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      # Gmail Integration (optional)
+      - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID:-}
+      - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET:-}
+      # Git OAuth (optional)
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITLAB_CLIENT_ID=${GITLAB_CLIENT_ID:-}
+      - GITLAB_CLIENT_SECRET=${GITLAB_CLIENT_SECRET:-}
+      - BITBUCKET_CLIENT_ID=${BITBUCKET_CLIENT_ID:-}
+      - BITBUCKET_CLIENT_SECRET=${BITBUCKET_CLIENT_SECRET:-}
+      # Auth OAuth (login via Google/GitHub)
+      - AUTH_GOOGLE_CLIENT_ID=${AUTH_GOOGLE_CLIENT_ID:-}
+      - AUTH_GOOGLE_CLIENT_SECRET=${AUTH_GOOGLE_CLIENT_SECRET:-}
+      - AUTH_GITHUB_CLIENT_ID=${AUTH_GITHUB_CLIENT_ID:-}
+      - AUTH_GITHUB_CLIENT_SECRET=${AUTH_GITHUB_CLIENT_SECRET:-}
+      # Marketing site URL (for in-product Privacy/Terms links)
+      - MARKETING_URL=${MARKETING_URL:-http://${MARKETING_DOMAIN:-vonzio.localhost}}
+      # Cloudflare Turnstile (captcha)
+      - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
+      # Ollama Cloud (optional)
+      - OLLAMA_ENABLED=${OLLAMA_ENABLED:-}
+      # Teller (optional) — mTLS client cert + key bind-mounted above.
+      # APP_ID is the cert's CN; TELLER_API_BASE defaults to Teller's
+      # production API (Connect can issue against sandbox or real banks).
+      - TELLER_APP_ID=${TELLER_APP_ID:-}
+      - TELLER_CERT_PATH=${TELLER_CERT_PATH:-/run/secrets/teller/certificate.pem}
+      - TELLER_KEY_PATH=${TELLER_KEY_PATH:-/run/secrets/teller/private_key.pem}
+      - TELLER_API_BASE=${TELLER_API_BASE:-https://api.teller.io}
+      - TELLER_SIGNING_PUBKEY=${TELLER_SIGNING_PUBKEY:-}
+      # sandbox | development | production. Defaults to sandbox so a fresh
+      # checkout can't accidentally pull live bank data. Set to
+      # `development` in .env to link real banks on Teller's free tier.
+      - TELLER_ENVIRONMENT=${TELLER_ENVIRONMENT:-sandbox}
+    labels:
+      - traefik.enable=true
+      # Dashboard via Vite dev server (port 5173) — with HMR WebSocket
+      - traefik.http.routers.vonzio.rule=Host(`${DOMAIN:-vonz.localhost}`)
+      - traefik.http.routers.vonzio.entrypoints=web
+      - traefik.http.routers.vonzio.service=vonzio
+      - traefik.http.services.vonzio.loadbalancer.server.port=5173
+      # Wildcard catch-all for preview URLs → API server (port 3000)
+      - traefik.http.routers.preview.rule=HostRegexp(`.+\.${DOMAIN:-vonz.localhost}`)
+      - traefik.http.routers.preview.entrypoints=web
+      - traefik.http.routers.preview.priority=1
+      - traefik.http.routers.preview.service=preview
+      - traefik.http.services.preview.loadbalancer.server.port=3000
+
+  # Marketing site + public docs moved to the vonzio/web repo and deploys
+  # to Cloudflare Pages. To work on it locally, clone vonzio/web and run
+  # `npm run dev` there — it'll come up on http://localhost:4321.

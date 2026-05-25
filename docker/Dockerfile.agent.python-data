@@ -1,0 +1,24 @@
+FROM vonzio-agent:latest
+
+USER agent
+
+# Create a venv and install data science packages
+RUN python3 -m venv /home/agent/.venv && \
+    /home/agent/.venv/bin/pip install --no-cache-dir \
+    numpy \
+    pandas \
+    matplotlib \
+    scipy \
+    scikit-learn \
+    jupyter \
+    ipython \
+    seaborn \
+    requests \
+    beautifulsoup4 \
+    sqlalchemy
+
+# Make venv the default python
+ENV PATH="/home/agent/.venv/bin:${PATH}"
+
+# Verify
+RUN python3 -c "import pandas; import numpy; print(f'pandas {pandas.__version__}, numpy {numpy.__version__}')"

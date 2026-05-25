@@ -1,0 +1,144 @@
+# Production override — HTTPS via Let's Encrypt with Cloudflare DNS challenge
+# Usage: docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Required .env vars:
+#   DOMAIN=vonz.io                   # app surface (dashboard + API)
+#   MARKETING_DOMAIN=vonzio.com      # marketing surface (Astro static)
+#   ACME_EMAIL=you@example.com
+#   CLOUDFLARE_DNS_API_TOKEN=<cloudflare api token with Zone:DNS:Edit on both zones>
+#   ENCRYPTION_KEY=<32+ char random string>
+#   BETTER_AUTH_SECRET=<32+ char random string>
+
+services:
+  traefik:
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=vonzio-network
+      - --providers.docker.constraints=Label(`vonzio.managed`,`true`)
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # HTTP → HTTPS redirect
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      # Let's Encrypt with Cloudflare DNS challenge (supports wildcards)
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --log.level=WARN
+    environment:
+      - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - letsencrypt:/letsencrypt
+    labels:
+      - vonzio.managed=true
+      - traefik.enable=false
+
+  server:
+    image: ${SERVER_IMAGE:-vonzio-server:latest}
+    volumes:
+      # Teller mTLS client cert + key. Host path is /opt/vonzio/secrets/teller/
+      # (override with TELLER_CERT_HOST_DIR in .env if needed). Read-only so
+      # a compromised server can't tamper with the key file. Defaults to a
+      # safe directory that doesn't have to exist — compose creates an
+      # empty mount when missing, and the server treats absent paths as
+      # "Teller not configured" (TELLER_CERT_PATH check at use-time).
+      - ${TELLER_CERT_HOST_DIR:-/opt/vonzio/secrets/teller}:/run/secrets/teller:ro
+    environment:
+      # Runtime override of the version baked into the image. Lets us retag
+      # an image from a previous deploy (when no server source changed) and
+      # still report the correct deployed version in /api/config.
+      - VONZIO_VERSION=${VONZIO_VERSION:-dev}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=https://${DOMAIN}
+      - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-false}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - EMAIL_FROM=${EMAIL_FROM:-Vonzio <noreply@vonz.io>}
+      - PLATFORM_TELEGRAM_BOT_TOKEN=${PLATFORM_TELEGRAM_BOT_TOKEN:-}
+      - PLATFORM_TELEGRAM_WEBHOOK_SECRET=${PLATFORM_TELEGRAM_WEBHOOK_SECRET:-}
+      - DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD}@postgres:5432/vonzio
+      - DOCKER_SOCKET=/var/run/docker.sock
+      - AGENT_IMAGE=vonzio-agent:latest
+      - DOCKER_ENABLED=true
+      - DOCKER_NETWORK=vonzio-network
+      - LOG_LEVEL=info
+      - PORT=3000
+      - HOST=0.0.0.0
+      - CORS_ORIGIN=https://${DOMAIN},https://${MARKETING_DOMAIN},https://www.${MARKETING_DOMAIN}
+      - POOL_MIN_SIZE=2
+      - POOL_MAX_SIZE=8
+      - SESSION_IDLE_TTL_SECS=3600
+      - MAX_SESSION_CONTAINERS=20
+      - PREVIEW_MODE=hostname
+      - PREVIEW_DOMAIN=${DOMAIN}
+      - PREVIEW_URL_TEMPLATE=https://{container_id}-{port}.${DOMAIN}
+      - INTERNAL_SERVER_URL=http://server:3000
+      # Slack Integration (optional)
+      - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
+      - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      # Gmail Integration (optional)
+      - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID:-}
+      - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET:-}
+      # Git OAuth (optional)
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITLAB_CLIENT_ID=${GITLAB_CLIENT_ID:-}
+      - GITLAB_CLIENT_SECRET=${GITLAB_CLIENT_SECRET:-}
+      - BITBUCKET_CLIENT_ID=${BITBUCKET_CLIENT_ID:-}
+      - BITBUCKET_CLIENT_SECRET=${BITBUCKET_CLIENT_SECRET:-}
+      # Auth OAuth (login via Google/GitHub)
+      - AUTH_GOOGLE_CLIENT_ID=${AUTH_GOOGLE_CLIENT_ID:-}
+      - AUTH_GOOGLE_CLIENT_SECRET=${AUTH_GOOGLE_CLIENT_SECRET:-}
+      - AUTH_GITHUB_CLIENT_ID=${AUTH_GITHUB_CLIENT_ID:-}
+      - AUTH_GITHUB_CLIENT_SECRET=${AUTH_GITHUB_CLIENT_SECRET:-}
+      # Marketing site URL (for in-product Privacy/Terms links)
+      - MARKETING_URL=${MARKETING_URL:-https://${MARKETING_DOMAIN}}
+      # Cloudflare Turnstile (captcha)
+      - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
+      # Ollama Cloud (optional)
+      - OLLAMA_ENABLED=${OLLAMA_ENABLED:-}
+      # Teller (optional). Cert + key files are bind-mounted from
+      # /opt/vonzio/secrets/teller/ on the host (see volumes:); the
+      # env vars below tell the server where to find them inside the
+      # container.
+      - TELLER_APP_ID=${TELLER_APP_ID:-}
+      - TELLER_CERT_PATH=${TELLER_CERT_PATH:-/run/secrets/teller/certificate.pem}
+      - TELLER_KEY_PATH=${TELLER_KEY_PATH:-/run/secrets/teller/private_key.pem}
+      - TELLER_API_BASE=${TELLER_API_BASE:-https://api.teller.io}
+      - TELLER_SIGNING_PUBKEY=${TELLER_SIGNING_PUBKEY:-}
+      # sandbox | development | production. See dev compose for notes.
+      - TELLER_ENVIRONMENT=${TELLER_ENVIRONMENT:-sandbox}
+    labels:
+      - vonzio.managed=true
+      - traefik.enable=true
+      # Main app — HTTPS
+      - traefik.http.routers.vonzio.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.vonzio.entrypoints=websecure
+      - traefik.http.routers.vonzio.tls.certresolver=letsencrypt
+      - traefik.http.services.vonzio.loadbalancer.server.port=3000
+      # Wildcard preview — HTTPS
+      - traefik.http.routers.preview.rule=HostRegexp(`.+\.${DOMAIN}`)
+      - traefik.http.routers.preview.entrypoints=websecure
+      - traefik.http.routers.preview.tls.certresolver=letsencrypt
+      - traefik.http.routers.preview.priority=1
+      - traefik.http.routers.preview.service=vonzio
+      # Wildcard cert for subdomains
+      - traefik.http.routers.preview.tls.domains[0].main=${DOMAIN}
+      - traefik.http.routers.preview.tls.domains[0].sans=*.${DOMAIN}
+
+  # Marketing site + public docs moved to vonzio/web on Cloudflare Pages.
+  # The previous `web:` service block was removed in v0.1.98. After the
+  # next prod deploy, the orphaned `docker-web-1` container on klod can
+  # be cleaned up with `docker rm -f docker-web-1` + image prune.
+
+volumes:
+  letsencrypt:

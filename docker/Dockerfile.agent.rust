@@ -1,0 +1,17 @@
+FROM vonzio-agent:latest
+
+USER root
+
+# Install Rust via rustup (as agent user)
+# Pre-create the directory structure as root, then switch to agent
+RUN mkdir -p /home/agent/.rustup /home/agent/.cargo && \
+    chown -R agent:agent /home/agent/.rustup /home/agent/.cargo
+
+USER agent
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+ENV PATH="/home/agent/.cargo/bin:${PATH}"
+
+# Verify
+RUN rustc --version && cargo --version

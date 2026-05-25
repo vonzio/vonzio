@@ -1,0 +1,21 @@
+{
+  "name": "@vonzio/widget",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Embeddable vonzio chat widget — drop-in JS that mounts an agent chat panel into any web page.",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://vonzio.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vonzio/core.git",
+    "directory": "packages/widget"
+  },
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^6.3.3",
+    "typescript": "^5.8.3"
+  }
+}

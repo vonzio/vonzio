@@ -1,0 +1,87 @@
+# Heavy base image for Vonzio agent containers. Contains everything that
+# does NOT change per deploy: system packages, Chromium, global npm tooling,
+# helper scripts, and the unprivileged `agent` user.
+#
+# Built by .github/workflows/agent-base.yml — automatically on changes to
+# this file or the helper scripts it copies, plus on a weekly cron to pick
+# up apt security updates. Tagged as ghcr.io/<repo>/agent-base:latest and
+# :<sha>. The deploy-time docker/Dockerfile.agent uses this as its FROM.
+
+FROM node:22-slim
+
+# System tools for Claude Code agents.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget git ca-certificates openssh-client \
+    iputils-ping net-tools dnsutils \
+    jq tree less vim ripgrep fd-find \
+    zip unzip rsync \
+    build-essential cmake pkg-config \
+    python3 python3-pip python3-venv \
+    chromium \
+    # Common database clients — avoids the per-session install dance for
+    # agents that read/write user databases (Supabase/Postgres, MySQL,
+    # Redis, SQLite). Each is small (~5-15 MB).
+    postgresql-client default-mysql-client redis-tools sqlite3 \
+    sudo procps file \
+    && rm -rf /var/lib/apt/lists/* \
+    # Symlink fd (Debian names it fdfind).
+    && ln -sf /usr/bin/fdfind /usr/bin/fd
+
+# GitHub CLI (gh).
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Claude Agent SDK (CLI + programmatic API).
+RUN npm install -g @anthropic-ai/claude-agent-sdk agent-browser
+
+# Common global tooling. yarn comes via corepack (bundled with Node), pnpm
+# via `corepack enable`.
+RUN corepack enable && \
+    npm install -g \
+    typescript \
+    tsx \
+    vite \
+    create-vite \
+    prettier \
+    eslint
+
+# Helper scripts that ride along with every agent container. These rarely
+# change; landing them in base means agent rebuilds don't need to re-copy.
+COPY docker/cleanup.sh /app/cleanup.sh
+COPY docker/ollama-proxy.cjs /app/ollama-proxy.cjs
+COPY docker/git-credential-helper.sh /app/git-credential-helper.sh
+COPY docker/entrypoint.sh /app/entrypoint.sh
+COPY docker/fileserver.py /app/fileserver.py
+RUN chmod +x /app/cleanup.sh /app/git-credential-helper.sh /app/entrypoint.sh
+RUN git config --system credential.helper /app/git-credential-helper.sh
+
+# Unprivileged agent user (claude-agent-sdk's bypassPermissions refuses to
+# run as root) + workspace + sudoers + npm-global prefix.
+RUN useradd -m -s /bin/bash agent && \
+    mkdir -p /workspace/output && \
+    echo 'agent ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/agent
+
+RUN mkdir -p /home/agent/.npm-global && chown agent:agent /home/agent/.npm-global
+
+# Agent user shell config.
+RUN echo 'export NPM_CONFIG_PREFIX=/home/agent/.npm-global' >> /home/agent/.bashrc && \
+    echo 'export PATH=/home/agent/.npm-global/bin:$PATH'   >> /home/agent/.bashrc && \
+    echo 'export CHROME_PATH=/usr/bin/chromium'            >> /home/agent/.bashrc && \
+    echo 'export PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium' >> /home/agent/.bashrc && \
+    chown agent:agent /home/agent/.bashrc
+
+ENV CHROME_PATH=/usr/bin/chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
+ENV PATH=/home/agent/.npm-global/bin:$PATH
+
+# Chromium where Chrome DevTools MCP expects to find it.
+RUN mkdir -p /opt/google/chrome && ln -sf /usr/bin/chromium /opt/google/chrome/chrome
+
+# /app exists; agent-runner code is layered on top by docker/Dockerfile.agent.
+# We deliberately do NOT set USER or ENTRYPOINT here so the agent layer can
+# COPY files as root, then drop privilege in its own final layer.
+WORKDIR /app

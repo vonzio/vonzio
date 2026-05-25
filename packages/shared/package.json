@@ -1,0 +1,27 @@
+{
+  "name": "@vonzio/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared types and seam interfaces for vonzio core-server and the optional cp-server overlay.",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://vonzio.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vonzio/core.git",
+    "directory": "packages/shared"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}

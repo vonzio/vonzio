@@ -1,0 +1,68 @@
+{
+  "name": "@vonzio/core-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "vonzio data-plane Fastify server — agent orchestration, container lifecycle, MCP runtime, integrations, dashboard API. Open-source (AGPL-3.0-or-later) as part of the vonzio open-core stack.",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://vonzio.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vonzio/core.git",
+    "directory": "packages/core-server"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./db": "./src/db/index.ts",
+    "./db/schema": "./src/db/schema.ts",
+    "./email/templates": "./src/email/templates.ts",
+    "./errors": "./src/errors.ts",
+    "./auth/user-auth": "./src/auth/user-auth.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "setup": "tsx src/setup.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/static": "^9.1.3",
+    "@fastify/swagger": "^9.7.0",
+    "@fastify/swagger-ui": "^5.2.6",
+    "@fastify/websocket": "^11.2.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@vonzio/shared": "*",
+    "bcrypt": "^6.0.0",
+    "better-auth": "^1.6.10",
+    "cron-parser": "^5.5.0",
+    "dockerode": "^4.0.7",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.1",
+    "fastify": "^5.8.5",
+    "fastify-plugin": "^5.1.0",
+    "marked": "^16.4.2",
+    "nanoid": "^5.1.11",
+    "p-limit": "^7.3.0",
+    "pg": "^8.16.0",
+    "pino": "^9.6.0",
+    "resend": "^6.12.3",
+    "slackify-markdown": "^5.0.0",
+    "undici": "^8.3.0",
+    "ws": "^8.18.2",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/dockerode": "^3.3.38",
+    "@types/pg": "^8.15.4",
+    "@types/ws": "^8.18.1",
+    "better-sqlite3": "^11.9.1",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.19.4"
+  }
+}

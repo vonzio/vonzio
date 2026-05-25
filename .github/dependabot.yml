@@ -1,0 +1,122 @@
+version: 2
+
+# Visibility-only: Dependabot opens PRs when new versions ship; a human
+# reviews, runs them locally against a real workspace, then tags a release.
+# We never auto-merge — the SDK is the runtime that powers every container,
+# so a bad bump kills the product.
+updates:
+  # Claude Agent SDK — pinned exact in agent-runner, watched closely.
+  - package-ecosystem: npm
+    directory: /agent-runner
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - agent-sdk
+    commit-message:
+      prefix: "deps(agent-runner)"
+    allow:
+      - dependency-name: "@anthropic-ai/claude-agent-sdk"
+      - dependency-name: "agent-browser"
+
+  # Server, dashboard, widget, web — grouped weekly so the PR queue stays
+  # manageable. Major bumps still open as their own PR.
+  - package-ecosystem: npm
+    directory: /packages/core-server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "deps(server)"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /packages/dashboard
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "deps(dashboard)"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /packages/widget
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "deps(widget)"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Root workspace tooling.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "deps(root)"
+    # The Claude Agent SDK is hoisted into the root lockfile via monorepo
+    # workspaces but is pinned exactly in /agent-runner/package.json — it
+    # must only be touched by the dedicated /agent-runner dependabot config.
+    # Without this ignore, the root minor-and-patch group sweeps the SDK
+    # along with everything else and silently breaks the agent image.
+    ignore:
+      - dependency-name: "@anthropic-ai/claude-agent-sdk"
+      - dependency-name: "@anthropic-ai/claude-agent-sdk-*"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+        exclude-patterns:
+          - "@anthropic-ai/claude-agent-sdk*"
+
+  # GitHub Actions versions (CI workflows).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - ci
+    commit-message:
+      prefix: "ci"
+
+  # Docker base images (node:22-slim, etc.) — major bumps only, monthly.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "deps(docker)"

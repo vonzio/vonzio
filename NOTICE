@@ -1,0 +1,63 @@
+vonzio
+Copyright (C) 2026 Amen Amouzou and Vonzio contributors.
+
+This product is licensed under the GNU Affero General Public License v3.0
+or later (AGPL-3.0-or-later). See LICENSE for the full text.
+
+──────────────────────────────────────────────────────────────────────────
+Open-core architecture
+──────────────────────────────────────────────────────────────────────────
+
+vonzio is built as two layers:
+
+  • Data plane — the agent runtime, dashboard, chat widget, shared types.
+    Distributed as the open-source `vonzio/core` repository on GitHub.
+    AGPL-3.0-or-later. Self-hostable as a single-user instance via
+    `make docker-dev-oss` (see README).
+
+    Packages:
+      - @vonzio/shared          types + cross-package interfaces
+      - @vonzio/core-server     Fastify API + orchestrator + auth
+      - @vonzio/dashboard       customer SPA (React)
+      - @vonzio/widget          embeddable chat widget
+
+  • Control plane — multi-tenant SaaS overlay (signup, invites, billing,
+    plans, quotas, admin UI). Closed source. Operated at https://vonz.io.
+
+    Packages (not in this repository):
+      - @vonzio/cp-server
+      - @vonzio/admin-dashboard
+
+The boundary is enforced at the package level. The data plane runs
+standalone — it has zero compile-time or runtime dependency on the
+control plane. The control plane mounts onto the data plane at boot
+via a dynamic import; when the control-plane package is absent, the
+server logs "running single-user OSS" and continues. Six interface
+seams in @vonzio/shared (ProfileResolver, IntegrationCredentials,
+SecretVault, TokenValidator, QuotaConfig, UsageEmitter) let the
+control plane swap default implementations with plan-aware ones.
+
+This pattern follows Cal.com, PostHog, Plausible, Supabase, and other
+open-core SaaS products.
+
+──────────────────────────────────────────────────────────────────────────
+Trademarks
+──────────────────────────────────────────────────────────────────────────
+
+"vonzio" and the vonzio logo are trademarks of Amen Amouzou.
+The AGPL grants you the right to fork, modify, and self-host the
+software; it does not grant rights to the trademarks. If you operate
+a fork as a service, please rebrand.
+
+──────────────────────────────────────────────────────────────────────────
+Third-party software
+──────────────────────────────────────────────────────────────────────────
+
+This software incorporates packages distributed under their own
+licenses; see the dependency tree (`npm ls`) and each package's
+LICENSE for details. Notable runtime dependencies and their licenses:
+
+  - Fastify, Better Auth, Drizzle ORM, dockerode    MIT
+  - React, Vite, Tailwind CSS                       MIT
+  - bcrypt, pg, zod, nanoid                         MIT / ISC
+  - Claude Agent SDK                                Anthropic terms

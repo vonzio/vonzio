@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" data-surface="carbon">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Apply persisted theme BEFORE first paint to avoid a flash. -->
+    <script>
+      (function () {
+        try {
+          var s = localStorage.getItem("vonzio_surface");
+          if (s === "paper" || s === "carbon") {
+            document.documentElement.dataset.surface = s;
+          }
+        } catch (e) { /* private mode, etc. */ }
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+    <link rel="icon" type="image/svg+xml" href="/brand/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/brand/logo/apple-touch-icon.svg" />
+    <title>vonzio</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

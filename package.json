@@ -1,0 +1,41 @@
+{
+  "name": "vonzio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "vonzio core — open-source Claude Code agent runtime + dashboard.",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://vonzio.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vonzio/core.git"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/core-server",
+    "packages/dashboard",
+    "packages/widget",
+    "agent-runner"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "npm run dev --workspace=packages/core-server",
+    "dev:dashboard": "npm run dev --workspace=packages/dashboard"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.19",
+    "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1"
+  }
+}

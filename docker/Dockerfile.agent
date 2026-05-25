@@ -1,0 +1,36 @@
+# Slim agent image: builds agent-runner on top of the heavy agent-base.
+#
+# All apt installs, Chromium, npm-globals, helper scripts, and the agent
+# user live in agent-base (docker/Dockerfile.agent.base). Cold builds of
+# this layer should be ~30–60s, since only agent-runner code is touched.
+
+ARG AGENT_BASE_IMAGE=ghcr.io/vonzio/vonzio/agent-base
+ARG AGENT_BASE_TAG=latest
+FROM ${AGENT_BASE_IMAGE}:${AGENT_BASE_TAG}
+
+# Base tsconfig that agent-runner/tsconfig.json extends.
+COPY tsconfig.base.json /tsconfig.base.json
+
+WORKDIR /app
+
+# ── Layer 1: dependency install ──
+# Manifests only, so this layer is cached unless package.json/lock changes.
+# claude-agent-sdk ships one binary per platform as optional deps; the musl
+# variant is probed first at runtime and fails on glibc, so we strip it.
+COPY agent-runner/package.json agent-runner/package-lock.json* ./
+RUN npm install && \
+    find node_modules/@anthropic-ai -maxdepth 1 -type d -name 'claude-agent-sdk-*-musl' -exec rm -rf {} +
+
+# ── Layer 2: source + build ──
+COPY agent-runner/tsconfig.json ./
+COPY agent-runner/src/ ./src/
+RUN npx tsc && npm prune --production
+
+# Hand /app to the unprivileged agent user (created in agent-base).
+RUN chown -R agent:agent /app
+
+WORKDIR /workspace
+USER agent
+
+# Auth credentials injected at runtime via --env, never baked in.
+ENTRYPOINT ["/app/entrypoint.sh"]

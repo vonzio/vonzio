@@ -1,0 +1,39 @@
+FROM node:22-slim
+
+# Install build tools for native modules (better-sqlite3, bcrypt)
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Layer 1: dependency install ──
+# Copy ONLY workspace + package manifests so this layer is cached when no
+# package.json/lock changes — even if every source file under it changed.
+# npm ci needs every workspace's package.json to set up symlinks correctly.
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/core-server/package.json packages/core-server/
+COPY packages/dashboard/package.json packages/dashboard/
+COPY packages/widget/package.json packages/widget/
+COPY agent-runner/package.json agent-runner/
+
+RUN npm ci
+
+# ── Layer 2: source ──
+# Now copy the actual source. Changes here invalidate the build layers below
+# but NOT the npm ci layer above.
+COPY packages/shared/ packages/shared/
+COPY packages/core-server/ packages/core-server/
+COPY packages/dashboard/ packages/dashboard/
+COPY packages/widget/ packages/widget/
+
+# ── Layer 3: build dashboard + widget ──
+RUN cd packages/dashboard && npx vite build
+RUN cd packages/widget && npx vite build
+
+ARG VONZIO_VERSION=dev
+ENV VONZIO_VERSION=$VONZIO_VERSION
+
+EXPOSE 3000
+
+# Run server with tsx (TypeScript execution without pre-compilation)
+CMD ["npx", "tsx", "packages/core-server/src/index.ts"]

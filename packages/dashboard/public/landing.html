@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vonzio — AI agents that work while you don't</title>
+  <meta name="description" content="Vonzio is a platform where AI agents run autonomously in isolated containers, executing tasks on your behalf.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'DM Sans', system-ui, sans-serif; color: #F5F7FA; background: #0F2B46; min-height: 100vh; }
+    .container { max-width: 800px; margin: 0 auto; padding: 3rem 1.5rem; }
+    .hero { text-align: center; padding: 4rem 0 3rem; }
+    .logo { display: inline-flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; }
+    .logo-mark { width: 48px; height: 48px; background: rgba(255,255,255,0.1); border-radius: 14px; display: flex; align-items: center; justify-content: center; }
+    .logo-text { font-size: 2rem; font-weight: 700; color: white; }
+    h1 { font-size: 2.5rem; font-weight: 700; line-height: 1.2; margin-bottom: 1rem; }
+    h1 span { color: #00BFA5; }
+    .tagline { font-size: 1.125rem; color: rgba(255,255,255,0.5); margin-bottom: 2.5rem; }
+    .cta { display: inline-block; padding: 0.875rem 2rem; background: #00BFA5; color: white; font-size: 1rem; font-weight: 600; border-radius: 12px; text-decoration: none; transition: background 0.2s; }
+    .cta:hover { background: #00A892; }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem; padding: 3rem 0; }
+    .feature { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 1.5rem; }
+    .feature h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .feature p { font-size: 0.875rem; color: rgba(255,255,255,0.5); line-height: 1.6; }
+    .footer { text-align: center; padding: 2rem 0; border-top: 1px solid rgba(255,255,255,0.08); margin-top: 2rem; }
+    .footer a { color: rgba(255,255,255,0.3); font-size: 0.75rem; text-decoration: none; margin: 0 0.75rem; }
+    .footer a:hover { color: rgba(255,255,255,0.6); }
+    @media (max-width: 600px) { h1 { font-size: 1.75rem; } .hero { padding: 2rem 0; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <div class="logo">
+        <div class="logo-mark">
+          <svg viewBox="0 0 512 512" width="28" height="28">
+            <polyline points="155,160 256,290 347,160" fill="none" stroke="white" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="190" y="330" width="132" height="28" rx="14" fill="#00BFA5"/>
+          </svg>
+        </div>
+        <span class="logo-text">vonzio</span>
+      </div>
+      <h1>AI agents that <span>work</span> while you don't.</h1>
+      <p class="tagline">Autonomous AI coding agents running in isolated containers. Hand off tasks, get results.</p>
+      <a href="/" class="cta">Sign In</a>
+    </div>
+
+    <div class="features">
+      <div class="feature">
+        <h3>Isolated Containers</h3>
+        <p>Each agent runs in its own Docker container with a full development environment — Node, Python, Go, Rust, and more.</p>
+      </div>
+      <div class="feature">
+        <h3>Your API Keys</h3>
+        <p>Bring your own Anthropic API key. Your data stays yours. No training on your conversations.</p>
+      </div>
+      <div class="feature">
+        <h3>Persistent Sessions</h3>
+        <p>Agents remember context across conversations. Pick up where you left off with persistent workspaces.</p>
+      </div>
+      <div class="feature">
+        <h3>Slack Integration</h3>
+        <p>Chat with agents directly from Slack. DMs, channels, threads — agents respond right where your team works.</p>
+      </div>
+      <div class="feature">
+        <h3>Git Connected</h3>
+        <p>Connect GitHub, GitLab, or Bitbucket. Agents can clone repos, push branches, and create pull requests.</p>
+      </div>
+      <div class="feature">
+        <h3>Multi-User</h3>
+        <p>Invite your team. Each user gets their own agents, keys, and workspaces. Admin controls access.</p>
+      </div>
+    </div>
+
+    <div class="footer">
+      <a href="/privacy.html">Privacy Policy</a>
+      <a href="/terms.html">Terms of Service</a>
+      <a href="mailto:hello@vonz.io">Contact</a>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,130 @@
+/* ─────────────────────────────────────────────────────────────
+   Vonzio · Sodium — design tokens
+   tokens.css is the source of truth for CSS consumers.
+   Mirror of brand/tokens.json. Two surfaces share one accent.
+   ───────────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap');
+
+:root {
+  /* ─── Brand ─── */
+  --vz-sodium:        #FF5722;
+  --vz-sodium-soft:   #FF7849;
+  --vz-sodium-deep:   #E64A1A;
+  --vz-graphite:      #0E1116;
+
+  /* Sodium tints (use sparingly — for chips, focus rings) */
+  --vz-sodium-08:     rgba(255, 87, 34, 0.08);
+  --vz-sodium-16:     rgba(255, 87, 34, 0.16);
+  --vz-sodium-25:     rgba(255, 87, 34, 0.25);
+
+  /* ─── Status ─── */
+  --vz-ok:    #16A34A;
+  --vz-warn:  #F59E0B;
+  --vz-fail:  #DC2626;
+  --vz-info:  #2563EB;
+
+  /* ─── Paper surface (default) ─── */
+  --vz-page:          #FAFAF7;
+  --vz-card:          #FFFFFF;
+  --vz-mute:          #F0EEE8;
+  --vz-border:        #E8E6DF;
+  --vz-border-strong: #D6D2C7;
+  --vz-ink:           #0E1116;
+  --vz-ink-2:         #2A2F38;
+  --vz-ink-3:         #3A3A42;
+  --vz-muted:         #6B6B73;
+  --vz-muted-2:       #9B9BA3;
+
+  /* Branded tile (logo mark, avatar, big empty-state V, primary CTAs).
+     On Paper the tile is sodium with white content. On Carbon the tile is
+     graphite with sodium content — both tracks read as "the brand mark." */
+  --vz-brand-tile:     #FF5722;
+  --vz-brand-on-tile:  #FFFFFF;
+
+  --vz-shadow-sm: 0 1px 2px rgba(14,17,22,.04);
+  --vz-shadow-md: 0 4px 16px -6px rgba(14,17,22,.10);
+  --vz-shadow-lg: 0 24px 64px -24px rgba(14,17,22,.18);
+
+  /* ─── Type ─── */
+  --vz-font-sans:  'DM Sans', system-ui, sans-serif;
+  --vz-font-serif: 'Instrument Serif', Georgia, serif;
+  --vz-font-mono:  'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ─── Space ─── */
+  --vz-space-1: 4px;   --vz-space-2: 8px;   --vz-space-3: 12px;  --vz-space-4: 16px;
+  --vz-space-5: 20px;  --vz-space-6: 24px;  --vz-space-7: 32px;  --vz-space-8: 40px;
+  --vz-space-9: 48px;  --vz-space-10: 64px; --vz-space-11: 80px; --vz-space-12: 96px;
+  --vz-space-13: 128px;
+
+  /* ─── Radius ─── */
+  --vz-radius-sm:  4px;
+  --vz-radius-md:  8px;
+  --vz-radius-lg:  12px;
+  --vz-radius-xl:  14px;
+  --vz-radius-2xl: 20px;
+  --vz-radius-pill: 999px;
+
+  /* ─── Motion ─── */
+  --vz-fast:  120ms;
+  --vz-base:  180ms;
+  --vz-slow:  320ms;
+  --vz-ease:  cubic-bezier(.2,.7,.2,1);
+}
+
+/* ─── Carbon surface ─── */
+html[data-surface="carbon"], [data-surface="carbon"] {
+  --vz-page:          #0A0E14;
+  --vz-card:          #13181F;
+  --vz-mute:          #0F141A;
+  --vz-border:        #1F2630;
+  --vz-border-strong: #2A323D;
+  --vz-ink:           #E6E9EE;
+  --vz-ink-2:         #C8CDD5;
+  --vz-ink-3:         #A8B0BC;
+  --vz-muted:         #7A8290;
+  --vz-muted-2:       #5A6270;
+  --vz-shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+  --vz-shadow-md: 0 4px 16px -6px rgba(0,0,0,.6);
+  --vz-shadow-lg: 0 24px 64px -24px rgba(0,0,0,.8);
+  /* Carbon flips the brand tile: graphite tile, sodium content. */
+  --vz-brand-tile:     #0E1116;
+  --vz-brand-on-tile:  #FF5722;
+}
+
+/* ─── Reset ─── */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--vz-page);
+  color: var(--vz-ink);
+  font-family: var(--vz-font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+img, svg { display: block; max-width: 100%; }
+::selection { background: var(--vz-sodium); color: #fff; }
+
+/* ─── Type primitives ─── */
+.vz-display { font-size: clamp(48px, 6.4vw, 96px); font-weight: 600; letter-spacing: -.035em; line-height: 1.05; margin: 0; }
+.vz-h1      { font-size: clamp(36px, 4.4vw, 64px); font-weight: 600; letter-spacing: -.03em;  line-height: 1.05; margin: 0; }
+.vz-h2      { font-size: clamp(24px, 2.4vw, 32px); font-weight: 600; letter-spacing: -.02em;  line-height: 1.1;  margin: 0; }
+.vz-h3      { font-size: 20px; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; margin: 0; }
+.vz-body    { font-size: 16px; line-height: 1.55; }
+.vz-body-sm { font-size: 14px; line-height: 1.5; }
+.vz-caption { font-size: 13px; line-height: 1.4; color: var(--vz-muted); }
+.vz-mono    { font-family: var(--vz-font-mono); }
+.vz-serif   { font-family: var(--vz-font-serif); }
+.vz-eyebrow {
+  font-family: var(--vz-font-mono);
+  font-size: 12px; font-weight: 500;
+  letter-spacing: .18em; text-transform: uppercase;
+  color: var(--vz-sodium);
+}
+.vz-eyebrow::before { content: "// "; opacity: .5; }
+em.vz-em, .vz-em { font-family: var(--vz-font-serif); font-style: italic; color: var(--vz-sodium); font-weight: 400; }

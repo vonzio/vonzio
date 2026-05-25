@@ -1,0 +1,315 @@
+/* Login page styling — Sodium / Carbon surface, scoped to .sodium-shell. */
+@import "../brand/tokens.css";
+@import "../brand/primitives.css";
+
+.sodium-shell {
+  min-height: 100vh;
+  background: var(--vz-page);
+  color: var(--vz-ink);
+  font-family: var(--vz-font-sans);
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+  overflow: hidden;
+}
+.sodium-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 700px 500px at 50% 18%, rgba(255, 87, 34, 0.18), transparent 60%),
+    linear-gradient(rgba(230, 233, 238, 0.04) 1px, transparent 1px) 0 0/56px 56px,
+    linear-gradient(90deg, rgba(230, 233, 238, 0.04) 1px, transparent 1px) 0 0/56px 56px;
+  mask-image: linear-gradient(180deg, #000 0%, transparent 90%);
+}
+
+.sodium-shell .login-stage {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 32px 16px;
+  gap: 28px;
+}
+
+.sodium-shell .login-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--vz-ink);
+}
+.sodium-shell .login-brand .vm {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--vz-graphite);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.sodium-shell .login-brand .vletter {
+  color: var(--vz-sodium);
+}
+
+.sodium-shell .login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--vz-card);
+  border: 1px solid var(--vz-border);
+  border-radius: var(--vz-radius-2xl);
+  padding: 36px 36px 32px;
+  box-shadow: var(--vz-shadow-lg);
+}
+
+.sodium-shell .login-pullquote {
+  width: 100%;
+  max-width: 420px;
+  margin: -8px 0 -4px;
+  text-align: center;
+  font-family: var(--vz-font-serif);
+  font-style: italic;
+  font-size: 18px;
+  line-height: 1.4;
+  color: var(--vz-muted);
+  letter-spacing: 0.005em;
+}
+
+.sodium-shell .login-card .vz-eyebrow {
+  display: block;
+  margin-bottom: 14px;
+}
+.sodium-shell .login-card h1 {
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 8px;
+  color: var(--vz-ink);
+}
+.sodium-shell .login-card h1 em {
+  font-family: var(--vz-font-serif);
+  font-style: italic;
+  font-weight: 400;
+  color: var(--vz-sodium);
+  /* Instrument Serif's italic baseline sits a touch above DM Sans's at this
+     size; nudge the em down so "back." aligns with "Welcome". */
+  display: inline-block;
+  transform: translateY(0.06em);
+}
+.sodium-shell .login-card .lede {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--vz-ink-3);
+  margin: 0 0 28px;
+}
+
+.sodium-shell .oauth-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.sodium-shell .oauth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 11px 16px;
+  font-family: var(--vz-font-sans);
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--vz-ink);
+  background: var(--vz-mute);
+  border: 1px solid var(--vz-border);
+  border-radius: var(--vz-radius-md);
+  cursor: pointer;
+  transition: border-color var(--vz-fast) var(--vz-ease), background var(--vz-fast) var(--vz-ease);
+}
+.sodium-shell .oauth-btn:hover {
+  border-color: var(--vz-border-strong);
+  background: var(--vz-card);
+}
+.sodium-shell .oauth-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.sodium-shell .oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 18px;
+  font-family: var(--vz-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vz-muted-2);
+}
+.sodium-shell .oauth-divider::before,
+.sodium-shell .oauth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--vz-border);
+}
+
+.sodium-shell .login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sodium-shell .login-form .vz-toggle {
+  font-size: 13px;
+  color: var(--vz-muted);
+  margin-top: 2px;
+}
+.sodium-shell .password-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sodium-shell .password-row .vz-field__label {
+  flex: 1;
+}
+.sodium-shell .forgot-link {
+  font-family: var(--vz-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--vz-muted);
+  text-decoration: none;
+  transition: color var(--vz-fast) var(--vz-ease);
+}
+.sodium-shell .forgot-link:hover {
+  color: var(--vz-sodium);
+}
+
+.sodium-shell .login-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: 4px;
+}
+.sodium-shell .login-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sodium-shell .login-tos {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vz-muted);
+}
+.sodium-shell .login-tos a {
+  color: var(--vz-ink-3);
+  text-decoration: underline;
+  text-decoration-color: var(--vz-border-strong);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: color var(--vz-fast) var(--vz-ease), text-decoration-color var(--vz-fast) var(--vz-ease);
+}
+.sodium-shell .login-tos a:hover {
+  color: var(--vz-sodium);
+  text-decoration-color: var(--vz-sodium);
+}
+
+/* ─── Narrow viewports ─── */
+@media (max-width: 480px) {
+  .sodium-shell .login-stage {
+    padding: 24px 12px;
+    gap: 20px;
+  }
+  .sodium-shell .login-card {
+    padding: 28px 22px 24px;
+    border-radius: var(--vz-radius-xl);
+  }
+  .sodium-shell .login-card h1 {
+    font-size: 26px;
+  }
+  .sodium-shell .login-pullquote {
+    font-size: 16px;
+    margin: -4px 0 0;
+  }
+  .sodium-shell .oauth-divider {
+    margin: 18px 0 14px;
+  }
+}
+
+/* Safe-area padding for iOS notch / Android nav bar. */
+@supports (padding: max(0px)) {
+  .sodium-shell .login-stage {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+}
+
+.sodium-shell .login-error {
+  font-size: 13px;
+  color: var(--vz-fail);
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  padding: 10px 12px;
+  border-radius: var(--vz-radius-md);
+  font-family: var(--vz-font-mono);
+  letter-spacing: 0.02em;
+}
+
+.sodium-shell .register-prompt {
+  text-align: center;
+  font-size: 13px;
+  color: var(--vz-muted);
+  margin: 18px 0 0;
+}
+.sodium-shell .register-prompt button {
+  font: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--vz-sodium);
+  cursor: pointer;
+}
+.sodium-shell .register-prompt button:hover {
+  color: var(--vz-sodium-soft);
+}
+
+.sodium-shell .login-footer {
+  font-family: var(--vz-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--vz-muted-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.sodium-shell .login-footer .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.sodium-shell .login-footer .status::before {
+  content: "$";
+  color: var(--vz-muted);
+}
+.sodium-shell .login-footer .links {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.sodium-shell .login-footer .links a {
+  color: var(--vz-muted);
+  text-decoration: none;
+  transition: color var(--vz-fast) var(--vz-ease);
+}
+.sodium-shell .login-footer .links a:hover {
+  color: var(--vz-sodium);
+}

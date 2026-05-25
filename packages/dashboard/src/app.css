@@ -1,0 +1,86 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Sodium brand foundation — global tokens + primitives. */
+@import "./brand/tokens.css";
+@import "./brand/primitives.css";
+
+@custom-variant dark (&:is(.dark *));
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, "SF Mono", "Cascadia Mono", monospace;
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+
+  /* shadcn theme bindings — remapped onto Sodium vz-* tokens so any
+     stray shadcn component still in use renders on Carbon. */
+  --color-background: var(--vz-page);
+  --color-foreground: var(--vz-ink);
+  --color-card: var(--vz-card);
+  --color-card-foreground: var(--vz-ink);
+  --color-popover: var(--vz-card);
+  --color-popover-foreground: var(--vz-ink);
+
+  --color-primary: var(--vz-sodium);
+  --color-primary-foreground: #fff;
+  --color-secondary: var(--vz-mute);
+  --color-secondary-foreground: var(--vz-ink);
+  --color-muted: var(--vz-mute);
+  --color-muted-foreground: var(--vz-muted);
+  --color-accent: var(--vz-sodium);
+  --color-accent-foreground: #fff;
+  --color-destructive: var(--vz-fail);
+
+  --color-border: var(--vz-border);
+  --color-input: var(--vz-border);
+  --color-ring: var(--vz-sodium);
+
+  --color-chart-1: var(--vz-sodium);
+  --color-chart-2: var(--vz-info);
+  --color-chart-3: var(--vz-ok);
+  --color-chart-4: var(--vz-warn);
+  --color-chart-5: var(--vz-muted);
+
+  --color-sidebar: var(--vz-mute);
+  --color-sidebar-foreground: var(--vz-ink);
+  --color-sidebar-primary: var(--vz-sodium);
+  --color-sidebar-primary-foreground: #fff;
+  --color-sidebar-accent: var(--vz-card);
+  --color-sidebar-accent-foreground: var(--vz-ink);
+  --color-sidebar-border: var(--vz-border);
+  --color-sidebar-ring: var(--vz-sodium);
+
+  --radius: 0.625rem;
+  --radius-sm: var(--vz-radius-sm);
+  --radius-md: var(--vz-radius-md);
+  --radius-lg: var(--vz-radius-lg);
+  --radius-xl: var(--vz-radius-xl);
+  --radius-2xl: var(--vz-radius-2xl);
+}
+
+/* ═══════════════════════════════════════════
+   In-product surface: Carbon by default
+   (set on <html> in main.tsx so the whole app
+    inherits the dark surface tokens.)
+   ═══════════════════════════════════════════ */
+
+body {
+  @apply font-sans antialiased;
+  margin: 0;
+  background: var(--vz-page);
+  color: var(--vz-ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

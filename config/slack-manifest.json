@@ -1,0 +1,61 @@
+{
+    "display_information": {
+        "name": "Vonzio",
+        "description": "Chat with AI coding agents from Slack",
+        "background_color": "#0F2B46",
+        "long_description": "Vonzio brings AI coding agents directly into your Slack workspace. Instead of switching to a separate dashboard, your team can interact with powerful AI coding agents right where they already work.\r\n\r\nHow it works:\r\n\r\nDM @Vonzio or mention it in any channel with a task — \"clone our repo and add a health endpoint,\" \"analyze the logs and find the memory leak,\" \"build a landing page with Tailwind.\" Vonzio spins up an isolated Docker container, starts a Claude Code agent, and streams responses back into a Slack thread. Each thread is its own workspace with full context.\r\n\r\nWhat agents can do:\r\n\r\n- Write, edit, and debug code across any language or framework\r\n- Run shell commands, install packages, start dev servers\r\n- Access your private GitHub and GitLab repos (via connected git providers)\r\n- Browse the web, take screenshots, automate browsers\r\n- Create files, generate reports, build full applications\r\n- Ask you clarifying questions with interactive buttons when they need input\r\n\r\nKey features:\r\n\r\n- Full conversations in threads — each thread maintains its own agent session\r\n- Interactive questions — when the agent needs your input, you get clickable buttons right in Slack\r\n- File sharing — upload files to the agent, receive generated files back\r\n- Multiple profiles — switch between different agent configurations with /vonzio\r\n- Per-user connections — each team member connects their own Vonzio account\r\n\r\nBuilt for teams: Every team member can connect their own Vonzio account with their own API keys, profiles, and git providers. What one person asks stays in their thread. Agents run in isolated containers that are destroyed after each session.\r\n\r\nPowered by Claude Code SDK running in secure, ephemeral Docker containers with full development toolchains pre-installed"
+    },
+    "features": {
+        "bot_user": {
+            "display_name": "Vonzio",
+            "always_online": true
+        },
+        "slash_commands": [
+            {
+                "command": "/vonzio",
+                "url": "https://vonz.io/api/slack/commands",
+                "description": "Start a conversation with a Vonzio agent",
+                "usage_hint": "[prompt]",
+                "should_escape": false
+            }
+        ]
+    },
+    "oauth_config": {
+        "redirect_urls": [
+            "https://vonz.io/api/slack/callback"
+        ],
+        "scopes": {
+            "bot": [
+                "channels:join",
+                "app_mentions:read",
+                "chat:write",
+                "commands",
+                "files:read",
+                "files:write",
+                "im:history",
+                "im:read",
+                "im:write",
+                "users:read",
+                "channels:history"
+            ]
+        },
+        "pkce_enabled": false
+    },
+    "settings": {
+        "event_subscriptions": {
+            "request_url": "https://vonz.io/api/slack/events",
+            "bot_events": [
+                "app_mention",
+                "message.channels",
+                "message.im"
+            ]
+        },
+        "interactivity": {
+            "is_enabled": true,
+            "request_url": "https://vonz.io/api/slack/interactions"
+        },
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": false,
+        "token_rotation_enabled": false
+    }
+}
