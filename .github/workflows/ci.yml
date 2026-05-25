@@ -60,7 +60,14 @@ jobs:
           cache: npm
       - run: npm install
       - name: Run tests
-        run: npx vitest run
+        # --no-file-parallelism: tests share a single postgres database
+        # and each one drops + recreates the `public` schema in
+        # createTestDB(). Parallel file workers race on the schema, e.g.
+        # one worker drops the pg_trgm extension while another tries to
+        # CREATE INDEX ... gin_trgm_ops. Sequential execution is the
+        # cheapest fix; per-file isolated databases would be the right
+        # long-term refactor.
+        run: npx vitest run --no-file-parallelism
 
   agent-base-build:
     # Smoke-builds the agent base image so we catch Dockerfile breakage at PR
