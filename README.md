@@ -32,20 +32,20 @@ vonzio runs Claude Code (or Ollama Cloud) agents in fresh, isolated Docker conta
 
 ## Quickstart — self-host
 
-You need Docker (with Compose v2), Node 22+, an Anthropic or Ollama Cloud API key, and `make`.
+One-line install (macOS or Linux, prompts before installing any missing dep):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vonzio/core/main/install.sh | bash
+```
+
+The installer checks for Docker, Docker Compose v2, Node 22+, git, make, and openssl. It generates a fresh `.env` with secure random secrets, brings up postgres, runs the one-time Better Auth schema migration, and starts the stack. About 5 minutes on a warm machine.
+
+Prefer to inspect before running? Clone-then-run uses the same script:
 
 ```bash
 git clone https://github.com/vonzio/core.git
-cd vonzio
-cp .env.example .env   # fill in ENCRYPTION_KEY + BETTER_AUTH_SECRET (32+ chars each)
-
-# Start postgres + run Better Auth migrations once
-docker run --rm -d -e POSTGRES_DB=vonzio -e POSTGRES_USER=vonzio \
-  -e POSTGRES_PASSWORD=vonzio_dev -p 5432:5432 --name vonzio-pg postgres:17-alpine
-make better-auth-migrate
-
-# Run the stack (single-user OSS mode)
-make docker-dev-oss
+cd core
+./install.sh
 ```
 
 Visit **http://vonz.localhost** → `/setup` wizard creates your admin account → `/onboarding` walks you through adding an API key and picking a default model → you're in.
