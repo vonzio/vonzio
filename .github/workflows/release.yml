@@ -1,0 +1,57 @@
+name: release
+
+# Triggered when a v* tag is pushed. Creates a GitHub release with auto-
+# generated notes pulled from PR titles since the previous tag.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # required to create a GitHub release
+
+jobs:
+  release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for release-notes generation
+
+      - name: Read version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GitHub's --generate-notes pulls in commit/PR titles since the
+          # previous tag. We prepend a static intro pointing users at the
+          # install one-liner so the top of the release page is useful even
+          # when commit messages aren't.
+          notes_file="$(mktemp)"
+          cat >"$notes_file" <<EOF
+          ## vonzio core ${{ steps.version.outputs.version }}
+
+          Self-hostable Claude Code agent runtime + dashboard + chat widget.
+
+          ### Install
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/vonzio/core/main/install.sh | bash
+          \`\`\`
+
+          Full guide: [docs/SELF_HOST.md](https://github.com/vonzio/core/blob/main/docs/SELF_HOST.md).
+
+          ---
+
+          ### What changed
+          EOF
+
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$notes_file" \
+            --generate-notes

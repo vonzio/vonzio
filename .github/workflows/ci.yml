@@ -1,0 +1,97 @@
+name: ci
+
+# Validate every PR + every push to main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel older runs of the same PR when a new push arrives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm install
+      - run: npx tsc --project packages/shared/tsconfig.json --noEmit
+      - run: npx tsc --project packages/core-server/tsconfig.json --noEmit
+      - run: npx tsc --project packages/dashboard/tsconfig.json --noEmit
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: vonzio_test
+          POSTGRES_USER: vonzio
+          POSTGRES_PASSWORD: vonzio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vonzio"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # Tests that hit a real DB read these. Non-DB tests don't care.
+      DATABASE_URL: postgres://vonzio:vonzio_test@localhost:5432/vonzio_test
+      ENCRYPTION_KEY: ci-test-encryption-key-32chars-xx
+      BETTER_AUTH_SECRET: ci-test-better-auth-secret-32-chars
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm install
+      - name: Run tests
+        run: npx vitest run
+
+  agent-base-build:
+    # Smoke-builds the agent base image so we catch Dockerfile breakage at PR
+    # time, not at end-user-install time. Doesn't push anywhere.
+    name: agent-base build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build agent-base
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.agent.base
+          push: false
+          load: true
+          tags: ghcr.io/vonzio/core/agent-base:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  install-script-shellcheck:
+    # Lint install.sh so we catch shell footguns before community users hit
+    # them. shellcheck is the standard for bash quality.
+    name: install.sh shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          severity: warning
+          scandir: "./"
+          additional_files: "install.sh scripts/start-dev.sh"
