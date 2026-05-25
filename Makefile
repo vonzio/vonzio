@@ -2,6 +2,11 @@
 .PHONY: docker-build docker-dev docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
+# Optional local/downstream extension hook. Any user can drop a `Makefile.saas`
+# next to this file to add private targets without forking the upstream Makefile.
+# The leading dash makes the include silent when the file is absent.
+-include Makefile.saas
+
 install: ## Install all dependencies
 	npm install
 
