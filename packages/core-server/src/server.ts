@@ -709,12 +709,25 @@ export async function buildServer(deps: ServerDeps) {
       root: dashboardDist,
       prefix: "/",
       wildcard: false,
+      cacheControl: false,
+      // Hashed assets ship with content-addressed filenames so they're
+      // immutable for a year; index.html must never be cached because
+      // it references the current bundle's hashes, which change every
+      // deploy.
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("cache-control", "no-cache");
+        } else {
+          res.setHeader("cache-control", "public, max-age=31536000, immutable");
+        }
+      },
     });
     // SPA fallback: serve index.html for unmatched routes
     server.setNotFoundHandler(async (request, reply) => {
       if (request.url.startsWith("/v1") || request.url.startsWith("/admin/") || request.url.startsWith("/api/") || request.url.startsWith("/preview") || request.url.startsWith("/widget")) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Not found"));
       }
+      reply.header("cache-control", "no-cache");
       return reply.sendFile("index.html");
     });
   }
