@@ -1369,13 +1369,27 @@ export class Orchestrator extends EventEmitter {
       const tunnel = await provider.resolveActiveTunnel(profile.user_id, profile.id);
       if (!tunnel) return null;
       const config = decrypt(tunnel.encryptedConfig, encryptionKey);
+      const env: Record<string, string> = {
+        VPN_CONFIG_B64: Buffer.from(config, "utf8").toString("base64"),
+      };
+      // OpenVPN may also carry an auth-user-pass blob ("username\npassword")
+      // as a second encrypted field. WireGuard tunnels leave this null.
+      if (tunnel.authBlobEncrypted) {
+        const authBlob = decrypt(tunnel.authBlobEncrypted, encryptionKey);
+        env.VPN_AUTH_USER_PASS_B64 = Buffer.from(authBlob, "utf8").toString("base64");
+      }
+      // OpenVPN needs /dev/net/tun; WireGuard uses the kernel module and
+      // doesn't.
+      const devices = tunnel.type === "openvpn" ? ["/dev/net/tun"] : undefined;
       const sidecarId = await this.deps.containerManager.createContainer({
         image: tunnel.sidecarImage,
-        env: { WG_CONFIG_B64: Buffer.from(config, "utf8").toString("base64") },
+        env,
         capAdd: ["NET_ADMIN"],
+        devices,
         labels: {
           "vonzio-mode": "vpn-sidecar",
           "vonzio-vpn-tunnel-id": tunnel.id,
+          "vonzio-vpn-tunnel-type": tunnel.type,
         },
       });
       await this.deps.containerManager.startContainer(sidecarId);
