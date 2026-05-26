@@ -12,9 +12,11 @@ import {
   type SVGProps,
   type TextareaHTMLAttributes,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 /* ─── tiny SVG icons ─── */
 type IconProps = SVGProps<SVGSVGElement>;
@@ -155,18 +157,82 @@ export function Search({ className = "", ...rest }: InputHTMLAttributes<HTMLInpu
 
 /* ─── Select / Dropdown ─── */
 export type SelectOption = { value: string; label: ReactNode };
-export function Select({ value, onChange, options, placeholder = "Select…", disabled }: { value?: string; onChange?: (v: string) => void; options: SelectOption[]; placeholder?: string; disabled?: boolean }) {
+export function Select({
+  value,
+  onChange,
+  options,
+  placeholder = "Select…",
+  disabled,
+  searchable = false,
+}: {
+  value?: string;
+  onChange?: (v: string) => void;
+  options: SelectOption[];
+  placeholder?: string;
+  disabled?: boolean;
+  /** Render a filter input at the top of the dropdown. Useful when the
+   *  list is long (e.g. Ollama Cloud's full model catalogue). */
+  searchable?: boolean;
+}) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  // Tracks the trigger's screen position so the portaled menu can follow
+  // it on scroll/resize. position: fixed lets the menu escape modal
+  // overflow clipping.
+  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open) {
+      setRect(null);
+      return;
+    }
+    const measure = () => {
+      const r = ref.current?.getBoundingClientRect();
+      if (r) setRect({ top: r.bottom + 4, left: r.left, width: r.width });
+    };
+    measure();
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (ref.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
+  // Reset filter on close; autofocus the search input on open.
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      return;
+    }
+    if (searchable) {
+      // Defer to next tick so the input exists in the DOM.
+      const id = window.setTimeout(() => searchRef.current?.focus(), 0);
+      return () => window.clearTimeout(id);
+    }
+  }, [open, searchable]);
   const current = options.find((o) => o.value === value);
+  // Filter by both label (rendered text) and value (raw id) so users can
+  // type either "haiku" or "claude-haiku-4-5" and find the same option.
+  const filtered = searchable && query.trim()
+    ? options.filter((o) => {
+        const labelText = typeof o.label === "string" ? o.label : "";
+        const haystack = `${labelText} ${o.value}`.toLowerCase();
+        return haystack.includes(query.trim().toLowerCase());
+      })
+    : options;
   return (
     <div className="vz-select" ref={ref} data-disabled={disabled ? "true" : undefined}>
       <button
@@ -180,33 +246,79 @@ export function Select({ value, onChange, options, placeholder = "Select…", di
         </span>
         <Icon.chevron />
       </button>
-      {open && (
+      {open && rect && createPortal(
         <div
+          ref={menuRef}
           className="vz-menu"
-          style={{ top: "calc(100% + 4px)", left: 0, right: 0 }}
+          // Portaled to document.body + position:fixed so modal overflow
+          // doesn't clip us. Position tracks the trigger's bounding rect.
+          style={{ position: "fixed", top: rect.top, left: rect.left, width: rect.width }}
           // Belt-and-suspenders: stop mousedown bubbling to the document
           // listener so the close-on-outside-click can't race the item click.
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {options.map((o) => (
+          {searchable && (
             <div
-              key={o.value}
-              role="option"
-              aria-selected={o.value === value}
-              className={`vz-menu__item ${o.value === value ? "vz-menu__item--active" : ""}`}
-              // Pick on mousedown so selection commits before any blur/click
-              // race; close synchronously inside the same event.
-              onMouseDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onChange?.(o.value);
-                setOpen(false);
+              style={{
+                position: "sticky",
+                top: 0,
+                background: "var(--vz-card)",
+                padding: "2px 2px 6px",
+                marginBottom: 2,
+                borderBottom: "1px solid var(--vz-border)",
+                zIndex: 1,
               }}
             >
-              {o.label}
+              <input
+                ref={searchRef}
+                className="vz-input"
+                type="text"
+                placeholder="Filter…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setOpen(false);
+                  }
+                }}
+                style={{ width: "100%", fontSize: 13, padding: "6px 10px" }}
+              />
             </div>
-          ))}
-        </div>
+          )}
+          {filtered.length === 0 ? (
+            <div
+              style={{
+                padding: "10px 12px",
+                fontSize: 12,
+                color: "var(--vz-muted-2)",
+                fontFamily: "var(--vz-font-mono)",
+              }}
+            >
+              No matches
+            </div>
+          ) : (
+            filtered.map((o) => (
+              <div
+                key={o.value}
+                role="option"
+                aria-selected={o.value === value}
+                className={`vz-menu__item ${o.value === value ? "vz-menu__item--active" : ""}`}
+                // Pick on mousedown so selection commits before any blur/click
+                // race; close synchronously inside the same event.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onChange?.(o.value);
+                  setOpen(false);
+                }}
+              >
+                {o.label}
+              </div>
+            ))
+          )}
+        </div>,
+        document.body,
       )}
     </div>
   );
