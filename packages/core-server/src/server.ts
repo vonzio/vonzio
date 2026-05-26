@@ -378,10 +378,17 @@ export async function buildServer(deps: ServerDeps) {
     }
   });
 
-  // Six-seam registry for cross-cutting deps (token validation, profile
-  // resolution, integration credentials, secret vault, quotas, usage).
-  // OSS default impls; cp-server (when mounted) swaps in plan-aware ones.
-  const coreDeps = buildDefaultCoreDeps({ db, profileService, secretVaultService, integrationService });
+  // Seven-seam registry for cross-cutting deps (token validation, profile
+  // resolution, integration credentials, secret vault, quotas, usage,
+  // entitlements). OSS default impls; cp-server (when mounted) swaps in
+  // plan-aware ones.
+  const coreDeps = buildDefaultCoreDeps({
+    db,
+    profileService,
+    secretVaultService,
+    integrationService,
+    registrationEnabled: config.REGISTRATION_ENABLED,
+  });
   const authHook = userAuthHook(auth, coreDeps.tokenValidator);
   // Shared preview-auth checker used by chat-surface relays (WS/Telegram/Slack)
   // to mint short-lived _pvt tokens for agent-generated image URLs. Same secret
@@ -402,6 +409,33 @@ export async function buildServer(deps: ServerDeps) {
 
   // Mount Better Auth routes (before auth-guarded routes, after CORS)
   mountBetterAuth(server, auth);
+
+  // Session enrichment: returns the current user plus entitlements computed
+  // by coreDeps.entitlementsProvider. The dashboard fetches this once on
+  // boot and provides the result through EntitlementsProvider context so
+  // routes/nav/settings can self-gate. 401 when no session.
+  server.get("/api/me", async (request, reply) => {
+    const headers = fromNodeHeaders(request.headers);
+    const session = await auth.api.getSession({ headers });
+    if (!session?.user) return reply.code(401).send({ error: "unauthorized" });
+    const u = session.user as {
+      id: string;
+      email: string;
+      name?: string | null;
+      role?: string | null;
+      featureFlags?: string | null;
+    };
+    const entitlements = await coreDeps.entitlementsProvider.compute({
+      id: u.id,
+      email: u.email,
+      role: u.role ?? undefined,
+      featureFlags: u.featureFlags ?? undefined,
+    });
+    return {
+      user: { id: u.id, email: u.email, name: u.name ?? null, role: u.role ?? null },
+      entitlements,
+    };
+  });
 
   // Cross-site session indicator for the marketing site. The marketing
   // surface (vonzio.com) can't read Better Auth's HttpOnly+SameSite=Lax

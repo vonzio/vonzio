@@ -10,4 +10,8 @@ export type {
 } from "./token-validator.js";
 export type { QuotaConfig, QuotaLimits } from "./quota-config.js";
 export type { UsageEmitter, UsageEvent } from "./usage-emitter.js";
+export type {
+  EntitlementsProvider,
+  EntitlementsUser,
+} from "./entitlements-provider.js";
 export type { CoreDeps } from "./core-deps.js";
