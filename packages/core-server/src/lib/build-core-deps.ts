@@ -8,6 +8,7 @@ import { DefaultIntegrationCredentials } from "./defaults/integration-credential
 import { DefaultQuotaConfig } from "./defaults/quota-config.js";
 import { NoopUsageEmitter } from "./defaults/usage-emitter.js";
 import { DefaultEntitlementsProvider } from "./defaults/entitlements-provider.js";
+import { NoopVpnTunnelProvider } from "./defaults/vpn-tunnel-provider.js";
 
 export interface CoreDepsServices {
   db: DrizzleDB;
@@ -36,5 +37,6 @@ export function buildDefaultCoreDeps(services: CoreDepsServices): CoreDeps {
     quotaConfig: new DefaultQuotaConfig(),
     usageEmitter: new NoopUsageEmitter(),
     entitlementsProvider: new DefaultEntitlementsProvider({ registrationEnabled: services.registrationEnabled }),
+    vpnTunnelProvider: new NoopVpnTunnelProvider(),
   };
 }

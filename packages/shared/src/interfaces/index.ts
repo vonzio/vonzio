@@ -14,4 +14,8 @@ export type {
   EntitlementsProvider,
   EntitlementsUser,
 } from "./entitlements-provider.js";
+export type {
+  VpnTunnelProvider,
+  TunnelInfo,
+} from "./vpn-tunnel-provider.js";
 export type { CoreDeps } from "./core-deps.js";
