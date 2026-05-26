@@ -11,6 +11,20 @@
     "url": "https://github.com/vonzio/core.git",
     "directory": "packages/dashboard"
   },
+  "exports": {
+    "./brand/components": "./src/brand/components.tsx",
+    "./brand/tokens.css": "./src/brand/tokens.css",
+    "./brand/primitives.css": "./src/brand/primitives.css",
+    "./brand/login.css": "./src/pages/login.css",
+    "./lib/utils": "./src/lib/utils.ts",
+    "./lib/auth-client": "./src/lib/auth-client.ts",
+    "./contexts/UserContext": "./src/contexts/UserContext.tsx",
+    "./hooks/useTheme": "./src/hooks/useTheme.ts",
+    "./hooks/use-mobile": "./src/hooks/use-mobile.ts",
+    "./registry": "./src/registry/index.ts",
+    "./App": "./src/App.tsx",
+    "./app.css": "./src/app.css"
+  },
   "scripts": {
     "build": "tsc -b && vite build",
     "dev": "vite",

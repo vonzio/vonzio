@@ -1,13 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  MessageSquare,
-  Bot,
-  CalendarClock,
-  Brain,
   Settings as SettingsIcon,
-  Shield,
-  Activity,
   Menu,
   LogOut,
   ChevronDown,
@@ -15,10 +9,10 @@ import {
   Moon,
 } from "lucide-react";
 import { useUser } from "@/contexts/UserContext.js";
-import { useAppConfig } from "@/contexts/AppConfigContext.js";
 import { authClient } from "@/lib/auth-client.js";
 import { useIsMobile } from "@/hooks/use-mobile.js";
 import { useTheme } from "@/hooks/useTheme.js";
+import { getNavItems, useEntitlements, type NavItemReg } from "@/registry/index.js";
 import {
   AppShell as ShellLayout,
   Rail,
@@ -39,37 +33,27 @@ type RailState = "collapsed" | "expanded" | "mobile-open";
 
 const RAIL_PIN_KEY = "vonzio.rail.pinned";
 
-const primaryNav = [
-  { path: "/", label: "Workspace", icon: MessageSquare, match: (p: string) => p === "/" || p.startsWith("/w/") },
-  { path: "/agents", label: "Agents", icon: Bot, match: (p: string) => p.startsWith("/agents") },
-  { path: "/playbooks", label: "Playbooks", icon: CalendarClock, match: (p: string) => p.startsWith("/playbooks") },
-  { path: "/memories", label: "Memories", icon: Brain, match: (p: string) => p.startsWith("/memories") },
-] as const;
-
-const adminNav = [
-  { path: "/ops", label: "Operations", icon: Activity, match: (p: string) => p.startsWith("/ops"), multitenantOnly: false },
-  { path: "/admin", label: "Admin", icon: Shield, match: (p: string) => p.startsWith("/admin"), multitenantOnly: true },
-] as const;
+function isEntitled(item: NavItemReg, entitlements: string[]): boolean {
+  return !item.entitlement || entitlements.includes(item.entitlement);
+}
 
 function deriveCrumbs(pathname: string): Crumb[] {
-  if (pathname === "/" || pathname.startsWith("/w/")) return [{ label: "Workspace" }];
-  if (pathname.startsWith("/agents")) return [{ label: "Agents" }];
-  if (pathname.startsWith("/playbooks")) return [{ label: "Playbooks" }];
-  if (pathname.startsWith("/memories")) return [{ label: "Memories" }];
-  if (pathname.startsWith("/ops")) return [{ label: "Operations" }];
-  if (pathname.startsWith("/admin")) return [{ label: "Admin" }];
-  if (pathname.startsWith("/settings")) return [{ label: "Settings" }];
-  return [{ label: "vonzio" }];
+  const all = getNavItems();
+  const hit = all.find((it) => (it.match ?? ((p) => p.startsWith(it.to)))(pathname));
+  return [{ label: hit?.label ?? "vonzio" }];
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const user = useUser();
-  const { registrationEnabled } = useAppConfig();
   const location = useLocation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const isAdmin = user.role === "admin";
+  const entitlements = useEntitlements();
   const { surface, toggle: toggleSurface } = useTheme();
+
+  const primaryItems = getNavItems("primary").filter((it) => isEntitled(it, entitlements));
+  const adminItems = getNavItems("admin").filter((it) => isEntitled(it, entitlements));
+  const footerItems = getNavItems("footer").filter((it) => isEntitled(it, entitlements));
 
   const [pinned, setPinned] = useState<boolean>(() => {
     try { return localStorage.getItem(RAIL_PIN_KEY) === "1"; } catch { return false; }
@@ -115,47 +99,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const versionLabel = version === "dev" ? "dev" : `v${version}`;
   const displayName = user.name || user.email?.split("@")[0] || "user";
 
+  const renderNavItem = (it: NavItemReg) => (
+    <RailItem
+      key={it.id}
+      icon={<it.icon size={16} />}
+      active={(it.match ?? ((p) => p.startsWith(it.to)))(location.pathname)}
+      onClick={() => navigate(it.to)}
+    >
+      {it.label}
+    </RailItem>
+  );
+
   const railContent = (
     <Rail>
       <RailBrand>vonzio</RailBrand>
-      <RailGroup label="Work">
-        {primaryNav.map((it) => (
-          <RailItem
-            key={it.path}
-            icon={<it.icon size={16} />}
-            active={it.match(location.pathname)}
-            onClick={() => navigate(it.path)}
-          >
-            {it.label}
-          </RailItem>
-        ))}
-      </RailGroup>
-      {isAdmin && (
-        <RailGroup label="Admin">
-          {adminNav
-            .filter((it) => !it.multitenantOnly || registrationEnabled)
-            .map((it) => (
-              <RailItem
-                key={it.path}
-                icon={<it.icon size={16} />}
-                active={it.match(location.pathname)}
-                onClick={() => navigate(it.path)}
-              >
-                {it.label}
-              </RailItem>
-            ))}
-        </RailGroup>
+      {primaryItems.length > 0 && (
+        <RailGroup label="Work">{primaryItems.map(renderNavItem)}</RailGroup>
+      )}
+      {adminItems.length > 0 && (
+        <RailGroup label="Admin">{adminItems.map(renderNavItem)}</RailGroup>
       )}
       <RailSpacer />
-      <RailGroup>
-        <RailItem
-          icon={<SettingsIcon size={16} />}
-          active={location.pathname.startsWith("/settings")}
-          onClick={() => navigate("/settings")}
-        >
-          Settings
-        </RailItem>
-      </RailGroup>
+      {footerItems.length > 0 && (
+        <RailGroup>{footerItems.map(renderNavItem)}</RailGroup>
+      )}
       {!isMobile && <RailPin pinned={pinned} onToggle={() => setPinned((p) => !p)} />}
     </Rail>
   );

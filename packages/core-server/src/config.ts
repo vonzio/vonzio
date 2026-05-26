@@ -18,7 +18,14 @@ const configSchema = z.object({
   BETTER_AUTH_URL: z.string().default("http://localhost:3000"),
   // Default OFF so OSS self-hosters get a locked-down single-user instance
   // out of the box. SaaS deploys set this explicitly via compose/env.
-  REGISTRATION_ENABLED: z.string().transform((v) => v !== "false").default("false"),
+  // Accept the common false-ish env strings so REGISTRATION_ENABLED=0 (or
+  // no/off/empty) genuinely keeps registration off — the previous
+  // `v !== "false"` test treated those as truthy and silently opened
+  // multi-tenant signup for operators who used non-canonical values.
+  REGISTRATION_ENABLED: z.string().transform((v) => {
+    const lower = v.trim().toLowerCase();
+    return !["false", "0", "no", "off", ""].includes(lower);
+  }).default("false"),
 
   // Email (Resend)
   RESEND_API_KEY: z.string().optional(),

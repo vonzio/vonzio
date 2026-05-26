@@ -4,6 +4,7 @@ import type { SecretVault } from "./secret-vault.js";
 import type { TokenValidator } from "./token-validator.js";
 import type { QuotaConfig } from "./quota-config.js";
 import type { UsageEmitter } from "./usage-emitter.js";
+import type { EntitlementsProvider } from "./entitlements-provider.js";
 
 /**
  * The six seam dependencies that every consumer in the runtime (orchestrator,
@@ -20,4 +21,5 @@ export interface CoreDeps {
   tokenValidator: TokenValidator;
   quotaConfig: QuotaConfig;
   usageEmitter: UsageEmitter;
+  entitlementsProvider: EntitlementsProvider;
 }

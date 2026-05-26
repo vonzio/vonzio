@@ -2,15 +2,7 @@ import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Login } from "./pages/Login.js";
 import { Register } from "./pages/Register.js";
-import { Placeholder } from "./pages/Placeholder.js";
-import Memories from "./pages/Memories.js";
-import { Playbooks } from "./pages/Playbooks.js";
-import { Admin } from "./pages/Admin.js";
-import { Operations } from "./pages/Operations.js";
-import { MyAgents } from "./pages/MyAgents.js";
-import { EditAgent } from "./pages/EditAgent.js";
 import { Settings } from "./pages/Settings.js";
-import { Workspace } from "./pages/Workspace.js";
 import { ChatEmbed } from "./pages/ChatEmbed.js";
 import { AcceptInvite } from "./pages/AcceptInvite.js";
 import { ResetPassword } from "./pages/ResetPassword.js";
@@ -25,6 +17,9 @@ import { UserContext, type User } from "./contexts/UserContext.js";
 import { AppConfigContext } from "./contexts/AppConfigContext.js";
 import { AppShell } from "./components/AppShell.js";
 import { track, initClickTracking } from "./lib/track.js";
+import { EntitlementsProvider, getRoutes, registerDefaults, useEntitlements } from "./registry/index.js";
+
+registerDefaults();
 
 export function App() {
   const { data: session, isPending } = authClient.useSession();
@@ -115,25 +110,91 @@ export function App() {
   return (
     <AppConfigContext.Provider value={{ registrationEnabled }}>
       <UserContext.Provider value={user}>
-        <AppRoutes user={user} registrationEnabled={registrationEnabled} ollamaEnabled={ollamaEnabled} />
+        <EntitlementsGate>
+          <AppRoutes user={user} registrationEnabled={registrationEnabled} ollamaEnabled={ollamaEnabled} />
+        </EntitlementsGate>
       </UserContext.Provider>
     </AppConfigContext.Provider>
   );
 }
 
+// Fetches /api/me on mount and renders children with the returned
+// entitlements. On 401 (session expired server-side while Better Auth's
+// client cache still thinks we're signed in) full-reload to /login so
+// the auth tree can pick it up. On other errors surface a real failure
+// state with a retry button — silently defaulting to ["self_hosted"]
+// would demote paying users to an OSS view on any transient hiccup.
+type GateState =
+  | { status: "loading" }
+  | { status: "ready"; entitlements: string[] }
+  | { status: "error" };
+
+function EntitlementsGate({ children }: { children: React.ReactNode }) {
+  const [state, setState] = useState<GateState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setState({ status: "loading" });
+    fetch("/api/me", { credentials: "include", signal: ctrl.signal })
+      .then(async (r) => {
+        if (r.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+        if (!r.ok) throw new Error(`/api/me HTTP ${r.status}`);
+        const data = (await r.json()) as { entitlements?: unknown };
+        if (!Array.isArray(data.entitlements)) throw new Error("/api/me: malformed entitlements");
+        setState({ status: "ready", entitlements: data.entitlements as string[] });
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        setState({ status: "error" });
+      });
+    return () => ctrl.abort();
+  }, [attempt]);
+  if (state.status === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-sm text-gray-400">Loading...</p>
+      </div>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 gap-3 px-6">
+        <p className="text-sm text-gray-600">Couldn't reach the server. Check your connection.</p>
+        <button
+          type="button"
+          onClick={() => setAttempt((a) => a + 1)}
+          className="text-sm underline text-gray-700 hover:text-gray-900"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+  return <EntitlementsProvider value={state.entitlements}>{children}</EntitlementsProvider>;
+}
+
 function AppRoutes({ user, registrationEnabled, ollamaEnabled }: { user: User; registrationEnabled: boolean; ollamaEnabled: boolean }) {
-  // Fetch profile count to decide whether to route into the onboarding
-  // wizard. Null while loading so we don't redirect off the requested
-  // page before the answer is in.
-  const [profileCount, setProfileCount] = useState<number | null>(null);
+  // Decide whether to route into the onboarding wizard. null while
+  // loading so we don't redirect off the requested page before the
+  // answer is in. Only route to onboarding on a POSITIVE 0-profile
+  // determination — a /v1/profiles 502 during a backend restart used
+  // to drop established users at /onboarding, which is worse than
+  // letting them try to use the app with what they remember.
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   useEffect(() => {
     fetch("/v1/profiles", { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((p) => setProfileCount(Array.isArray(p) ? p.length : 0))
-      .catch(() => setProfileCount(0));
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((p) => setNeedsOnboarding(Array.isArray(p) && p.length === 0))
+      .catch(() => setNeedsOnboarding(false));
   }, []);
 
-  if (profileCount === null) {
+  if (needsOnboarding === null) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <p className="text-sm text-gray-400">Loading...</p>
@@ -144,20 +205,18 @@ function AppRoutes({ user, registrationEnabled, ollamaEnabled }: { user: User; r
   return (
     <BrowserRouter>
       <AppRoutesGuard
-        user={user}
-        registrationEnabled={registrationEnabled}
         ollamaEnabled={ollamaEnabled}
-        needsOnboarding={profileCount === 0}
+        needsOnboarding={needsOnboarding}
       />
     </BrowserRouter>
   );
 }
 
-function AppRoutesGuard({ user, registrationEnabled, ollamaEnabled, needsOnboarding }: { user: User; registrationEnabled: boolean; ollamaEnabled: boolean; needsOnboarding: boolean }) {
+function AppRoutesGuard({ ollamaEnabled, needsOnboarding }: { ollamaEnabled: boolean; needsOnboarding: boolean }) {
   const location = useLocation();
+  const entitlements = useEntitlements();
   useEffect(() => { initClickTracking(); }, []);
   useEffect(() => { track("ui.page_view", { path: location.pathname }); }, [location.pathname]);
-  const isAdmin = user.role === "admin";
 
   // OSS onboarding: signed in but no profile yet. Route into the
   // wizard; most paths redirect there too until they're done. The
@@ -181,26 +240,19 @@ function AppRoutesGuard({ user, registrationEnabled, ollamaEnabled, needsOnboard
     );
   }
 
-  // Phase-1 placeholders. Each route renders inside the new AppShell so the
-  // chrome (rail, topbar, statusbar) is exercised; per-page redesigns swap
-  // the Placeholder for the real page in subsequent commits.
+  const routes = getRoutes().filter(
+    (r) => !r.entitlement || entitlements.includes(r.entitlement),
+  );
+
   return (
     <Routes>
-      <Route path="/" element={<AppShell><Workspace /></AppShell>} />
-      <Route path="/w/:id" element={<AppShell><Workspace /></AppShell>} />
-      <Route path="/agents" element={<AppShell><MyAgents /></AppShell>} />
-      <Route path="/agents/new" element={<AppShell><EditAgent /></AppShell>} />
-      <Route path="/agents/:id/edit" element={<AppShell><EditAgent /></AppShell>} />
-      <Route path="/playbooks" element={<AppShell><Playbooks /></AppShell>} />
-      <Route path="/memories" element={<AppShell><Memories /></AppShell>} />
-      <Route path="/settings" element={<AppShell><Settings /></AppShell>} />
-      {isAdmin && registrationEnabled && (
-        <Route path="/admin" element={<AppShell><Admin /></AppShell>} />
-      )}
-      {isAdmin && (
-        <Route path="/ops" element={<AppShell><Operations /></AppShell>} />
-      )}
-
+      {routes.map((r) => (
+        <Route
+          key={r.id}
+          path={r.path}
+          element={r.layout === "shell" ? <AppShell>{r.element}</AppShell> : r.element}
+        />
+      ))}
       {/* Anything else → Workspace. */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

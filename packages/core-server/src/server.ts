@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -378,10 +378,17 @@ export async function buildServer(deps: ServerDeps) {
     }
   });
 
-  // Six-seam registry for cross-cutting deps (token validation, profile
-  // resolution, integration credentials, secret vault, quotas, usage).
-  // OSS default impls; cp-server (when mounted) swaps in plan-aware ones.
-  const coreDeps = buildDefaultCoreDeps({ db, profileService, secretVaultService, integrationService });
+  // Seven-seam registry for cross-cutting deps (token validation, profile
+  // resolution, integration credentials, secret vault, quotas, usage,
+  // entitlements). OSS default impls; cp-server (when mounted) swaps in
+  // plan-aware ones.
+  const coreDeps = buildDefaultCoreDeps({
+    db,
+    profileService,
+    secretVaultService,
+    integrationService,
+    registrationEnabled: config.REGISTRATION_ENABLED,
+  });
   const authHook = userAuthHook(auth, coreDeps.tokenValidator);
   // Shared preview-auth checker used by chat-surface relays (WS/Telegram/Slack)
   // to mint short-lived _pvt tokens for agent-generated image URLs. Same secret
@@ -402,6 +409,42 @@ export async function buildServer(deps: ServerDeps) {
 
   // Mount Better Auth routes (before auth-guarded routes, after CORS)
   mountBetterAuth(server, auth);
+
+  // Session enrichment: returns the current user plus entitlements computed
+  // by coreDeps.entitlementsProvider. The dashboard fetches this once on
+  // boot and provides the result through EntitlementsProvider context so
+  // routes/nav/settings can self-gate. 401 when no session.
+  server.get("/api/me", async (request, reply) => {
+    try {
+      const headers = fromNodeHeaders(request.headers);
+      const session = await auth.api.getSession({ headers });
+      if (!session?.user) return reply.code(401).send({ error: "unauthorized" });
+      // Better Auth surfaces additionalFields under their schema-registered
+      // key (snake_case `feature_flags` per auth/better-auth.ts), but some
+      // serialization paths camelCase it. Read both like the dashboard
+      // does in App.tsx.
+      const u = session.user as Record<string, unknown> & {
+        id: string;
+        email: string;
+        name?: string | null;
+        role?: string | null;
+      };
+      const featureFlags = (u.feature_flags ?? u.featureFlags ?? undefined) as string | undefined;
+      const entitlements = await coreDeps.entitlementsProvider.compute({
+        id: u.id,
+        email: u.email,
+        role: u.role ?? undefined,
+        featureFlags,
+      });
+      return {
+        user: { id: u.id, email: u.email, name: u.name ?? null, role: u.role ?? null },
+        entitlements,
+      };
+    } catch (err) {
+      server.log.error({ err }, "/api/me failed");
+      return reply.code(500).send({ error: "internal" });
+    }
+  });
 
   // Cross-site session indicator for the marketing site. The marketing
   // surface (vonzio.com) can't read Better Auth's HttpOnly+SameSite=Lax
@@ -599,6 +642,7 @@ export async function buildServer(deps: ServerDeps) {
       auth,
       authHook,
       adminOnlyHook,
+      coreDeps,
       config: {
         BETTER_AUTH_URL: config.BETTER_AUTH_URL,
         EMAIL_FROM: config.EMAIL_FROM,
@@ -653,19 +697,37 @@ export async function buildServer(deps: ServerDeps) {
     });
   }
 
-  // Serve dashboard static files if the build exists
-  const dashboardDist = join(__dirname, "../../dashboard/dist");
+  // Serve dashboard static files if the build exists.
+  // DASHBOARD_DIST env var overrides the default path — SaaS deployments
+  // point this at packages/cp-dashboard/dist to serve the SaaS composition
+  // instead of the OSS shell.
+  const dashboardDist = process.env.DASHBOARD_DIST
+    ? resolve(process.env.DASHBOARD_DIST)
+    : join(__dirname, "../../dashboard/dist");
   if (existsSync(dashboardDist)) {
     server.register(fastifyStatic, {
       root: dashboardDist,
       prefix: "/",
       wildcard: false,
+      cacheControl: false,
+      // Hashed assets ship with content-addressed filenames so they're
+      // immutable for a year; index.html must never be cached because
+      // it references the current bundle's hashes, which change every
+      // deploy.
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("cache-control", "no-cache");
+        } else {
+          res.setHeader("cache-control", "public, max-age=31536000, immutable");
+        }
+      },
     });
     // SPA fallback: serve index.html for unmatched routes
     server.setNotFoundHandler(async (request, reply) => {
       if (request.url.startsWith("/v1") || request.url.startsWith("/admin/") || request.url.startsWith("/api/") || request.url.startsWith("/preview") || request.url.startsWith("/widget")) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Not found"));
       }
+      reply.header("cache-control", "no-cache");
       return reply.sendFile("index.html");
     });
   }

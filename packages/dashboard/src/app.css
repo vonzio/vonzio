@@ -2,6 +2,14 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* Tailwind v4 skips node_modules by default. When this CSS is imported by
+   a downstream package (e.g. @vonzio/cp-dashboard) the dashboard's source
+   lives under node_modules and its utility-class usage would be invisible
+   to the scanner — Workspace.tsx in particular relies on raw utilities
+   (`flex h-full`, `min-w-0`, etc.). Explicitly source the dashboard's own
+   tree so its classes are always generated regardless of who builds. */
+@source "./";
+
 /* Sodium brand foundation — global tokens + primitives. */
 @import "./brand/tokens.css";
 @import "./brand/primitives.css";

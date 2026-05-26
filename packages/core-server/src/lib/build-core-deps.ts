@@ -7,12 +7,14 @@ import { DefaultTokenValidator } from "./defaults/token-validator.js";
 import { DefaultIntegrationCredentials } from "./defaults/integration-credentials.js";
 import { DefaultQuotaConfig } from "./defaults/quota-config.js";
 import { NoopUsageEmitter } from "./defaults/usage-emitter.js";
+import { DefaultEntitlementsProvider } from "./defaults/entitlements-provider.js";
 
 export interface CoreDepsServices {
   db: DrizzleDB;
   profileService: ProfileService;
   secretVaultService: SecretVaultService;
   integrationService: IntegrationService;
+  registrationEnabled: boolean;
 }
 
 /**
@@ -33,5 +35,6 @@ export function buildDefaultCoreDeps(services: CoreDepsServices): CoreDeps {
     tokenValidator: new DefaultTokenValidator(services.db),
     quotaConfig: new DefaultQuotaConfig(),
     usageEmitter: new NoopUsageEmitter(),
+    entitlementsProvider: new DefaultEntitlementsProvider({ registrationEnabled: services.registrationEnabled }),
   };
 }
