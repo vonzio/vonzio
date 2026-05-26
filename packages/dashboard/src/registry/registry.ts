@@ -27,7 +27,15 @@ function createState(): RegistryState {
   };
 }
 
-const state: RegistryState = createState();
+// Pin the registry state to globalThis so Vite HMR re-evaluating this
+// module doesn't blow away the entries other modules already registered.
+// Without this, editing registry.ts in dev clears the Map but defaults.tsx
+// and extension modules don't re-run — net result: empty routes, blank app
+// until a hard reload.
+const GLOBAL_KEY = "__vonzio_registry_state__";
+type GlobalWithRegistry = typeof globalThis & { [GLOBAL_KEY]?: RegistryState };
+const g = globalThis as GlobalWithRegistry;
+const state: RegistryState = g[GLOBAL_KEY] ?? (g[GLOBAL_KEY] = createState());
 
 const DEFAULT_ORDER = 100;
 

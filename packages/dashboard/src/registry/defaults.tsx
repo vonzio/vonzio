@@ -27,12 +27,10 @@ import {
   registerSettingsSection,
 } from "./registry.js";
 
-let registered = false;
-
+// No idempotency guard — Map.set in registry.ts already replaces by id,
+// so calling this twice (e.g. after HMR re-evaluates App.tsx) is harmless
+// and lets defaults survive a registry-module reload.
 export function registerDefaults(): void {
-  if (registered) return;
-  registered = true;
-
   registerNavItem({
     id: "workspace",
     section: "primary",
