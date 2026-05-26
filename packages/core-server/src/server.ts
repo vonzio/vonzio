@@ -633,6 +633,7 @@ export async function buildServer(deps: ServerDeps) {
       auth,
       authHook,
       adminOnlyHook,
+      coreDeps,
       config: {
         BETTER_AUTH_URL: config.BETTER_AUTH_URL,
         EMAIL_FROM: config.EMAIL_FROM,
