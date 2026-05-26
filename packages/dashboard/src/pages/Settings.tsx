@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { PageHeader, PageBody, Tabs } from "../brand/components.js";
-import { getSettingsSections } from "../registry/index.js";
+import { getSettingsSections, useEntitlements } from "../registry/index.js";
 
 export function Settings() {
-  const sections = getSettingsSections();
+  const entitlements = useEntitlements();
+  const sections = getSettingsSections().filter(
+    (s) => !s.entitlement || entitlements.includes(s.entitlement),
+  );
   const tabs = sections.map((s) => ({ value: s.id, label: s.label }));
   const validIds = sections.map((s) => s.id);
   const hashTab = window.location.hash.slice(1);
