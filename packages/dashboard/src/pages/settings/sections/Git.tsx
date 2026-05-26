@@ -73,7 +73,13 @@ export function GitSection() {
     setError("");
     try {
       if (editingId) {
-        await updateUserGitProvider(editingId, { name, type, token, user_name: userName, user_email: userEmail });
+        // openEdit pre-fills `token` with the masked placeholder the server
+        // returned. Sending that back as-is would store "••••••••" as the
+        // real token and break the next git operation. Only include the
+        // field when the user actually typed something new.
+        const payload: Record<string, unknown> = { name, type, user_name: userName, user_email: userEmail };
+        if (token && token !== "••••••••") payload.token = token;
+        await updateUserGitProvider(editingId, payload);
       } else {
         if (!token || token === "••••••••") { setError("Token is required"); return; }
         await createUserGitProvider({ name, type, token, user_name: userName || undefined, user_email: userEmail || undefined });
