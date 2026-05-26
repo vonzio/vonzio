@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import type { TaskQueue } from "@vonzio/shared";
 import type { Task, TaskResult } from "@vonzio/shared";
 import type { ContainerManager } from "@vonzio/shared";
-import type { ConcurrencyLimiter } from "@vonzio/shared";
+import type { ConcurrencyLimiter, VpnTunnelProvider } from "@vonzio/shared";
+import { decrypt } from "../auth/crypto.js";
 import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
@@ -54,6 +55,13 @@ export interface OrchestratorDeps {
   secretVaultService?: SecretVaultService;
   integrationService?: IntegrationService;
   eventLog?: EventLog;
+  /**
+   * Read at request time, not construction time — cp-server mutates
+   * coreDeps.vpnTunnelProvider after the orchestrator is built. A
+   * getter (rather than a direct reference) lets the orchestrator see
+   * the swap.
+   */
+  vpnTunnelProvider?: () => VpnTunnelProvider | undefined;
   db: DrizzleDB;
   log?: Logger;
   config: {
@@ -66,6 +74,8 @@ export interface OrchestratorDeps {
     containerMemorySession: string;
     previewUrlTemplate: string;
     internalServerUrl?: string;
+    /** Used to decrypt VPN tunnel configs before passing to the sidecar. */
+    encryptionKey?: string;
   };
 }
 
@@ -87,6 +97,9 @@ export class Orchestrator extends EventEmitter {
   private processing = false;
   private activeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private activeTasks = new Map<string, ActiveTask>();
+  // Tracks the WireGuard sidecar paired with each agent container so
+  // safeRemoveContainer can clean it up. Empty for OSS (no tunnels).
+  private sidecarsByAgent = new Map<string, string>();
   private memoryTokens = new Map<string, { userId: string; profileId: string }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
@@ -280,6 +293,7 @@ export class Orchestrator extends EventEmitter {
 
       const profile = prefetchedProfile ?? await this.fetchProfile(task);
       const env = await this.buildEnvFromProfile(profile);
+      const vpn = await this.ensureVpnSidecar(profile);
 
       containerId = await this.deps.containerManager.createContainer({
         image: profile.container_image,
@@ -288,11 +302,13 @@ export class Orchestrator extends EventEmitter {
         binds,
         cpus: this.deps.config.containerCpuBatch,
         memory: this.deps.config.containerMemoryBatch,
+        networkMode: vpn?.networkMode,
         labels: {
           "vonzio-mode": "batch",
           "vonzio-task-id": task.id,
         },
       });
+      if (vpn) this.sidecarsByAgent.set(containerId, vpn.sidecarId);
       await this.deps.containerManager.startContainer(containerId);
       this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
       this.emit("task:container", task.id, containerId);
@@ -319,9 +335,16 @@ export class Orchestrator extends EventEmitter {
   private async dispatchPooled(task: Task): Promise<void> {
     const profile = await this.fetchProfile(task);
 
-    // Custom image or setup commands can't use the pool — fall back to batch
-    if (profile.container_image || profile.setup_commands?.length) {
-      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length }, "Pooled incompatible, falling back to batch");
+    // Custom image, setup commands, or an active VPN tunnel — none of
+    // these can ride a pre-warmed pool container. Fall back to batch
+    // so ensureVpnSidecar runs and the agent attaches through the
+    // tunnel's network namespace.
+    const provider = this.deps.vpnTunnelProvider?.();
+    const hasTunnel = profile.user_id && provider
+      ? !!(await provider.resolveActiveTunnel(profile.user_id, profile.id))
+      : false;
+    if (profile.container_image || profile.setup_commands?.length || hasTunnel) {
+      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel }, "Pooled incompatible, falling back to batch");
       return this.dispatchBatch(task, profile);
     }
 
@@ -521,6 +544,7 @@ export class Orchestrator extends EventEmitter {
       binds.push(`${wsVolume}:/workspace`, `${sdkVolume}:/home/agent/.claude`);
     }
 
+    const vpn = await this.ensureVpnSidecar(profile);
     const containerId = await this.deps.containerManager.createContainer({
       image: profile.container_image,
       registryAuth: this.buildRegistryAuth(profile),
@@ -528,11 +552,13 @@ export class Orchestrator extends EventEmitter {
       binds: binds.length > 0 ? binds : undefined,
       cpus: this.deps.config.containerCpuSession,
       memory: this.deps.config.containerMemorySession,
+      networkMode: vpn?.networkMode,
       labels: {
         "vonzio-mode": "session",
         "vonzio-session-id": sessionId,
       },
     });
+    if (vpn) this.sidecarsByAgent.set(containerId, vpn.sidecarId);
     await this.deps.containerManager.startContainer(containerId);
 
     // Fix ownership on named volumes (Docker creates them as root)
@@ -1305,10 +1331,62 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async safeRemoveContainer(containerId: string): Promise<void> {
+    // Pair-remove the VPN sidecar before the agent container so the
+    // agent's network namespace doesn't outlive the tunnel by even a
+    // moment. Failure here is non-fatal — orphaned sidecars get
+    // reaped on next host restart.
+    const sidecarId = this.sidecarsByAgent.get(containerId);
+    if (sidecarId) {
+      this.sidecarsByAgent.delete(containerId);
+      try {
+        await this.deps.containerManager.removeContainer(sidecarId, true);
+      } catch {
+        // Sidecar may already be gone
+      }
+    }
     try {
       await this.deps.containerManager.removeContainer(containerId, true);
     } catch {
       // Container may already be gone
+    }
+  }
+
+  /**
+   * If the agent's profile has an active VPN tunnel, launch a paired
+   * WireGuard sidecar and return its container id + the network_mode
+   * string to attach the agent through. Returns null when no tunnel
+   * is configured (OSS, or SaaS user without a tunnel for this
+   * profile). Errors are logged and treated as "no tunnel" — a
+   * misconfigured tunnel must not break agent launches.
+   */
+  private async ensureVpnSidecar(
+    profile: Profile,
+  ): Promise<{ sidecarId: string; networkMode: string } | null> {
+    const provider = this.deps.vpnTunnelProvider?.();
+    const encryptionKey = this.deps.config.encryptionKey;
+    if (!provider || !encryptionKey || !profile.user_id) return null;
+    try {
+      const tunnel = await provider.resolveActiveTunnel(profile.user_id, profile.id);
+      if (!tunnel) return null;
+      const config = decrypt(tunnel.encryptedConfig, encryptionKey);
+      const sidecarId = await this.deps.containerManager.createContainer({
+        image: tunnel.sidecarImage,
+        env: { WG_CONFIG_B64: Buffer.from(config, "utf8").toString("base64") },
+        capAdd: ["NET_ADMIN"],
+        labels: {
+          "vonzio-mode": "vpn-sidecar",
+          "vonzio-vpn-tunnel-id": tunnel.id,
+        },
+      });
+      await this.deps.containerManager.startContainer(sidecarId);
+      // Phase 1: simple 2s wait for the tunnel to come up. Phase 2
+      // replaces this with `wg show` polling.
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      this.log.info({ tunnelId: tunnel.id, sidecarId }, "VPN sidecar up");
+      return { sidecarId, networkMode: `container:${sidecarId}` };
+    } catch (err) {
+      this.log.error({ err, profileId: profile.id }, "Failed to bring up VPN sidecar; proceeding without tunnel");
+      return null;
     }
   }
 

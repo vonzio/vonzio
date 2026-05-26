@@ -5,6 +5,7 @@ import type { TokenValidator } from "./token-validator.js";
 import type { QuotaConfig } from "./quota-config.js";
 import type { UsageEmitter } from "./usage-emitter.js";
 import type { EntitlementsProvider } from "./entitlements-provider.js";
+import type { VpnTunnelProvider } from "./vpn-tunnel-provider.js";
 
 /**
  * The six seam dependencies that every consumer in the runtime (orchestrator,
@@ -22,4 +23,5 @@ export interface CoreDeps {
   quotaConfig: QuotaConfig;
   usageEmitter: UsageEmitter;
   entitlementsProvider: EntitlementsProvider;
+  vpnTunnelProvider: VpnTunnelProvider;
 }
