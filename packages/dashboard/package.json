@@ -21,7 +21,9 @@
     "./contexts/UserContext": "./src/contexts/UserContext.tsx",
     "./hooks/useTheme": "./src/hooks/useTheme.ts",
     "./hooks/use-mobile": "./src/hooks/use-mobile.ts",
-    "./registry": "./src/registry/index.ts"
+    "./registry": "./src/registry/index.ts",
+    "./App": "./src/App.tsx",
+    "./app.css": "./src/app.css"
   },
   "scripts": {
     "build": "tsc -b && vite build",
