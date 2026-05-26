@@ -18,7 +18,8 @@
     "./db/schema": "./src/db/schema.ts",
     "./email/templates": "./src/email/templates.ts",
     "./errors": "./src/errors.ts",
-    "./auth/user-auth": "./src/auth/user-auth.ts"
+    "./auth/user-auth": "./src/auth/user-auth.ts",
+    "./auth/crypto": "./src/auth/crypto.ts"
   },
   "scripts": {
     "build": "tsc",
