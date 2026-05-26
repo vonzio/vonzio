@@ -25,6 +25,18 @@ import { UserContext, type User } from "./contexts/UserContext.js";
 import { AppConfigContext } from "./contexts/AppConfigContext.js";
 import { AppShell } from "./components/AppShell.js";
 import { track, initClickTracking } from "./lib/track.js";
+import { EntitlementsProvider, registerDefaults } from "./registry/index.js";
+
+registerDefaults();
+
+function computeBaselineEntitlements(user: User, registrationEnabled: boolean): string[] {
+  const ents: string[] = ["self_hosted"];
+  if (user.role === "admin") {
+    ents.push("admin");
+    if (registrationEnabled) ents.push("admin_multitenant");
+  }
+  return ents;
+}
 
 export function App() {
   const { data: session, isPending } = authClient.useSession();
@@ -112,10 +124,14 @@ export function App() {
     feature_flags: ((session.user as Record<string, unknown>).featureFlags ?? (session.user as Record<string, unknown>).feature_flags ?? "") as string,
   };
 
+  const entitlements = computeBaselineEntitlements(user, registrationEnabled);
+
   return (
     <AppConfigContext.Provider value={{ registrationEnabled }}>
       <UserContext.Provider value={user}>
-        <AppRoutes user={user} registrationEnabled={registrationEnabled} ollamaEnabled={ollamaEnabled} />
+        <EntitlementsProvider value={entitlements}>
+          <AppRoutes user={user} registrationEnabled={registrationEnabled} ollamaEnabled={ollamaEnabled} />
+        </EntitlementsProvider>
       </UserContext.Provider>
     </AppConfigContext.Provider>
   );
