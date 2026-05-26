@@ -209,6 +209,20 @@ export async function buildServer(deps: ServerDeps) {
     server.log.info({ containerId }, "Orphan container removed");
   });
 
+  // Eight-seam registry for cross-cutting deps (token validation, profile
+  // resolution, integration credentials, secret vault, quotas, usage,
+  // entitlements, vpn tunnels). OSS default impls; cp-server (when
+  // mounted) swaps in plan-aware ones. Built here (before the orchestrator)
+  // so the orchestrator's runtime reads see cp-server's mutations as soon
+  // as cp-server mounts later in this function.
+  const coreDeps = buildDefaultCoreDeps({
+    db,
+    profileService,
+    secretVaultService,
+    integrationService,
+    registrationEnabled: config.REGISTRATION_ENABLED,
+  });
+
   const orchestrator = new Orchestrator({
     queue,
     containerManager,
@@ -225,6 +239,7 @@ export async function buildServer(deps: ServerDeps) {
     secretVaultService,
     integrationService,
     eventLog,
+    vpnTunnelProvider: () => coreDeps.vpnTunnelProvider,
     db,
     log: server.log,
     config: {
@@ -237,6 +252,7 @@ export async function buildServer(deps: ServerDeps) {
       containerMemorySession: config.CONTAINER_MEMORY_LIMIT_SESSION,
       previewUrlTemplate: config.PREVIEW_URL_TEMPLATE,
       internalServerUrl: config.INTERNAL_SERVER_URL,
+      encryptionKey: config.ENCRYPTION_KEY,
     },
   });
 
@@ -378,17 +394,6 @@ export async function buildServer(deps: ServerDeps) {
     }
   });
 
-  // Seven-seam registry for cross-cutting deps (token validation, profile
-  // resolution, integration credentials, secret vault, quotas, usage,
-  // entitlements). OSS default impls; cp-server (when mounted) swaps in
-  // plan-aware ones.
-  const coreDeps = buildDefaultCoreDeps({
-    db,
-    profileService,
-    secretVaultService,
-    integrationService,
-    registrationEnabled: config.REGISTRATION_ENABLED,
-  });
   const authHook = userAuthHook(auth, coreDeps.tokenValidator);
   // Shared preview-auth checker used by chat-surface relays (WS/Telegram/Slack)
   // to mint short-lived _pvt tokens for agent-generated image URLs. Same secret
