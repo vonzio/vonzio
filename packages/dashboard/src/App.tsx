@@ -21,15 +21,6 @@ import { EntitlementsProvider, getRoutes, registerDefaults, useEntitlements } fr
 
 registerDefaults();
 
-function computeBaselineEntitlements(user: User, registrationEnabled: boolean): string[] {
-  const ents: string[] = ["self_hosted"];
-  if (user.role === "admin") {
-    ents.push("admin");
-    if (registrationEnabled) ents.push("admin_multitenant");
-  }
-  return ents;
-}
-
 export function App() {
   const { data: session, isPending } = authClient.useSession();
   const [registrationEnabled, setRegistrationEnabled] = useState(false);
@@ -116,17 +107,40 @@ export function App() {
     feature_flags: ((session.user as Record<string, unknown>).featureFlags ?? (session.user as Record<string, unknown>).feature_flags ?? "") as string,
   };
 
-  const entitlements = computeBaselineEntitlements(user, registrationEnabled);
-
   return (
     <AppConfigContext.Provider value={{ registrationEnabled }}>
       <UserContext.Provider value={user}>
-        <EntitlementsProvider value={entitlements}>
+        <EntitlementsGate>
           <AppRoutes user={user} registrationEnabled={registrationEnabled} ollamaEnabled={ollamaEnabled} />
-        </EntitlementsProvider>
+        </EntitlementsGate>
       </UserContext.Provider>
     </AppConfigContext.Provider>
   );
+}
+
+// Fetches /api/me on mount, then renders children with the returned
+// entitlements provided through context. On failure (network, 401, 500)
+// falls back to ["self_hosted"] — safe default that gates every
+// non-OSS extension. Held behind a tiny loading state so children never
+// see the empty array.
+function EntitlementsGate({ children }: { children: React.ReactNode }) {
+  const [entitlements, setEntitlements] = useState<string[] | null>(null);
+  useEffect(() => {
+    fetch("/api/me", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { entitlements?: string[] } | null) => {
+        setEntitlements(Array.isArray(data?.entitlements) ? data!.entitlements : ["self_hosted"]);
+      })
+      .catch(() => setEntitlements(["self_hosted"]));
+  }, []);
+  if (entitlements === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-sm text-gray-400">Loading...</p>
+      </div>
+    );
+  }
+  return <EntitlementsProvider value={entitlements}>{children}</EntitlementsProvider>;
 }
 
 function AppRoutes({ user, registrationEnabled, ollamaEnabled }: { user: User; registrationEnabled: boolean; ollamaEnabled: boolean }) {
