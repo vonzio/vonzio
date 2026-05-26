@@ -15,9 +15,16 @@ import Memories from "../pages/Memories.js";
 import { Settings } from "../pages/Settings.js";
 import { Admin } from "../pages/Admin.js";
 import { Operations } from "../pages/Operations.js";
+import { AccountSection } from "../pages/settings/sections/Account.js";
+import { AnthropicKeySection } from "../pages/settings/sections/AnthropicKey.js";
+import { SecretSection } from "../pages/settings/sections/Secret.js";
+import { GitSection } from "../pages/settings/sections/Git.js";
+import { IntegrationSection } from "../pages/settings/sections/Integration.js";
+import { ApiTokenSection } from "../pages/settings/sections/ApiToken.js";
 import {
   registerNavItem,
   registerRoute,
+  registerSettingsSection,
 } from "./registry.js";
 
 let registered = false;
@@ -104,4 +111,11 @@ export function registerDefaults(): void {
   registerRoute({ id: "settings", path: "/settings", element: <Settings />, layout: "shell", order: 50 });
   registerRoute({ id: "ops", path: "/ops", element: <Operations />, layout: "shell", entitlement: "admin", order: 60 });
   registerRoute({ id: "admin", path: "/admin", element: <Admin />, layout: "shell", entitlement: "admin_multitenant", order: 70 });
+
+  registerSettingsSection({ id: "account", label: "Account", lede: "Profile, password, and connected social accounts.", component: AccountSection, order: 10 });
+  registerSettingsSection({ id: "apikeys", label: "Keys", lede: "Anthropic API credentials used by your agent profiles. Bring your own.", component: AnthropicKeySection, order: 20 });
+  registerSettingsSection({ id: "secrets", label: "Secrets", lede: "Encrypted environment variables injected into agent containers at runtime.", component: SecretSection, order: 30 });
+  registerSettingsSection({ id: "git", label: "Git", lede: "Git credentials for cloning private repos. Wire one to a profile to give it write access.", component: GitSection, order: 40 });
+  registerSettingsSection({ id: "integrations", label: "Integrations", lede: "Notifications, chat, and read-only data sources your agents can use.", component: IntegrationSection, order: 50 });
+  registerSettingsSection({ id: "apitokens", label: "API tokens", lede: "API tokens for programmatic access — embed widgets, CLI, or external integrations.", component: ApiTokenSection, order: 60 });
 }
