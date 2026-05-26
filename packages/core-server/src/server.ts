@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -688,8 +688,13 @@ export async function buildServer(deps: ServerDeps) {
     });
   }
 
-  // Serve dashboard static files if the build exists
-  const dashboardDist = join(__dirname, "../../dashboard/dist");
+  // Serve dashboard static files if the build exists.
+  // DASHBOARD_DIST env var overrides the default path — SaaS deployments
+  // point this at packages/cp-dashboard/dist to serve the SaaS composition
+  // instead of the OSS shell.
+  const dashboardDist = process.env.DASHBOARD_DIST
+    ? resolve(process.env.DASHBOARD_DIST)
+    : join(__dirname, "../../dashboard/dist");
   if (existsSync(dashboardDist)) {
     server.register(fastifyStatic, {
       root: dashboardDist,
