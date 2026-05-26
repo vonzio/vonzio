@@ -177,18 +177,24 @@ function EntitlementsGate({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes({ user, registrationEnabled, ollamaEnabled }: { user: User; registrationEnabled: boolean; ollamaEnabled: boolean }) {
-  // Fetch profile count to decide whether to route into the onboarding
-  // wizard. Null while loading so we don't redirect off the requested
-  // page before the answer is in.
-  const [profileCount, setProfileCount] = useState<number | null>(null);
+  // Decide whether to route into the onboarding wizard. null while
+  // loading so we don't redirect off the requested page before the
+  // answer is in. Only route to onboarding on a POSITIVE 0-profile
+  // determination — a /v1/profiles 502 during a backend restart used
+  // to drop established users at /onboarding, which is worse than
+  // letting them try to use the app with what they remember.
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   useEffect(() => {
     fetch("/v1/profiles", { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((p) => setProfileCount(Array.isArray(p) ? p.length : 0))
-      .catch(() => setProfileCount(0));
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((p) => setNeedsOnboarding(Array.isArray(p) && p.length === 0))
+      .catch(() => setNeedsOnboarding(false));
   }, []);
 
-  if (profileCount === null) {
+  if (needsOnboarding === null) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <p className="text-sm text-gray-400">Loading...</p>
@@ -200,7 +206,7 @@ function AppRoutes({ user, registrationEnabled, ollamaEnabled }: { user: User; r
     <BrowserRouter>
       <AppRoutesGuard
         ollamaEnabled={ollamaEnabled}
-        needsOnboarding={profileCount === 0}
+        needsOnboarding={needsOnboarding}
       />
     </BrowserRouter>
   );
