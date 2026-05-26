@@ -14,6 +14,12 @@ export interface TunnelInfo {
    * the default provider returns null.
    */
   sidecarImage: string;
+  /**
+   * Optional second encrypted blob carried by protocols that need
+   * additional credentials beyond the main config (e.g. OpenVPN's
+   * username/password for `--auth-user-pass`). WireGuard ignores it.
+   */
+  authBlobEncrypted?: string;
 }
 
 /**

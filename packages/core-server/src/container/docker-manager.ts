@@ -53,6 +53,15 @@ export class DockerManager implements ContainerManager {
         Memory: memoryBytes,
         NetworkMode: opts.networkMode ?? this.networkName,
         CapAdd: opts.capAdd,
+        Devices: opts.devices?.map((d) => {
+          // Accept "host" or "host:container" or "host:container:perms".
+          const [host, container, perms] = d.split(":");
+          return {
+            PathOnHost: host,
+            PathInContainer: container ?? host,
+            CgroupPermissions: perms ?? "rwm",
+          };
+        }),
         ShmSize: 256 * 1024 * 1024, // 256MB — needed for Chrome/Chromium
       },
       WorkingDir: "/workspace",

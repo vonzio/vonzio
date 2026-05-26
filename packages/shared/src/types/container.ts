@@ -8,6 +8,10 @@ export interface ContainerCreateOptions {
   networkMode?: string;
   /** Linux capabilities to add (e.g. NET_ADMIN for WireGuard sidecars). */
   capAdd?: string[];
+  /** Devices to expose into the container, formatted as Docker device
+   *  strings (e.g. "/dev/net/tun" or "/dev/foo:/dev/bar:rwm"). OpenVPN
+   *  sidecars require /dev/net/tun. */
+  devices?: string[];
   labels?: Record<string, string>;
 }
 
