@@ -52,6 +52,7 @@ export class DockerManager implements ContainerManager {
         NanoCpus: opts.cpus ? Math.floor(opts.cpus * 1e9) : undefined,
         Memory: memoryBytes,
         NetworkMode: opts.networkMode ?? this.networkName,
+        CapAdd: opts.capAdd,
         ShmSize: 256 * 1024 * 1024, // 256MB — needed for Chrome/Chromium
       },
       WorkingDir: "/workspace",

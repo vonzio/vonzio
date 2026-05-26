@@ -6,6 +6,8 @@ export interface ContainerCreateOptions {
   cpus?: number;
   memory?: string;
   networkMode?: string;
+  /** Linux capabilities to add (e.g. NET_ADMIN for WireGuard sidecars). */
+  capAdd?: string[];
   labels?: Record<string, string>;
 }
 

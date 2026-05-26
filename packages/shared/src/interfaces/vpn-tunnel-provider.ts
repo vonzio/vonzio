@@ -8,6 +8,12 @@ export interface TunnelInfo {
   name: string;
   type: string;
   encryptedConfig: string;
+  /**
+   * Docker image to launch as the sidecar. SaaS deployments pin this
+   * (e.g. "vonzio/wireguard-sidecar:0.1.0"); OSS never sees it because
+   * the default provider returns null.
+   */
+  sidecarImage: string;
 }
 
 /**
