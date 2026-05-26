@@ -118,29 +118,62 @@ export function App() {
   );
 }
 
-// Fetches /api/me on mount, then renders children with the returned
-// entitlements provided through context. On failure (network, 401, 500)
-// falls back to ["self_hosted"] — safe default that gates every
-// non-OSS extension. Held behind a tiny loading state so children never
-// see the empty array.
+// Fetches /api/me on mount and renders children with the returned
+// entitlements. On 401 (session expired server-side while Better Auth's
+// client cache still thinks we're signed in) full-reload to /login so
+// the auth tree can pick it up. On other errors surface a real failure
+// state with a retry button — silently defaulting to ["self_hosted"]
+// would demote paying users to an OSS view on any transient hiccup.
+type GateState =
+  | { status: "loading" }
+  | { status: "ready"; entitlements: string[] }
+  | { status: "error" };
+
 function EntitlementsGate({ children }: { children: React.ReactNode }) {
-  const [entitlements, setEntitlements] = useState<string[] | null>(null);
+  const [state, setState] = useState<GateState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    fetch("/api/me", { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { entitlements?: string[] } | null) => {
-        setEntitlements(Array.isArray(data?.entitlements) ? data!.entitlements : ["self_hosted"]);
+    const ctrl = new AbortController();
+    setState({ status: "loading" });
+    fetch("/api/me", { credentials: "include", signal: ctrl.signal })
+      .then(async (r) => {
+        if (r.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+        if (!r.ok) throw new Error(`/api/me HTTP ${r.status}`);
+        const data = (await r.json()) as { entitlements?: unknown };
+        if (!Array.isArray(data.entitlements)) throw new Error("/api/me: malformed entitlements");
+        setState({ status: "ready", entitlements: data.entitlements as string[] });
       })
-      .catch(() => setEntitlements(["self_hosted"]));
-  }, []);
-  if (entitlements === null) {
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        setState({ status: "error" });
+      });
+    return () => ctrl.abort();
+  }, [attempt]);
+  if (state.status === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <p className="text-sm text-gray-400">Loading...</p>
       </div>
     );
   }
-  return <EntitlementsProvider value={entitlements}>{children}</EntitlementsProvider>;
+  if (state.status === "error") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 gap-3 px-6">
+        <p className="text-sm text-gray-600">Couldn't reach the server. Check your connection.</p>
+        <button
+          type="button"
+          onClick={() => setAttempt((a) => a + 1)}
+          className="text-sm underline text-gray-700 hover:text-gray-900"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+  return <EntitlementsProvider value={state.entitlements}>{children}</EntitlementsProvider>;
 }
 
 function AppRoutes({ user, registrationEnabled, ollamaEnabled }: { user: User; registrationEnabled: boolean; ollamaEnabled: boolean }) {
