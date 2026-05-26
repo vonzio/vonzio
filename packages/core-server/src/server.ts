@@ -415,26 +415,35 @@ export async function buildServer(deps: ServerDeps) {
   // boot and provides the result through EntitlementsProvider context so
   // routes/nav/settings can self-gate. 401 when no session.
   server.get("/api/me", async (request, reply) => {
-    const headers = fromNodeHeaders(request.headers);
-    const session = await auth.api.getSession({ headers });
-    if (!session?.user) return reply.code(401).send({ error: "unauthorized" });
-    const u = session.user as {
-      id: string;
-      email: string;
-      name?: string | null;
-      role?: string | null;
-      featureFlags?: string | null;
-    };
-    const entitlements = await coreDeps.entitlementsProvider.compute({
-      id: u.id,
-      email: u.email,
-      role: u.role ?? undefined,
-      featureFlags: u.featureFlags ?? undefined,
-    });
-    return {
-      user: { id: u.id, email: u.email, name: u.name ?? null, role: u.role ?? null },
-      entitlements,
-    };
+    try {
+      const headers = fromNodeHeaders(request.headers);
+      const session = await auth.api.getSession({ headers });
+      if (!session?.user) return reply.code(401).send({ error: "unauthorized" });
+      // Better Auth surfaces additionalFields under their schema-registered
+      // key (snake_case `feature_flags` per auth/better-auth.ts), but some
+      // serialization paths camelCase it. Read both like the dashboard
+      // does in App.tsx.
+      const u = session.user as Record<string, unknown> & {
+        id: string;
+        email: string;
+        name?: string | null;
+        role?: string | null;
+      };
+      const featureFlags = (u.feature_flags ?? u.featureFlags ?? undefined) as string | undefined;
+      const entitlements = await coreDeps.entitlementsProvider.compute({
+        id: u.id,
+        email: u.email,
+        role: u.role ?? undefined,
+        featureFlags,
+      });
+      return {
+        user: { id: u.id, email: u.email, name: u.name ?? null, role: u.role ?? null },
+        entitlements,
+      };
+    } catch (err) {
+      server.log.error({ err }, "/api/me failed");
+      return reply.code(500).send({ error: "internal" });
+    }
   });
 
   // Cross-site session indicator for the marketing site. The marketing
