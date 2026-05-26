@@ -647,6 +647,7 @@ export async function buildServer(deps: ServerDeps) {
         BETTER_AUTH_URL: config.BETTER_AUTH_URL,
         EMAIL_FROM: config.EMAIL_FROM,
         RESEND_API_KEY: config.RESEND_API_KEY,
+        ENCRYPTION_KEY: config.ENCRYPTION_KEY,
       },
     });
     server.log.info("cp-server mounted (multi-tenant control plane)");
