@@ -2,15 +2,7 @@ import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Login } from "./pages/Login.js";
 import { Register } from "./pages/Register.js";
-import { Placeholder } from "./pages/Placeholder.js";
-import Memories from "./pages/Memories.js";
-import { Playbooks } from "./pages/Playbooks.js";
-import { Admin } from "./pages/Admin.js";
-import { Operations } from "./pages/Operations.js";
-import { MyAgents } from "./pages/MyAgents.js";
-import { EditAgent } from "./pages/EditAgent.js";
 import { Settings } from "./pages/Settings.js";
-import { Workspace } from "./pages/Workspace.js";
 import { ChatEmbed } from "./pages/ChatEmbed.js";
 import { AcceptInvite } from "./pages/AcceptInvite.js";
 import { ResetPassword } from "./pages/ResetPassword.js";
@@ -25,7 +17,7 @@ import { UserContext, type User } from "./contexts/UserContext.js";
 import { AppConfigContext } from "./contexts/AppConfigContext.js";
 import { AppShell } from "./components/AppShell.js";
 import { track, initClickTracking } from "./lib/track.js";
-import { EntitlementsProvider, registerDefaults } from "./registry/index.js";
+import { EntitlementsProvider, getRoutes, registerDefaults, useEntitlements } from "./registry/index.js";
 
 registerDefaults();
 
@@ -160,8 +152,6 @@ function AppRoutes({ user, registrationEnabled, ollamaEnabled }: { user: User; r
   return (
     <BrowserRouter>
       <AppRoutesGuard
-        user={user}
-        registrationEnabled={registrationEnabled}
         ollamaEnabled={ollamaEnabled}
         needsOnboarding={profileCount === 0}
       />
@@ -169,11 +159,11 @@ function AppRoutes({ user, registrationEnabled, ollamaEnabled }: { user: User; r
   );
 }
 
-function AppRoutesGuard({ user, registrationEnabled, ollamaEnabled, needsOnboarding }: { user: User; registrationEnabled: boolean; ollamaEnabled: boolean; needsOnboarding: boolean }) {
+function AppRoutesGuard({ ollamaEnabled, needsOnboarding }: { ollamaEnabled: boolean; needsOnboarding: boolean }) {
   const location = useLocation();
+  const entitlements = useEntitlements();
   useEffect(() => { initClickTracking(); }, []);
   useEffect(() => { track("ui.page_view", { path: location.pathname }); }, [location.pathname]);
-  const isAdmin = user.role === "admin";
 
   // OSS onboarding: signed in but no profile yet. Route into the
   // wizard; most paths redirect there too until they're done. The
@@ -197,26 +187,19 @@ function AppRoutesGuard({ user, registrationEnabled, ollamaEnabled, needsOnboard
     );
   }
 
-  // Phase-1 placeholders. Each route renders inside the new AppShell so the
-  // chrome (rail, topbar, statusbar) is exercised; per-page redesigns swap
-  // the Placeholder for the real page in subsequent commits.
+  const routes = getRoutes().filter(
+    (r) => !r.entitlement || entitlements.includes(r.entitlement),
+  );
+
   return (
     <Routes>
-      <Route path="/" element={<AppShell><Workspace /></AppShell>} />
-      <Route path="/w/:id" element={<AppShell><Workspace /></AppShell>} />
-      <Route path="/agents" element={<AppShell><MyAgents /></AppShell>} />
-      <Route path="/agents/new" element={<AppShell><EditAgent /></AppShell>} />
-      <Route path="/agents/:id/edit" element={<AppShell><EditAgent /></AppShell>} />
-      <Route path="/playbooks" element={<AppShell><Playbooks /></AppShell>} />
-      <Route path="/memories" element={<AppShell><Memories /></AppShell>} />
-      <Route path="/settings" element={<AppShell><Settings /></AppShell>} />
-      {isAdmin && registrationEnabled && (
-        <Route path="/admin" element={<AppShell><Admin /></AppShell>} />
-      )}
-      {isAdmin && (
-        <Route path="/ops" element={<AppShell><Operations /></AppShell>} />
-      )}
-
+      {routes.map((r) => (
+        <Route
+          key={r.id}
+          path={r.path}
+          element={r.layout === "shell" ? <AppShell>{r.element}</AppShell> : r.element}
+        />
+      ))}
       {/* Anything else → Workspace. */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
