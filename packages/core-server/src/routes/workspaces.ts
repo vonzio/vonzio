@@ -81,18 +81,24 @@ export const workspaceRoutes = fp(
 
     server.delete<{ Params: { id: string } }>("/v1/workspaces/:id", {
       schema: {
-        summary: "Terminate a workspace",
-        description: "Stops and removes the underlying container. The workspace row remains for history.",
+        summary: "Delete a workspace",
+        description:
+          "Fully removes the workspace: tears down any live container and drops the DB row. " +
+          "Works for both active and expired workspaces (the sidebar surfaces both).",
         tags: ["Workspaces"],
         params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
       },
     }, async (request, reply) => {
-      const session = workspaceService.get(request.params.id);
-      if (!session || !isOwnerOrAdmin(request.user!, session.user_id)) {
+      // Ownership lookup goes through findOwnerForDelete so that expired
+      // workspaces (which aren't in the in-memory registry) still resolve
+      // their owner from the DB. Before this, expired workspaces 404'd on
+      // delete even though they were visible in the sidebar history view.
+      const ownerId = await workspaceService.findOwnerForDelete(request.params.id);
+      if (!ownerId || !isOwnerOrAdmin(request.user!, ownerId)) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Session not found"));
       }
-      await workspaceService.terminate(request.params.id);
-      return { status: "terminated", session_id: request.params.id };
+      await workspaceService.delete(request.params.id);
+      return { status: "deleted", session_id: request.params.id };
     });
 
     server.patch<{

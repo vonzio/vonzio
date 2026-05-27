@@ -172,4 +172,53 @@ export class WorkspaceService {
     this.registry.remove(sessionId);
     return true;
   }
+
+  /**
+   * Fully delete a workspace: tear down any live container, drop the
+   * row from the DB, and clear the in-memory registry entry. Unlike
+   * `terminate`, this works for already-expired workspaces (which are
+   * absent from the in-memory map and stay around in the DB as
+   * history). Used by the dashboard's trash-icon action — users
+   * expect "Delete" to mean gone, not just hidden.
+   *
+   * Returns the row's user_id when found (so callers can do their own
+   * ownership check before calling), or null when the row doesn't
+   * exist. Caller is responsible for the auth gate.
+   */
+  async findOwnerForDelete(sessionId: string): Promise<string | null> {
+    const live = this.registry.get(sessionId);
+    if (live) return live.user_id;
+    const rows = await this.db
+      .select({ user_id: schema.workspaces.user_id, container_id: schema.workspaces.container_id })
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.session_id, sessionId))
+      .limit(1);
+    return rows[0]?.user_id ?? null;
+  }
+
+  async delete(sessionId: string): Promise<boolean> {
+    const live = this.registry.get(sessionId);
+    let containerId: string | null = live?.container_id ?? null;
+    if (!live) {
+      // Expired workspaces aren't in the in-memory registry; load the
+      // container id from DB so we can still try to tear it down.
+      const rows = await this.db
+        .select({ container_id: schema.workspaces.container_id })
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.session_id, sessionId))
+        .limit(1);
+      if (rows.length === 0) return false;
+      containerId = rows[0].container_id ?? null;
+    }
+    if (containerId) {
+      try {
+        await this.containerManager.removeContainer(containerId, true);
+      } catch {
+        // Container already gone — normal for expired workspaces.
+      }
+    }
+    if (live) this.registry.remove(sessionId);
+    await this.db.delete(schema.workspaces).where(eq(schema.workspaces.session_id, sessionId));
+    return true;
+  }
 }
