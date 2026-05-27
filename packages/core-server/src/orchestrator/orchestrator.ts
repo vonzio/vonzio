@@ -310,6 +310,9 @@ export class Orchestrator extends EventEmitter {
       });
       if (vpn) this.sidecarsByAgent.set(containerId, vpn.sidecarId);
       await this.deps.containerManager.startContainer(containerId);
+      if (vpn?.dns?.length) {
+        await this.applyTunnelDns(containerId, vpn.dns, vpn.searchDomains);
+      }
       this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
       this.emit("task:container", task.id, containerId);
 
@@ -560,6 +563,9 @@ export class Orchestrator extends EventEmitter {
     });
     if (vpn) this.sidecarsByAgent.set(containerId, vpn.sidecarId);
     await this.deps.containerManager.startContainer(containerId);
+    if (vpn?.dns?.length) {
+      await this.applyTunnelDns(containerId, vpn.dns, vpn.searchDomains);
+    }
 
     // Fix ownership on named volumes (Docker creates them as root)
     if (volumeId) {
@@ -1361,7 +1367,7 @@ export class Orchestrator extends EventEmitter {
    */
   private async ensureVpnSidecar(
     profile: Profile,
-  ): Promise<{ sidecarId: string; networkMode: string } | null> {
+  ): Promise<{ sidecarId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
     const provider = this.deps.vpnTunnelProvider?.();
     const encryptionKey = this.deps.config.encryptionKey;
     if (!provider || !encryptionKey || !profile.user_id) return null;
@@ -1393,14 +1399,93 @@ export class Orchestrator extends EventEmitter {
         },
       });
       await this.deps.containerManager.startContainer(sidecarId);
-      // Phase 1: simple 2s wait for the tunnel to come up. Phase 2
-      // replaces this with `wg show` polling.
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      this.log.info({ tunnelId: tunnel.id, sidecarId }, "VPN sidecar up");
-      return { sidecarId, networkMode: `container:${sidecarId}` };
+
+      let dns: string[] | undefined;
+      let searchDomains: string[] | undefined;
+      if (tunnel.type === "openvpn") {
+        // Wait for openvpn's --up script to write the pushed-DNS file.
+        // The script runs after the tunnel completes its handshake.
+        const pushed = await this.readPushedDnsFromSidecar(sidecarId);
+        if (pushed) {
+          dns = pushed.dns;
+          searchDomains = pushed.searchDomains;
+        }
+      } else {
+        // WireGuard: kernel sets things up instantly; brief settle.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      this.log.info({ tunnelId: tunnel.id, sidecarId, dns, searchDomains }, "VPN sidecar up");
+      return { sidecarId, networkMode: `container:${sidecarId}`, dns, searchDomains };
     } catch (err) {
       this.log.error({ err, profileId: profile.id }, "Failed to bring up VPN sidecar; proceeding without tunnel");
       return null;
+    }
+  }
+
+  /**
+   * Polls the OpenVPN sidecar for the DNS info its --up script writes
+   * to /tmp/vpn-pushed-dns once the tunnel handshake completes. Returns
+   * null if the file never appears (timeout) or is empty (server pushed
+   * no DNS). Worst-case wait is ~10s; typical is <2s.
+   */
+  private async readPushedDnsFromSidecar(
+    sidecarId: string,
+  ): Promise<{ dns: string[]; searchDomains: string[] } | null> {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      try {
+        const buf = await this.deps.containerManager.readFile(sidecarId, "/tmp/vpn-pushed-dns");
+        const text = buf.toString("utf8");
+        const dns: string[] = [];
+        const searchDomains: string[] = [];
+        for (const line of text.split("\n")) {
+          const parts = line.trim().split(/\s+/);
+          if (parts[0] === "DNS" && parts[1]) dns.push(parts[1]);
+          else if (parts[0] === "SEARCH" && parts[1]) searchDomains.push(parts[1]);
+        }
+        if (dns.length === 0) return null;
+        return { dns, searchDomains };
+      } catch {
+        // File not yet written; wait and retry.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    this.log.warn({ sidecarId }, "Timed out waiting for VPN sidecar to push DNS — agent may not resolve tunneled hostnames");
+    return null;
+  }
+
+  /**
+   * Rewrites the agent container's /etc/resolv.conf so DNS queries go
+   * to the tunnel's pushed DNS server instead of Docker's embedded
+   * resolver. Best-effort: an exec failure is logged but doesn't break
+   * the agent.
+   */
+  private async applyTunnelDns(
+    agentId: string,
+    dns: string[],
+    searchDomains?: string[],
+  ): Promise<void> {
+    if (dns.length === 0) return;
+    try {
+      const lines: string[] = dns.map((ns) => `nameserver ${ns}`);
+      if (searchDomains && searchDomains.length > 0) {
+        lines.push(`search ${searchDomains.join(" ")}`);
+      }
+      const content = lines.join("\n") + "\n";
+      const stream = this.deps.containerManager.execInContainer(
+        agentId,
+        ["sh", "-c", "cat > /etc/resolv.conf"],
+        content,
+        undefined,
+        "root",
+      );
+      for await (const _ of stream) {
+        // drain
+      }
+      this.log.info({ agentId, dns, searchDomains }, "Applied tunnel DNS to agent");
+    } catch (err) {
+      this.log.error({ err, agentId }, "Failed to apply tunnel DNS to agent — agent may not resolve tunneled hostnames");
     }
   }
 
