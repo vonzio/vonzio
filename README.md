@@ -5,8 +5,8 @@
 <h1 align="center">vonzio</h1>
 
 <p align="center">
-  Self-host your own Claude Code agent platform.<br>
-  An open-source runtime for autonomous coding agents in isolated Docker containers.
+  The runtime for production agents — bring your own model.<br>
+  Open-source, self-hostable, isolated Docker workspaces per session.
 </p>
 
 <p align="center">
@@ -20,9 +20,9 @@
 
 ## What it does
 
-vonzio runs Claude (or Ollama Cloud) agents in fresh Docker containers — one per conversation. You bring a credential, vonzio brings the orchestration: a chat UI, a workspace for files, a session that remembers, MCP tools, integrations, and an embeddable chat widget.
+vonzio runs agents in fresh Docker containers — one per conversation. You bring a credential for any supported model provider; vonzio brings the orchestration: a chat UI, a workspace for files, a session that remembers, MCP tools, integrations, and an embeddable chat widget.
 
-- **Agent runtime** — Claude Sonnet/Opus/Haiku, Anthropic subscription tokens, and Ollama Cloud
+- **Provider-agnostic** — Anthropic (Claude Sonnet/Opus/Haiku), Anthropic subscription tokens, Ollama Cloud, and any OpenAI-compatible endpoint. Pick per profile or per workspace.
 - **Containerized sessions** — each conversation runs in its own Docker container with a bind-mounted workspace
 - **Chat surface + widget** — full dashboard for direct use, plus a `/chat` embed you can drop into any page
 - **Integrations** — GitHub, GitLab, Bitbucket, Slack, Telegram, Gmail, Teller
