@@ -109,10 +109,14 @@ export class Orchestrator extends EventEmitter {
   // given tunnel share the same network namespace via
   // network_mode: container:<sidecarId>. Avoids duplicate-cert
   // connections that CHW-style OpenVPN servers reject.
+  // `version` is the tunnel row's updated_at; on reuse we compare with
+  // the current tunnel's version to detect config changes (e.g.
+  // egress_lockdown toggled) and rebuild the sidecar.
   private sidecarsByTunnel = new Map<string, {
     sidecarId: string;
     networkMode: string;
     refCount: number;
+    version: string;
     dns?: string[];
     searchDomains?: string[];
   }>();
@@ -1487,25 +1491,51 @@ export class Orchestrator extends EventEmitter {
       if (!tunnel) return null;
 
       // Reuse path: another agent already brought up a sidecar for
-      // this tunnel. Increment refcount, cancel any pending teardown,
-      // and return its info.
+      // this tunnel. Validate the cached sidecar's config is still
+      // current (no tunnel row updates since); if stale, evict and
+      // fall through to creation. Otherwise increment refcount,
+      // cancel any pending teardown, and return its info.
       const cached = this.sidecarsByTunnel.get(tunnel.id);
       if (cached) {
-        cached.refCount++;
-        const pendingTeardown = this.sidecarTeardownTimers.get(tunnel.id);
-        if (pendingTeardown) {
-          clearTimeout(pendingTeardown);
-          this.sidecarTeardownTimers.delete(tunnel.id);
-          this.log.info({ tunnelId: tunnel.id }, "Cancelled pending VPN sidecar teardown — new agent attached");
+        if (cached.version !== tunnel.version) {
+          this.log.info({ tunnelId: tunnel.id, cachedVersion: cached.version, currentVersion: tunnel.version, refCount: cached.refCount }, "VPN sidecar config changed — evicting cached sidecar");
+          const pendingTeardown = this.sidecarTeardownTimers.get(tunnel.id);
+          if (pendingTeardown) {
+            clearTimeout(pendingTeardown);
+            this.sidecarTeardownTimers.delete(tunnel.id);
+          }
+          // Evict from map BEFORE destroying so concurrent dispatches
+          // miss the cache and serialize via sidecarInFlight on the
+          // new entry. Existing attached agents (refCount>0) keep
+          // their network namespace until they terminate — we don't
+          // force-disconnect to protect in-flight work. They finish
+          // on the OLD config; new dispatches get the new one.
+          this.sidecarsByTunnel.delete(tunnel.id);
+          if (cached.refCount === 0) {
+            try {
+              await this.deps.containerManager.removeContainer(cached.sidecarId, true);
+            } catch {
+              // already gone
+            }
+          }
+          // Fall through to creation path below.
+        } else {
+          cached.refCount++;
+          const pendingTeardown = this.sidecarTeardownTimers.get(tunnel.id);
+          if (pendingTeardown) {
+            clearTimeout(pendingTeardown);
+            this.sidecarTeardownTimers.delete(tunnel.id);
+            this.log.info({ tunnelId: tunnel.id }, "Cancelled pending VPN sidecar teardown — new agent attached");
+          }
+          this.log.info({ tunnelId: tunnel.id, sidecarId: cached.sidecarId, refCount: cached.refCount }, "VPN sidecar reused");
+          return {
+            sidecarId: cached.sidecarId,
+            tunnelId: tunnel.id,
+            networkMode: cached.networkMode,
+            dns: cached.dns,
+            searchDomains: cached.searchDomains,
+          };
         }
-        this.log.info({ tunnelId: tunnel.id, sidecarId: cached.sidecarId, refCount: cached.refCount }, "VPN sidecar reused");
-        return {
-          sidecarId: cached.sidecarId,
-          tunnelId: tunnel.id,
-          networkMode: cached.networkMode,
-          dns: cached.dns,
-          searchDomains: cached.searchDomains,
-        };
       }
 
       // Serialize concurrent creation for the same tunnel — two
@@ -1542,7 +1572,7 @@ export class Orchestrator extends EventEmitter {
    *  bookkeeping. Called only by ensureVpnSidecar via the in-flight
    *  serialization. */
   private async createSidecar(
-    tunnel: { id: string; type: string; encryptedConfig: string; authBlobEncrypted?: string; egressLockdown?: boolean; sidecarImage: string },
+    tunnel: { id: string; type: string; encryptedConfig: string; authBlobEncrypted?: string; egressLockdown?: boolean; sidecarImage: string; version: string },
     provider: NonNullable<ReturnType<NonNullable<OrchestratorDeps["vpnTunnelProvider"]>>>,
     encryptionKey: string,
   ): Promise<{ sidecarId: string; tunnelId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
@@ -1589,6 +1619,7 @@ export class Orchestrator extends EventEmitter {
       sidecarId,
       networkMode,
       refCount: 1,
+      version: tunnel.version,
       dns,
       searchDomains,
     });
