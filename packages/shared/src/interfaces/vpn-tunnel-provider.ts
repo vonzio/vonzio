@@ -26,6 +26,15 @@ export interface TunnelInfo {
    * blocked. Compliance-grade isolation.
    */
   egressLockdown?: boolean;
+  /**
+   * Monotonic version tag (the row's updated_at). Orchestrator
+   * compares this against the cached sidecar's stored version; on
+   * change, the cached sidecar is torn down so the next agent dispatch
+   * gets a fresh one with the new config (e.g. lockdown toggled,
+   * config rotated). Existing attached agents finish on the stale
+   * sidecar — no force-disconnect.
+   */
+  version: string;
 }
 
 /**
