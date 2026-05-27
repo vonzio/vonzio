@@ -192,6 +192,22 @@ export class SessionRegistry {
     }
   }
 
+  /** Drop the container pointer so the next dispatch hits the
+   *  resurrection path. Used when an external trigger (e.g. tunnel
+   *  override applied mid-session) needs to force a fresh container
+   *  without destroying the workspace itself. */
+  async clearContainer(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.container_id = null;
+      session.status = "resumable";
+      await this.db
+        .update(schema.workspaces)
+        .set({ container_id: null, status: "resumable" as WorkspaceStatus })
+        .where(eq(schema.workspaces.session_id, sessionId));
+    }
+  }
+
   async setVolumeId(sessionId: string, volumeId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session) {

@@ -19,7 +19,8 @@
     "./email/templates": "./src/email/templates.ts",
     "./errors": "./src/errors.ts",
     "./auth/user-auth": "./src/auth/user-auth.ts",
-    "./auth/crypto": "./src/auth/crypto.ts"
+    "./auth/crypto": "./src/auth/crypto.ts",
+    "./orchestrator/orchestrator": "./src/orchestrator/orchestrator.ts"
   },
   "scripts": {
     "build": "tsc",

@@ -1,4 +1,6 @@
 export type {
+  ComposerSlotProps,
+  ComposerSlotReg,
   Entitlement,
   NavItemReg,
   NavSection,
@@ -15,6 +17,7 @@ export type {
 } from "./types.js";
 
 export {
+  getComposerSlots,
   getNavItems,
   getOnboardingSteps,
   getRoutes,
@@ -22,6 +25,7 @@ export {
   getTopbarSlots,
   getUserMenuItems,
   getWorkspaceHeaderSlots,
+  registerComposerSlot,
   registerNavItem,
   registerOnboardingStep,
   registerRoute,

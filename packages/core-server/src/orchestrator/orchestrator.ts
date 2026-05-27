@@ -202,6 +202,105 @@ export class Orchestrator extends EventEmitter {
     return { id: pair.tunnelId, name: entry.name };
   }
 
+  /**
+   * Bring up the VPN sidecar for (userId, profileId, workspaceId) eagerly,
+   * before any agent dispatch. Used by the composer's tunnel picker so
+   * the first message doesn't pay the cold-start handshake.
+   *
+   * The sidecar is created with refCount=1 (same as a real attach), then
+   * we immediately release the hold — that schedules the standard
+   * SIDECAR_TEARDOWN_GRACE_MS teardown. So the sidecar stays warm for
+   * ~60s; if the user sends within that window the existing reuse path
+   * cancels the teardown timer and attaches the agent. If they abandon,
+   * the sidecar disappears on its own.
+   */
+  async warmupTunnel(
+    userId: string,
+    profileId: string,
+    workspaceId?: string,
+  ): Promise<{ tunnelId: string; alreadyWarm: boolean } | null> {
+    const provider = this.deps.vpnTunnelProvider?.();
+    const encryptionKey = this.deps.config.encryptionKey;
+    if (!provider || !encryptionKey) return null;
+    const tunnel = await provider.resolveActiveTunnel(userId, profileId, workspaceId);
+    if (!tunnel) return null;
+    // Fast path: sidecar already up for this tunnel. The cache check
+    // mirrors ensureVpnSidecar's reuse logic without bumping refCount,
+    // so we don't leave a hold to be released. The user's eventual
+    // agent dispatch will hit the same cache.
+    const cached = this.sidecarsByTunnel.get(tunnel.id);
+    if (cached && cached.version === tunnel.version) {
+      return { tunnelId: tunnel.id, alreadyWarm: true };
+    }
+    // Slow path: drive ensureVpnSidecar to create (or evict + recreate
+    // on version mismatch), then immediately release the refCount hold
+    // so the teardown timer protects us against abandonment.
+    const fakeProfile = { user_id: userId, id: profileId } as Profile;
+    const vpn = await this.ensureVpnSidecar(fakeProfile, workspaceId);
+    if (!vpn) return null;
+    this.releaseSidecarHold(vpn.tunnelId, vpn.sidecarId);
+    return { tunnelId: vpn.tunnelId, alreadyWarm: false };
+  }
+
+  /**
+   * Removes a workspace session's current container so the next agent
+   * dispatch creates a fresh one. Used to apply a tunnel override
+   * mid-session: Docker can't change a running container's
+   * `network_mode`, so the only way to swap tunnels for an existing
+   * workspace is to drop the container and let the resurrection path
+   * rebuild it. Session events / SDK volume survive — only in-flight
+   * bash/pty state is lost.
+   *
+   * Returns false when the session isn't found or doesn't belong to
+   * this user; true on success even if the container was already gone
+   * (idempotent).
+   */
+  async detachSessionContainer(sessionId: string, userId: string): Promise<boolean> {
+    const session = this.deps.sessionRegistry.get(sessionId);
+    if (!session || session.user_id !== userId) return false;
+    const containerId = session.container_id;
+    if (!containerId) return true;
+    // safeRemoveContainer decrements the sidecar refCount and schedules
+    // the standard grace-teardown timer — so a follow-up dispatch within
+    // 60s reuses the warm sidecar even though the agent is fresh.
+    await this.safeRemoveContainer(containerId);
+    // Null out the registry's container pointer so the next dispatch
+    // hits the resurrection path (creates fresh with the new tunnel).
+    await this.deps.sessionRegistry.clearContainer(sessionId);
+    return true;
+  }
+
+  /** Decrement the refCount for a tunnel by one and schedule the
+   *  standard grace teardown if it hits zero. Extracted from
+   *  safeRemoveContainer so warmupTunnel can release its hold without
+   *  pretending to be an agent container. */
+  private releaseSidecarHold(tunnelId: string, sidecarId: string): void {
+    const entry = this.sidecarsByTunnel.get(tunnelId);
+    if (!entry) return;
+    entry.refCount--;
+    if (entry.refCount > 0) return;
+    const existing = this.sidecarTeardownTimers.get(tunnelId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(async () => {
+      this.sidecarTeardownTimers.delete(tunnelId);
+      const current = this.sidecarsByTunnel.get(tunnelId);
+      if (!current || current.refCount > 0) return;
+      this.sidecarsByTunnel.delete(tunnelId);
+      try {
+        await this.deps.containerManager.removeContainer(sidecarId, true);
+      } catch {
+        // already gone
+      }
+      try {
+        await this.deps.vpnTunnelProvider?.()?.recordEvent?.(tunnelId, "sidecar_down", { sidecarId });
+      } catch (err) {
+        this.log.warn({ err, tunnelId }, "recordEvent(sidecar_down) failed");
+      }
+      this.log.info({ tunnelId, sidecarId }, "VPN sidecar torn down after warmup grace");
+    }, SIDECAR_TEARDOWN_GRACE_MS);
+    this.sidecarTeardownTimers.set(tunnelId, timer);
+  }
+
   start(): void {
     // Reap VPN sidecars left behind by a previous server run before
     // the queue starts dispatching. At this point sidecarsByTunnel

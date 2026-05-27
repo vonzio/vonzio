@@ -1,4 +1,5 @@
 import type {
+  ComposerSlotReg,
   NavItemReg,
   OnboardingStepReg,
   RouteReg,
@@ -14,6 +15,7 @@ interface RegistryState {
   settingsSections: Map<string, SettingsSectionReg>;
   topbarSlots: Map<string, TopbarSlotReg>;
   workspaceHeaderSlots: Map<string, WorkspaceHeaderSlotReg>;
+  composerSlots: Map<string, ComposerSlotReg>;
   onboardingSteps: Map<string, OnboardingStepReg>;
   userMenuItems: Map<string, UserMenuItemReg>;
 }
@@ -25,6 +27,7 @@ function createState(): RegistryState {
     settingsSections: new Map(),
     topbarSlots: new Map(),
     workspaceHeaderSlots: new Map(),
+    composerSlots: new Map(),
     onboardingSteps: new Map(),
     userMenuItems: new Map(),
   };
@@ -68,6 +71,11 @@ export function registerWorkspaceHeaderSlot(reg: WorkspaceHeaderSlotReg): void {
   state.workspaceHeaderSlots.set(reg.id, reg);
 }
 
+export function registerComposerSlot(reg: ComposerSlotReg): void {
+  state.composerSlots.set(reg.id, reg);
+}
+
+
 export function registerOnboardingStep(reg: OnboardingStepReg): void {
   state.onboardingSteps.set(reg.id, reg);
 }
@@ -100,6 +108,11 @@ export function getWorkspaceHeaderSlots(): WorkspaceHeaderSlotReg[] {
   return sortByOrder(Array.from(state.workspaceHeaderSlots.values()));
 }
 
+export function getComposerSlots(): ComposerSlotReg[] {
+  return sortByOrder(Array.from(state.composerSlots.values()));
+}
+
+
 export function getOnboardingSteps(): OnboardingStepReg[] {
   return sortByOrder(Array.from(state.onboardingSteps.values()));
 }
@@ -114,6 +127,7 @@ export function resetRegistry(): void {
   state.settingsSections.clear();
   state.topbarSlots.clear();
   state.workspaceHeaderSlots.clear();
+  state.composerSlots.clear();
   state.onboardingSteps.clear();
   state.userMenuItems.clear();
 }

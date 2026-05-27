@@ -11,6 +11,8 @@ import { WorkspaceSidebar } from "../components/WorkspaceSidebar.js";
 import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
 import { AgentPicker } from "../components/AgentPicker.js";
+import { getComposerSlots } from "../registry/index.js";
+import { useEntitlements } from "../registry/EntitlementContext.js";
 import { RightPanel, type TabId } from "../components/RightPanel.js";
 import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet.js";
 import { UserMenu } from "../components/UserMenu.js";
@@ -60,6 +62,10 @@ export function Workspace() {
   // on turn one. Cleared whenever the profile changes (a model only makes
   // sense relative to a profile's API key / provider).
   const [pendingModelOverride, setPendingModelOverride] = useState<string | null>(null);
+  const entitlements = useEntitlements();
+  const composerSlots = getComposerSlots().filter(
+    (s) => !s.entitlement || entitlements.includes(s.entitlement),
+  );
   const [input, setInput] = useState(() => {
     if (!routeId) return "";
     try { return localStorage.getItem(`vonzio_draft_${routeId}`) ?? ""; } catch { return ""; }
@@ -972,6 +978,17 @@ export function Workspace() {
                           }}
                         />
                       )}
+                      {composerSlots.map((slot) => {
+                        const SlotComp = slot.component;
+                        return (
+                          <SlotComp
+                            key={slot.id}
+                            workspaceId={activeWorkspaceId ?? null}
+                            profileId={activeProfile?.id ?? null}
+                            attachedTunnel={activeWorkspace?.attached_tunnel ?? null}
+                          />
+                        );
+                      })}
                       {activeWorkspace?.name && (
                         <>
                           <span style={{ color: "var(--vz-muted-2)", padding: "0 2px" }}> · </span>
