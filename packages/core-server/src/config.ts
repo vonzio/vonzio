@@ -29,7 +29,7 @@ const configSchema = z.object({
 
   // Email (Resend)
   RESEND_API_KEY: z.string().optional(),
-  EMAIL_FROM: z.string().default("Vonzio <noreply@app.vonz.io>"),
+  EMAIL_FROM: z.string().default("vonzio <noreply@app.vonz.io>"),
 
   // Platform-hosted Telegram bot — optional. When set, users can pair
   // their account with a single shared bot (one tap) instead of running
@@ -103,6 +103,11 @@ const configSchema = z.object({
 
   // WebSocket
   WS_MAX_CONNECTIONS_PER_CALLER: z.coerce.number().default(10),
+
+  // Cross-subdomain cookie sharing for the Better Auth session cookie.
+  // Set to `.example.com` to share between app.example.com and admin.example.com.
+  // Unset = host-only cookie (default).
+  COOKIE_DOMAIN: z.string().optional(),
 
   // Slack Integration (optional — enables "Connect Slack" button)
   SLACK_CLIENT_ID: z.string().optional(),
