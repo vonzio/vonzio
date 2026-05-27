@@ -35,7 +35,7 @@ vonzio runs agents in fresh Docker containers — one per conversation. You brin
 One-line install on macOS or Linux (it asks before installing any missing dep):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vonzio/core/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
 ```
 
 The installer checks for Docker, Compose v2, Node 22+, git, make, and openssl. It generates a fresh `.env` with secure random secrets, brings up postgres, runs the one-time Better Auth schema migration, and starts the stack. About five minutes on a warm machine.

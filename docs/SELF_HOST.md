@@ -15,7 +15,7 @@ If you want multi-user invites, plans, billing, and an admin panel, those live i
 ## Quickstart (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vonzio/core/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
 ```
 
 The installer handles everything below automatically — dep checks, secret generation, postgres, Better Auth schema, stack boot. Flags: `--dir <path>`, `--yes`, `--no-start`, `--uninstall`, `--help`.

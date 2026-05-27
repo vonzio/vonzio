@@ -164,7 +164,7 @@ if [[ "$ACTION" == "uninstall" ]]; then
     ok "Volumes removed."
   fi
   log ""
-  ok "Uninstalled. The vonzio/core checkout at $target was kept — delete it manually if you want."
+  ok "Uninstalled. The vonzio/vonzio checkout at $target was kept — delete it manually if you want."
   exit 0
 fi
 
@@ -336,7 +336,7 @@ if ! $IN_CLONE; then
     info "Existing checkout at $INSTALL_DIR — pulling latest."
     (cd "$INSTALL_DIR" && git pull --ff-only) || warn "git pull --ff-only failed; continuing with current commit."
   else
-    info "Cloning vonzio/core → $INSTALL_DIR"
+    info "Cloning vonzio/vonzio → $INSTALL_DIR"
     git clone "$REPO_URL" "$INSTALL_DIR"
   fi
   cd "$INSTALL_DIR"
