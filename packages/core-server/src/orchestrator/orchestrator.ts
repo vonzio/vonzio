@@ -97,11 +97,31 @@ export class Orchestrator extends EventEmitter {
   private processing = false;
   private activeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private activeTasks = new Map<string, ActiveTask>();
-  // Tracks the VPN sidecar paired with each agent container so
-  // safeRemoveContainer can clean it up. Empty for OSS (no tunnels).
-  // tunnelId is carried so we can emit a sidecar_down event with
-  // the right context on cleanup.
+  // Tracks per-agent attachment to a shared VPN sidecar so
+  // safeRemoveContainer can decrement the tunnel's refcount. Empty
+  // for OSS (no tunnels).
   private sidecarsByAgent = new Map<string, { sidecarId: string; tunnelId: string }>();
+  // One sidecar per active VPN tunnel — all agents that attach to a
+  // given tunnel share the same network namespace via
+  // network_mode: container:<sidecarId>. Avoids duplicate-cert
+  // connections that CHW-style OpenVPN servers reject.
+  private sidecarsByTunnel = new Map<string, {
+    sidecarId: string;
+    networkMode: string;
+    refCount: number;
+    dns?: string[];
+    searchDomains?: string[];
+  }>();
+  // Serializes concurrent ensureVpnSidecar calls for the same
+  // tunnel so two simultaneous agent dispatches don't both create
+  // a sidecar.
+  private sidecarInFlight = new Map<string, Promise<{
+    sidecarId: string;
+    tunnelId: string;
+    networkMode: string;
+    dns?: string[];
+    searchDomains?: string[];
+  } | null>>();
   private memoryTokens = new Map<string, { userId: string; profileId: string }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
@@ -310,7 +330,14 @@ export class Orchestrator extends EventEmitter {
           "vonzio-task-id": task.id,
         },
       });
-      if (vpn) this.sidecarsByAgent.set(containerId, { sidecarId: vpn.sidecarId, tunnelId: vpn.tunnelId });
+      if (vpn) {
+        this.sidecarsByAgent.set(containerId, { sidecarId: vpn.sidecarId, tunnelId: vpn.tunnelId });
+        try {
+          await this.deps.vpnTunnelProvider?.()?.recordEvent?.(vpn.tunnelId, "agent_attached", { agentId: containerId, sidecarId: vpn.sidecarId });
+        } catch (err) {
+          this.log.warn({ err, tunnelId: vpn.tunnelId }, "recordEvent(agent_attached) failed");
+        }
+      }
       await this.deps.containerManager.startContainer(containerId);
       if (vpn?.dns?.length) {
         await this.applyTunnelDns(containerId, vpn.dns, vpn.searchDomains);
@@ -563,7 +590,14 @@ export class Orchestrator extends EventEmitter {
         "vonzio-session-id": sessionId,
       },
     });
-    if (vpn) this.sidecarsByAgent.set(containerId, { sidecarId: vpn.sidecarId, tunnelId: vpn.tunnelId });
+    if (vpn) {
+      this.sidecarsByAgent.set(containerId, { sidecarId: vpn.sidecarId, tunnelId: vpn.tunnelId });
+      try {
+        await this.deps.vpnTunnelProvider?.()?.recordEvent?.(vpn.tunnelId, "agent_attached", { agentId: containerId, sidecarId: vpn.sidecarId });
+      } catch (err) {
+        this.log.warn({ err, tunnelId: vpn.tunnelId }, "recordEvent(agent_attached) failed");
+      }
+    }
     await this.deps.containerManager.startContainer(containerId);
     if (vpn?.dns?.length) {
       await this.applyTunnelDns(containerId, vpn.dns, vpn.searchDomains);
@@ -1339,28 +1373,46 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async safeRemoveContainer(containerId: string): Promise<void> {
-    // Pair-remove the VPN sidecar before the agent container so the
-    // agent's network namespace doesn't outlive the tunnel by even a
-    // moment. Failure here is non-fatal — orphaned sidecars get
-    // reaped on next host restart.
+    // If this agent was attached to a shared VPN sidecar, decrement
+    // the tunnel's refcount. Only tear down the sidecar when the
+    // last attached agent goes away; otherwise other agents lose
+    // their network namespace mid-task.
     const pair = this.sidecarsByAgent.get(containerId);
     if (pair) {
       this.sidecarsByAgent.delete(containerId);
-      try {
-        await this.deps.containerManager.removeContainer(pair.sidecarId, true);
-      } catch {
-        // Sidecar may already be gone
-      }
-      // Emit sidecar_down for observability. Provider may be unset on
-      // OSS or noop on the default impl — call optionally.
+      // Emit agent_detached for live "N agents" count in UI.
       try {
         await this.deps.vpnTunnelProvider?.()?.recordEvent?.(
           pair.tunnelId,
-          "sidecar_down",
-          { sidecarId: pair.sidecarId, agentId: containerId },
+          "agent_detached",
+          { agentId: containerId, sidecarId: pair.sidecarId },
         );
       } catch (err) {
-        this.log.warn({ err, tunnelId: pair.tunnelId }, "recordEvent(sidecar_down) failed");
+        this.log.warn({ err, tunnelId: pair.tunnelId }, "recordEvent(agent_detached) failed");
+      }
+
+      const entry = this.sidecarsByTunnel.get(pair.tunnelId);
+      if (entry) {
+        entry.refCount--;
+        if (entry.refCount <= 0) {
+          this.sidecarsByTunnel.delete(pair.tunnelId);
+          try {
+            await this.deps.containerManager.removeContainer(entry.sidecarId, true);
+          } catch {
+            // Sidecar may already be gone
+          }
+          // Emit sidecar_down for the audit log — fires at most once
+          // per tunnel session.
+          try {
+            await this.deps.vpnTunnelProvider?.()?.recordEvent?.(
+              pair.tunnelId,
+              "sidecar_down",
+              { sidecarId: entry.sidecarId },
+            );
+          } catch (err) {
+            this.log.warn({ err, tunnelId: pair.tunnelId }, "recordEvent(sidecar_down) failed");
+          }
+        }
       }
     }
     try {
@@ -1387,63 +1439,111 @@ export class Orchestrator extends EventEmitter {
     try {
       const tunnel = await provider.resolveActiveTunnel(profile.user_id, profile.id);
       if (!tunnel) return null;
-      const config = decrypt(tunnel.encryptedConfig, encryptionKey);
-      const env: Record<string, string> = {
-        VPN_CONFIG_B64: Buffer.from(config, "utf8").toString("base64"),
-      };
-      // OpenVPN may also carry an auth-user-pass blob ("username\npassword")
-      // as a second encrypted field. WireGuard tunnels leave this null.
-      if (tunnel.authBlobEncrypted) {
-        const authBlob = decrypt(tunnel.authBlobEncrypted, encryptionKey);
-        env.VPN_AUTH_USER_PASS_B64 = Buffer.from(authBlob, "utf8").toString("base64");
-      }
-      // OpenVPN needs /dev/net/tun; WireGuard uses the kernel module and
-      // doesn't.
-      const devices = tunnel.type === "openvpn" ? ["/dev/net/tun"] : undefined;
-      const sidecarId = await this.deps.containerManager.createContainer({
-        image: tunnel.sidecarImage,
-        env,
-        capAdd: ["NET_ADMIN"],
-        devices,
-        labels: {
-          "vonzio-mode": "vpn-sidecar",
-          "vonzio-vpn-tunnel-id": tunnel.id,
-          "vonzio-vpn-tunnel-type": tunnel.type,
-        },
-      });
-      await this.deps.containerManager.startContainer(sidecarId);
 
-      let dns: string[] | undefined;
-      let searchDomains: string[] | undefined;
-      if (tunnel.type === "openvpn") {
-        // Wait for openvpn's --up script to write the pushed-DNS file.
-        // The script runs after the tunnel completes its handshake.
-        const pushed = await this.readPushedDnsFromSidecar(sidecarId);
-        if (pushed) {
-          dns = pushed.dns;
-          searchDomains = pushed.searchDomains;
+      // Reuse path: another agent already brought up a sidecar for
+      // this tunnel. Increment refcount and return its info.
+      const cached = this.sidecarsByTunnel.get(tunnel.id);
+      if (cached) {
+        cached.refCount++;
+        this.log.info({ tunnelId: tunnel.id, sidecarId: cached.sidecarId, refCount: cached.refCount }, "VPN sidecar reused");
+        return {
+          sidecarId: cached.sidecarId,
+          tunnelId: tunnel.id,
+          networkMode: cached.networkMode,
+          dns: cached.dns,
+          searchDomains: cached.searchDomains,
+        };
+      }
+
+      // Serialize concurrent creation for the same tunnel — two
+      // simultaneous agent dispatches must NOT both create a sidecar,
+      // or they'll fight for the duplicate-cert slot at the VPN
+      // server and flap each other dead.
+      const inFlight = this.sidecarInFlight.get(tunnel.id);
+      if (inFlight) {
+        const result = await inFlight;
+        if (result) {
+          // The in-flight call created and registered the sidecar.
+          // Bump refcount for OUR attachment.
+          const entry = this.sidecarsByTunnel.get(tunnel.id);
+          if (entry) entry.refCount++;
         }
-      } else {
-        // WireGuard: kernel sets things up instantly; brief settle.
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        return result;
       }
 
-      this.log.info({ tunnelId: tunnel.id, sidecarId, dns, searchDomains }, "VPN sidecar up");
-      // Emit sidecar_up event. Best-effort: failure here doesn't
-      // affect the agent launch.
+      // First caller for this tunnel — own the creation.
+      const creation = this.createSidecar(tunnel, provider, encryptionKey);
+      this.sidecarInFlight.set(tunnel.id, creation);
       try {
-        await provider.recordEvent?.(tunnel.id, "sidecar_up", {
-          sidecarId,
-          hasDns: !!(dns && dns.length > 0),
-        });
-      } catch (err) {
-        this.log.warn({ err, tunnelId: tunnel.id }, "recordEvent(sidecar_up) failed");
+        return await creation;
+      } finally {
+        this.sidecarInFlight.delete(tunnel.id);
       }
-      return { sidecarId, tunnelId: tunnel.id, networkMode: `container:${sidecarId}`, dns, searchDomains };
     } catch (err) {
       this.log.error({ err, profileId: profile.id }, "Failed to bring up VPN sidecar; proceeding without tunnel");
       return null;
     }
+  }
+
+  /** Actually create + start the sidecar, wait for DNS push, record
+   *  bookkeeping. Called only by ensureVpnSidecar via the in-flight
+   *  serialization. */
+  private async createSidecar(
+    tunnel: { id: string; type: string; encryptedConfig: string; authBlobEncrypted?: string; sidecarImage: string },
+    provider: NonNullable<ReturnType<NonNullable<OrchestratorDeps["vpnTunnelProvider"]>>>,
+    encryptionKey: string,
+  ): Promise<{ sidecarId: string; tunnelId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
+    const config = decrypt(tunnel.encryptedConfig, encryptionKey);
+    const env: Record<string, string> = {
+      VPN_CONFIG_B64: Buffer.from(config, "utf8").toString("base64"),
+    };
+    if (tunnel.authBlobEncrypted) {
+      const authBlob = decrypt(tunnel.authBlobEncrypted, encryptionKey);
+      env.VPN_AUTH_USER_PASS_B64 = Buffer.from(authBlob, "utf8").toString("base64");
+    }
+    const devices = tunnel.type === "openvpn" ? ["/dev/net/tun"] : undefined;
+    const sidecarId = await this.deps.containerManager.createContainer({
+      image: tunnel.sidecarImage,
+      env,
+      capAdd: ["NET_ADMIN"],
+      devices,
+      labels: {
+        "vonzio-mode": "vpn-sidecar",
+        "vonzio-vpn-tunnel-id": tunnel.id,
+        "vonzio-vpn-tunnel-type": tunnel.type,
+      },
+    });
+    await this.deps.containerManager.startContainer(sidecarId);
+
+    let dns: string[] | undefined;
+    let searchDomains: string[] | undefined;
+    if (tunnel.type === "openvpn") {
+      const pushed = await this.readPushedDnsFromSidecar(sidecarId);
+      if (pushed) {
+        dns = pushed.dns;
+        searchDomains = pushed.searchDomains;
+      }
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    const networkMode = `container:${sidecarId}`;
+    // Register with refCount 1 — this caller is the first attached agent.
+    this.sidecarsByTunnel.set(tunnel.id, {
+      sidecarId,
+      networkMode,
+      refCount: 1,
+      dns,
+      searchDomains,
+    });
+
+    this.log.info({ tunnelId: tunnel.id, sidecarId, dns, searchDomains }, "VPN sidecar up");
+    try {
+      await provider.recordEvent?.(tunnel.id, "sidecar_up", { sidecarId, hasDns: !!(dns && dns.length > 0) });
+    } catch (err) {
+      this.log.warn({ err, tunnelId: tunnel.id }, "recordEvent(sidecar_up) failed");
+    }
+    return { sidecarId, tunnelId: tunnel.id, networkMode, dns, searchDomains };
   }
 
   /**
