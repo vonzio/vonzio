@@ -32,6 +32,10 @@ import { nanoid } from "nanoid";
 
 type TaskUpdate = Partial<typeof schema.tasks.$inferInsert>;
 
+/** Idle window before tearing down a VPN sidecar after its last
+ *  agent detaches. Tuned for typical back-to-back task cadence. */
+const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
+
 export interface Logger {
   info(obj: Record<string, unknown>, msg?: string): void;
   warn(obj: Record<string, unknown>, msg?: string): void;
@@ -122,6 +126,10 @@ export class Orchestrator extends EventEmitter {
     dns?: string[];
     searchDomains?: string[];
   } | null>>();
+  // Pending teardown timers per tunnel. When refCount drops to 0 we
+  // wait this long before actually removing the sidecar — back-to-back
+  // tasks reuse the same tunnel without re-handshaking.
+  private sidecarTeardownTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private memoryTokens = new Map<string, { userId: string; profileId: string }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
@@ -177,6 +185,11 @@ export class Orchestrator extends EventEmitter {
   }
 
   start(): void {
+    // Reap VPN sidecars left behind by a previous server run before
+    // the queue starts dispatching. At this point sidecarsByTunnel
+    // is empty (in-process state, fresh on boot), so any
+    // vonzio-mode=vpn-sidecar container is an orphan by definition.
+    void this.cleanupOrphanedVpnSidecars();
     this.running = true;
     this.deps.queue.onReady(() => this.scheduleProcessing());
   }
@@ -187,6 +200,28 @@ export class Orchestrator extends EventEmitter {
       clearTimeout(timer);
     }
     this.activeTimers.clear();
+    for (const timer of this.sidecarTeardownTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.sidecarTeardownTimers.clear();
+  }
+
+  private async cleanupOrphanedVpnSidecars(): Promise<void> {
+    try {
+      const all = await this.deps.containerManager.listManagedContainers();
+      const orphans = all.filter((c) => c.labels["vonzio-mode"] === "vpn-sidecar");
+      if (orphans.length === 0) return;
+      for (const o of orphans) {
+        try {
+          await this.deps.containerManager.removeContainer(o.id, true);
+        } catch {
+          // Container may already be gone
+        }
+      }
+      this.log.info({ count: orphans.length }, "Removed orphaned VPN sidecars from previous run");
+    } catch (err) {
+      this.log.warn({ err }, "Orphaned VPN sidecar cleanup failed (non-fatal)");
+    }
   }
 
   async cancelTask(taskId: string): Promise<boolean> {
@@ -1395,23 +1430,34 @@ export class Orchestrator extends EventEmitter {
       if (entry) {
         entry.refCount--;
         if (entry.refCount <= 0) {
-          this.sidecarsByTunnel.delete(pair.tunnelId);
-          try {
-            await this.deps.containerManager.removeContainer(entry.sidecarId, true);
-          } catch {
-            // Sidecar may already be gone
-          }
-          // Emit sidecar_down for the audit log — fires at most once
-          // per tunnel session.
-          try {
-            await this.deps.vpnTunnelProvider?.()?.recordEvent?.(
-              pair.tunnelId,
-              "sidecar_down",
-              { sidecarId: entry.sidecarId },
-            );
-          } catch (err) {
-            this.log.warn({ err, tunnelId: pair.tunnelId }, "recordEvent(sidecar_down) failed");
-          }
+          // Don't tear the tunnel down immediately — back-to-back tasks
+          // for the same user would re-handshake against the customer's
+          // VPN server, wasting time and risking duplicate-cert rejection.
+          // Wait SIDECAR_GRACE_MS; if no agent re-attaches, then remove.
+          // ensureVpnSidecar's reuse path cancels this timer when it
+          // bumps the refcount.
+          const tunnelId = pair.tunnelId;
+          const sidecarId = entry.sidecarId;
+          const existing = this.sidecarTeardownTimers.get(tunnelId);
+          if (existing) clearTimeout(existing);
+          const timer = setTimeout(async () => {
+            this.sidecarTeardownTimers.delete(tunnelId);
+            const current = this.sidecarsByTunnel.get(tunnelId);
+            if (!current || current.refCount > 0) return; // re-attached during grace
+            this.sidecarsByTunnel.delete(tunnelId);
+            try {
+              await this.deps.containerManager.removeContainer(sidecarId, true);
+            } catch {
+              // already gone
+            }
+            try {
+              await this.deps.vpnTunnelProvider?.()?.recordEvent?.(tunnelId, "sidecar_down", { sidecarId });
+            } catch (err) {
+              this.log.warn({ err, tunnelId }, "recordEvent(sidecar_down) failed");
+            }
+            this.log.info({ tunnelId, sidecarId }, "VPN sidecar torn down after idle grace");
+          }, SIDECAR_TEARDOWN_GRACE_MS);
+          this.sidecarTeardownTimers.set(tunnelId, timer);
         }
       }
     }
@@ -1441,10 +1487,17 @@ export class Orchestrator extends EventEmitter {
       if (!tunnel) return null;
 
       // Reuse path: another agent already brought up a sidecar for
-      // this tunnel. Increment refcount and return its info.
+      // this tunnel. Increment refcount, cancel any pending teardown,
+      // and return its info.
       const cached = this.sidecarsByTunnel.get(tunnel.id);
       if (cached) {
         cached.refCount++;
+        const pendingTeardown = this.sidecarTeardownTimers.get(tunnel.id);
+        if (pendingTeardown) {
+          clearTimeout(pendingTeardown);
+          this.sidecarTeardownTimers.delete(tunnel.id);
+          this.log.info({ tunnelId: tunnel.id }, "Cancelled pending VPN sidecar teardown — new agent attached");
+        }
         this.log.info({ tunnelId: tunnel.id, sidecarId: cached.sidecarId, refCount: cached.refCount }, "VPN sidecar reused");
         return {
           sidecarId: cached.sidecarId,
