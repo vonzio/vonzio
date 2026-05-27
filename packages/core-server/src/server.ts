@@ -344,8 +344,33 @@ export async function buildServer(deps: ServerDeps) {
   // Event tracker (beta observability)
   const eventTracker = createEventTracker(db, server.log);
 
-  // Better Auth (tracker wired for signup/login events)
-  const auth = createAuth(config, pgPool, db, eventTracker);
+  // Load the proprietary control plane (cp-server) module up front, if
+  // installed, so we can ask it for its Better Auth plugin contributions
+  // BEFORE constructing the auth instance. Better Auth bakes plugins in
+  // at construction time and exposes no add-after API, so plugin
+  // injection has to happen before createAuth. The mount itself still
+  // runs later (after profile/orchestrator setup).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cpServerModule: any = null;
+  try {
+    // Dynamic specifier so tsc doesn't try to resolve @vonzio/cp-server
+    // at compile time — OSS distributions don't ship it.
+    const cpServerSpec = "@vonzio/cp-server";
+    cpServerModule = await import(/* @vite-ignore */ cpServerSpec);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    const msg = (err as Error)?.message ?? "";
+    const isCpMissing = code === "ERR_MODULE_NOT_FOUND" && msg.includes("@vonzio/cp-server");
+    if (!isCpMissing) throw err;
+    // OSS — left null; admin-plugin contributions empty, mount skipped below.
+  }
+
+  // Better Auth (tracker wired for signup/login events). Plugins from
+  // cp-server (e.g. better-auth's admin plugin for user management)
+  // are merged in here; OSS leaves the array empty.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const extraAuthPlugins: any[] = cpServerModule?.getAuthPlugins?.() ?? [];
+  const auth = createAuth(config, pgPool, db, eventTracker, extraAuthPlugins);
 
   // First-run OSS setup wizard. Creates the lone admin on a fresh
   // single-user instance, then disables itself (the no-users precondition
@@ -503,7 +528,7 @@ export async function buildServer(deps: ServerDeps) {
     });
     v1.register(eventRoutes, { tracker: eventTracker });
     v1.register(taskRoutes, { taskService, profileService });
-    v1.register(workspaceRoutes, { workspaceService, profileService, eventLog });
+    v1.register(workspaceRoutes, { workspaceService, profileService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
     v1.register(profileRoutes, { profileService, apiKeyService, modelListService });
     v1.register(userResourceRoutes, { db, apiKeyService, profileService, toolFileService, skillService, subagentService, gitProviderService, secretVaultService });
@@ -627,22 +652,11 @@ export async function buildServer(deps: ServerDeps) {
     adminScope.register(adminEventRoutes, { db });
   });
 
-  // Mount the proprietary control plane (cp-server) if installed.
-  // SaaS deployments ship with @vonzio/cp-server present; OSS does not,
-  // and the import simply fails and the server runs single-user-only.
-  // We narrowly catch only the "cp-server itself is missing" case — any
-  // transitive import failure or syntax error inside cp-server rethrows so
-  // SaaS doesn't silently degrade to single-user on a broken install.
-  try {
-    // The module specifier is built dynamically so tsc doesn't try to
-    // resolve @vonzio/cp-server at compile time — in the public OSS
-    // distribution that package doesn't exist. SaaS deployments add
-    // it as a runtime dep; everyone else relies on the catch below.
-    const cpServerSpec = "@vonzio/cp-server";
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cpServerModule = (await import(/* @vite-ignore */ cpServerSpec)) as any;
-    const { registerCpServer } = cpServerModule;
-    await registerCpServer(server, {
+  // Mount the proprietary control plane (cp-server) using the module
+  // we already loaded above for plugin discovery. SaaS path runs the
+  // mount; OSS leaves cpServerModule null and skips.
+  if (cpServerModule) {
+    await cpServerModule.registerCpServer(server, {
       db,
       auth,
       authHook,
@@ -663,13 +677,7 @@ export async function buildServer(deps: ServerDeps) {
           "REGISTRATION_ENABLED=true if this SaaS deployment expects new accounts.",
       );
     }
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code;
-    const msg = (err as Error)?.message ?? "";
-    const isCpMissing = code === "ERR_MODULE_NOT_FOUND" && msg.includes("@vonzio/cp-server");
-    if (!isCpMissing) {
-      throw err;
-    }
+  } else {
     server.log.info("cp-server not installed — running single-user OSS");
   }
 

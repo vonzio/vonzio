@@ -7,7 +7,14 @@ export interface TunnelInfo {
   id: string;
   name: string;
   type: string;
-  encryptedConfig: string;
+  /**
+   * Encrypted tunnel config. Required for "wireguard" / "openvpn" where
+   * the sidecar needs a config file at boot. Empty/omitted for
+   * "tailscale" — that protocol authenticates with an auth key (carried
+   * in `authBlobEncrypted`) and discovers the network via the tailnet
+   * coordination server, no static config.
+   */
+  encryptedConfig?: string;
   /**
    * Docker image to launch as the sidecar. SaaS deployments pin this
    * (e.g. "vonzio/wireguard-sidecar:0.1.0"); OSS never sees it because
@@ -52,9 +59,19 @@ export interface TunnelInfo {
  * indifferent.
  */
 export interface VpnTunnelProvider {
+  /**
+   * Resolves the tunnel for an agent launch.
+   *
+   * @param workspaceId  Optional. When supplied, providers may consult
+   *   a per-workspace override (the workspace is pinned to a specific
+   *   tunnel) before falling back to profile-based matching. The
+   *   parameter is opaque to the seam and ignored by providers that
+   *   don't support per-workspace pinning (e.g. the OSS noop).
+   */
   resolveActiveTunnel(
     userId: string,
     profileId: string,
+    workspaceId?: string,
   ): Promise<TunnelInfo | null>;
   /**
    * Best-effort event recorder for tunnel lifecycle observability —

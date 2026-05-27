@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Send } from "lucide-react";
+import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Send, Shield } from "lucide-react";
 import { Pill } from "@/brand/components.js";
 import { fetchProfileModels, fetchTelegramBotForWorkspace, type ProfileModel, type TelegramBotForWorkspace } from "@/api/client.js";
 import { MODEL_DISPLAY_FALLBACK } from "@/lib/model-display.js";
+import { getWorkspaceHeaderSlots } from "@/registry/index.js";
+import { useEntitlements } from "@/registry/EntitlementContext.js";
 import type { ChatMessage } from "./ChatCore.js";
 
 interface Props {
@@ -24,6 +26,12 @@ interface Props {
   profileDefaultModel?: string | null;
   /** Active profile id; used to resolve model display names. */
   profileId?: string;
+  /** VPN tunnel routing this workspace's agent, if any. SaaS-only:
+   *  OSS workspaces always pass undefined and no pill renders. */
+  attachedTunnel?: { id: string; name: string } | null;
+  /** Passed through to registry-injected header slots (e.g. the
+   *  cp-dashboard VPN tunnel picker). */
+  profileIdForSlot?: string;
 }
 
 // Map workspace status → status-pip color (left of the workspace name).
@@ -64,7 +72,12 @@ export function WorkspaceHeader({
   name, sessionId, status, connected, streaming,
   panelOpen, onTogglePanel, onToggleSidebar, onRename,
   messages, workspaceName, profileName, modelOverride, profileDefaultModel, profileId,
+  attachedTunnel, profileIdForSlot,
 }: Props) {
+  const entitlements = useEntitlements();
+  const headerSlots = getWorkspaceHeaderSlots().filter(
+    (s) => !s.entitlement || entitlements.includes(s.entitlement),
+  );
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(name ?? "");
   const [models, setModels] = useState<ProfileModel[]>([]);
@@ -244,6 +257,29 @@ export function WorkspaceHeader({
         <Pill tone={statusTone} dot={connected && (status === "active" || status === "running")}>
           {statusLabel}
         </Pill>
+
+        {attachedTunnel && (
+          <span title={`Agent traffic routed via VPN tunnel "${attachedTunnel.name}"`} style={{ display: "inline-flex" }}>
+            <Pill tone="ok">
+              <Shield className="w-3 h-3" style={{ marginRight: 4, display: "inline-block", verticalAlign: "-2px" }} />
+              VPN: {attachedTunnel.name}
+            </Pill>
+          </span>
+        )}
+
+        {sessionId && profileIdForSlot && headerSlots.map((slot) => {
+          const SlotComp = slot.component;
+          return (
+            <SlotComp
+              key={slot.id}
+              workspace={{
+                session_id: sessionId,
+                profile_id: profileIdForSlot,
+                attached_tunnel: attachedTunnel ?? null,
+              }}
+            />
+          );
+        })}
 
         {streaming && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" style={{ color: "var(--vz-sodium)" }} />}
 

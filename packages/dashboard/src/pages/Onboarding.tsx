@@ -4,11 +4,10 @@ import "./login.css";
 /**
  * OSS post-signup onboarding wizard. Renders when a signed-in user has
  * zero profiles. Two steps:
- *   1. Pick credential — Anthropic API key, Anthropic subscription
- *      token, or Ollama Cloud API key. All three submit to
- *      /v1/anthropic-keys with the right `provider` value; the endpoint
- *      auto-creates a default profile bound to that key with matching
- *      provider (routes/user-resources.ts:188-192).
+ *   1. Pick credential — Anthropic API key or Ollama Cloud API key. Both
+ *      submit to /v1/anthropic-keys with the right `provider` value; the
+ *      endpoint auto-creates a default profile bound to that key with
+ *      matching provider (routes/user-resources.ts).
  *   2. Pick default model — fetches /v1/profiles/:id/models so the user
  *      sees what the key actually has access to (Anthropic returns
  *      claude-*, Ollama returns the user's available Ollama Cloud
@@ -18,7 +17,7 @@ import "./login.css";
  * post-signup journey looks like one cohesive flow.
  */
 
-type CredentialKind = "anthropic_key" | "anthropic_subscription" | "ollama";
+type CredentialKind = "anthropic_key" | "ollama";
 
 const CRED_META: Record<CredentialKind, {
   label: string;
@@ -26,8 +25,7 @@ const CRED_META: Record<CredentialKind, {
   fieldLabel: string;
   placeholder: string;
   keyName: string;
-  provider: "api_key" | "subscription_token" | "ollama";
-  bodyKey: "api_key" | "auth_token";
+  provider: "api_key" | "ollama";
 }> = {
   anthropic_key: {
     label: "Anthropic API key",
@@ -36,16 +34,6 @@ const CRED_META: Record<CredentialKind, {
     placeholder: "sk-ant-...",
     keyName: "Anthropic API key",
     provider: "api_key",
-    bodyKey: "api_key",
-  },
-  anthropic_subscription: {
-    label: "Anthropic subscription token",
-    hint: "From claude.ai cookies — uses your Claude.ai plan",
-    fieldLabel: "Subscription token",
-    placeholder: "Paste subscription token",
-    keyName: "Anthropic subscription",
-    provider: "subscription_token",
-    bodyKey: "auth_token",
   },
   ollama: {
     label: "Ollama Cloud API key",
@@ -54,7 +42,6 @@ const CRED_META: Record<CredentialKind, {
     placeholder: "Paste Ollama Cloud key",
     keyName: "Ollama Cloud",
     provider: "ollama",
-    bodyKey: "api_key",
   },
 };
 
@@ -95,7 +82,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
         body: JSON.stringify({
           name: meta.keyName,
           provider: meta.provider,
-          [meta.bodyKey]: trimmed,
+          api_key: trimmed,
         }),
       });
       if (!res.ok) {
@@ -228,6 +215,7 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
   const [chosen, setChosen] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     fetch(`/v1/profiles/${encodeURIComponent(profileId)}/models`, { credentials: "include" })
@@ -301,7 +289,47 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
           </p>
         )}
 
-        {models && models.length > 0 && (
+        {models && models.length > 0 && (() => {
+          // Filter against both display name and raw id so users can
+          // search by either. Show the search input only when the
+          // catalog is large enough to actually need it (Ollama Cloud
+          // catalogs can run to dozens; Anthropic's is short enough
+          // that the input is just chrome).
+          const q = query.trim().toLowerCase();
+          const filtered = q
+            ? models.filter((m) =>
+                (m.display_name ?? "").toLowerCase().includes(q) ||
+                m.id.toLowerCase().includes(q),
+              )
+            : models;
+          return (
+          <>
+            {models.length >= 6 && (
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.currentTarget.value)}
+                placeholder={`Filter ${models.length} models…`}
+                aria-label="Filter models"
+                style={{
+                  width: "100%",
+                  padding: "0.55rem 0.75rem",
+                  fontSize: "0.85rem",
+                  fontFamily: "var(--vz-mono, monospace)",
+                  background: "var(--vz-input-bg, transparent)",
+                  color: "var(--vz-ink, inherit)",
+                  border: "1px solid var(--vz-line, #2a3340)",
+                  borderRadius: 8,
+                  outline: "none",
+                  marginBottom: "0.1rem",
+                }}
+              />
+            )}
+            {filtered.length === 0 ? (
+              <p className="lede" style={{ opacity: 0.6, fontSize: "0.85rem", margin: 0 }}>
+                No models match &ldquo;{query}&rdquo;.
+              </p>
+            ) : (
           <fieldset
             style={{
               border: "none",
@@ -322,7 +350,7 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
               marginRight: "-0.5rem",
             }}
           >
-            {models.map((m) => (
+            {filtered.map((m) => (
               <label
                 key={m.id}
                 style={{
@@ -352,7 +380,10 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
               </label>
             ))}
           </fieldset>
-        )}
+            )}
+          </>
+          );
+        })()}
 
         {error && <p className="login-error" role="alert">{error}</p>}
 

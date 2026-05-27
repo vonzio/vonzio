@@ -115,6 +115,10 @@ export interface WorkspaceSummary {
   created_at: string;
   expires_at: string;
   model_override: string | null;
+  /** Set by core-server when the agent is routed through a SaaS VPN
+   *  tunnel; absent/null otherwise. Drives the "VPN: <name>" pill in
+   *  the workspace header. */
+  attached_tunnel?: { id: string; name: string } | null;
 }
 
 export interface WorkspaceListResponse {

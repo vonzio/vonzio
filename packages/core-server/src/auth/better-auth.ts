@@ -1,13 +1,12 @@
 import { betterAuth } from "better-auth";
-import { admin, captcha } from "better-auth/plugins";
+import { captcha } from "better-auth/plugins";
 import pg from "pg";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { Resend } from "resend";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { fromNodeHeaders } from "better-auth/node";
 import type { Config } from "../config.js";
 import type { DrizzleDB } from "../db/index.js";
-import { schema } from "../db/index.js";
 import { emailLayout } from "../email/templates.js";
 import type { Tracker } from "../lib/event-tracker/index.js";
 
@@ -31,7 +30,7 @@ function resolveLoginMethod(context: { path?: string } | null | undefined): stri
 // `Auth` alias below (ReturnType<typeof createAuth>) which preserves
 // inference without needing the unportable zod path.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker?: Tracker): any {
+export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker?: Tracker, extraPlugins: any[] = []): any {
   const resend = config.RESEND_API_KEY ? new Resend(config.RESEND_API_KEY) : null;
 
   const auth = betterAuth({
@@ -39,6 +38,16 @@ export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker
     baseURL: config.BETTER_AUTH_URL,
     basePath: "/api/auth",
     secret: config.BETTER_AUTH_SECRET,
+    // Surface Better Auth's internal errors. Without this, failures
+    // like database-hook throws are wrapped into a generic
+    // "Failed to create user" with no detail in the response body.
+    logger: {
+      level: "debug",
+      log: (level, message, ...args) => {
+        // eslint-disable-next-line no-console
+        console.log(`[better-auth ${level}]`, message, ...args);
+      },
+    },
     socialProviders: {
       ...(config.AUTH_GOOGLE_CLIENT_ID && config.AUTH_GOOGLE_CLIENT_SECRET ? {
         google: {
@@ -106,7 +115,17 @@ export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker
     databaseHooks: {
       user: {
         create: {
-          before: async (user) => {
+          before: async (user, context) => {
+            // The registration gate exists to stop unauthenticated
+            // sign-up attempts. Admin-initiated creation
+            // (POST /api/auth/admin/create-user, gated by the admin
+            // plugin's auth check) is intentional and must always go
+            // through, regardless of REGISTRATION_ENABLED. Without
+            // this check Better Auth swallowed our `return false`
+            // into a generic "FAILED_TO_CREATE_USER" 500.
+            if (context?.path?.startsWith("/admin/create-user")) {
+              return undefined;
+            }
             // Block OAuth sign-up when registration is disabled
             if (!config.REGISTRATION_ENABLED) {
               const existing = await db.execute(sql`SELECT id FROM "user" WHERE email = ${user.email}`);
@@ -124,34 +143,17 @@ export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker
               await db.execute(sql`UPDATE "user" SET role = 'admin' WHERE id = ${user.id}`);
             }
 
-            // Clone a profile for the new user: prefer shared (user_id IS NULL), fall back to any profile
-            try {
-              const sharedProfiles = await db.select().from(schema.profiles).where(sql`${schema.profiles.user_id} IS NULL`).limit(1);
-              const template = sharedProfiles[0] ?? (await db.select().from(schema.profiles).limit(1))[0];
-              if (template) {
-                const id = `prof_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-                await db.insert(schema.profiles).values({
-                  id,
-                  user_id: user.id,
-                  name: "default",
-                  slug: "default",
-                  provider: template.provider ?? "api_key",
-                  api_key_id: null,
-                  default_tools: template.default_tools ?? [],
-                  default_egress_domains: template.default_egress_domains ?? [],
-                  mcp_servers: template.mcp_servers ?? [],
-                  agent_ids: template.agent_ids ?? [],
-                  skill_ids: template.skill_ids ?? [],
-                  claude_md: template.claude_md,
-                  model: template.model,
-                  effort: template.effort,
-                  setup_commands: template.setup_commands ?? [],
-                  persistent_sessions: template.persistent_sessions ?? false,
-                  concurrency_limit: template.concurrency_limit ?? 5,
-                  created_at: new Date().toISOString(),
-                });
-              }
-            } catch { /* template clone failed — user can create profiles manually */ }
+            // No automatic profile clone here. We used to deep-copy a
+            // template profile (model, effort, tools, MCP servers, …)
+            // and stick the new user's id on it, which created a
+            // profile that *looked* configured but had api_key_id=null
+            // and often a model the new user couldn't run — half-broken
+            // by construction. Setup now flows through the onboarding
+            // modal: it captures the user's own API key and the same
+            // POST /v1/anthropic-keys endpoint auto-creates a fresh
+            // default profile linked to that key when the user has none.
+            // Agent templates (a real "quick start" library) are a
+            // follow-up — see notes in onboarding plan.
 
             tracker?.track({
               event: "user.signed_up",
@@ -180,7 +182,10 @@ export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker
       },
     },
     plugins: [
-      admin(),
+      // cp-server contributes the admin() plugin via getAuthPlugins()
+      // when it's installed. OSS doesn't ship admin user-management
+      // routes (single-user deployment), so extraPlugins is empty there.
+      ...extraPlugins,
       ...(config.TURNSTILE_SECRET_KEY ? [captcha({
         provider: "cloudflare-turnstile",
         secretKey: config.TURNSTILE_SECRET_KEY,
@@ -285,6 +290,46 @@ export function mountBetterAuth(server: FastifyInstance, auth: Auth): void {
       }
 
       const text = await response.text();
+      // Log Better Auth response bodies so we can debug failures —
+      // Fastify access log shows the status code but not the body,
+      // Better Auth returns error details in the body, and a "succeeds
+      // but returns wrong shape" failure mode looks like a 200 in the
+      // access log.
+      if (response.status >= 500) {
+        request.log.error(
+          { authPath: url.pathname, status: response.status, body: text },
+          "Better Auth returned 5xx",
+        );
+      } else if (
+        url.pathname.startsWith("/api/auth/sign-in") ||
+        url.pathname.startsWith("/api/auth/admin") ||
+        url.pathname.startsWith("/api/auth/get-session")
+      ) {
+        // Also dump cookie headers for sign-in / get-session — diagnosing
+        // a case where a fresh login persists in the DB but get-session
+        // returns null. The set-cookies tell us what the client was
+        // handed; the request's cookie header tells us what came back.
+        const reqCookieHeader = request.headers["cookie"] as string | undefined;
+        const setCookieHeaders = response.headers.getSetCookie?.() ?? [];
+        request.log.info(
+          {
+            authPath: url.pathname,
+            requestCookies: reqCookieHeader,
+            setCookies: setCookieHeaders,
+          },
+          "Better Auth cookies",
+        );
+      }
+      if (
+        url.pathname.startsWith("/api/auth/sign-in") ||
+        url.pathname.startsWith("/api/auth/admin") ||
+        url.pathname.startsWith("/api/auth/get-session")
+      ) {
+        request.log.info(
+          { authPath: url.pathname, status: response.status, body: text },
+          "Better Auth response",
+        );
+      }
       reply.send(text || null);
     },
   });

@@ -10,6 +10,8 @@ export type {
   TopbarSlotPlacement,
   TopbarSlotReg,
   UserMenuItemReg,
+  WorkspaceHeaderSlotProps,
+  WorkspaceHeaderSlotReg,
 } from "./types.js";
 
 export {
@@ -19,12 +21,14 @@ export {
   getSettingsSections,
   getTopbarSlots,
   getUserMenuItems,
+  getWorkspaceHeaderSlots,
   registerNavItem,
   registerOnboardingStep,
   registerRoute,
   registerSettingsSection,
   registerTopbarSlot,
   registerUserMenuItem,
+  registerWorkspaceHeaderSlot,
   resetRegistry,
 } from "./registry.js";
 

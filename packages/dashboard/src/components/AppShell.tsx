@@ -12,7 +12,8 @@ import { useUser } from "@/contexts/UserContext.js";
 import { authClient } from "@/lib/auth-client.js";
 import { useIsMobile } from "@/hooks/use-mobile.js";
 import { useTheme } from "@/hooks/useTheme.js";
-import { getNavItems, useEntitlements, type NavItemReg } from "@/registry/index.js";
+import { getNavItems, getUserMenuItems, useEntitlements, type NavItemReg } from "@/registry/index.js";
+import { OnboardingHost } from "./OnboardingHost.js";
 import {
   AppShell as ShellLayout,
   Rail,
@@ -27,6 +28,7 @@ import {
   Avatar,
   type Crumb,
   type StatusChip,
+  type MenuItem,
 } from "@/brand/components.js";
 
 type RailState = "collapsed" | "expanded" | "mobile-open";
@@ -127,6 +129,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     </Rail>
   );
 
+  // Build the topbar user dropdown. Settings is hardcoded at order 10;
+  // registry-driven items (via registerUserMenuItem) slot in by order;
+  // Sign out is pinned at the bottom, danger-styled.
+  const topMenuRows: { order: number; item: MenuItem }[] = [
+    {
+      order: 10,
+      item: {
+        label: <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><SettingsIcon size={14} /> Settings</span>,
+        onClick: () => navigate("/settings"),
+      },
+    },
+  ];
+  for (const reg of getUserMenuItems()) {
+    if (reg.entitlement && !entitlements.includes(reg.entitlement)) continue;
+    const Icon = reg.icon;
+    const label = (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+        {Icon && <Icon size={14} />} {reg.label}
+      </span>
+    );
+    // `to` items navigate via react-router; `onClick` items fire as-is.
+    const onClick = reg.to
+      ? () => navigate(reg.to as string)
+      : reg.onClick;
+    topMenuRows.push({
+      order: reg.order ?? 100,
+      item: { label, onClick, danger: reg.danger },
+    });
+  }
+  topMenuRows.sort((a, b) => a.order - b.order);
+
   const userMenu = (
     <DropdownMenu
       align="right"
@@ -140,13 +173,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       items={[
         { type: "label", label: user.email ?? "" },
         { type: "sep" },
-        // Account-only items here. Workspace, Agents, Playbooks, Memories,
-        // Operations, and Admin are reachable from the rail — duplicating
-        // them in this menu just made it noisier.
-        {
-          label: <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><SettingsIcon size={14} /> Settings</span>,
-          onClick: () => navigate("/settings"),
-        },
+        ...topMenuRows.map((r) => r.item),
         { type: "sep" as const },
         {
           label: <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><LogOut size={14} /> Sign out</span>,
@@ -222,6 +249,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       onBackdropClick={() => setMobileOpen(false)}
     >
       {children}
+      {/* Onboarding modal — fires when a registered step's predicate
+       *  matches (e.g. brand-new user with no API key). Renders at most
+       *  one step per session; dismissed steps cached in sessionStorage. */}
+      <OnboardingHost />
     </ShellLayout>
   );
 }

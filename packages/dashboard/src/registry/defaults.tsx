@@ -21,8 +21,10 @@ import { SecretSection } from "../pages/settings/sections/Secret.js";
 import { GitSection } from "../pages/settings/sections/Git.js";
 import { IntegrationSection } from "../pages/settings/sections/Integration.js";
 import { ApiTokenSection } from "../pages/settings/sections/ApiToken.js";
+import { AddFirstApiKey, hasNoApiKeysPredicate } from "../components/onboarding/AddFirstApiKey.js";
 import {
   registerNavItem,
+  registerOnboardingStep,
   registerRoute,
   registerSettingsSection,
 } from "./registry.js";
@@ -116,4 +118,11 @@ export function registerDefaults(): void {
   registerSettingsSection({ id: "git", label: "Git", lede: "Git credentials for cloning private repos. Wire one to a profile to give it write access.", component: GitSection, order: 40 });
   registerSettingsSection({ id: "integrations", label: "Integrations", lede: "Notifications, chat, and read-only data sources your agents can use.", component: IntegrationSection, order: 50 });
   registerSettingsSection({ id: "apitokens", label: "API tokens", lede: "API tokens for programmatic access — embed widgets, CLI, or external integrations.", component: ApiTokenSection, order: 60 });
+
+  registerOnboardingStep({
+    id: "first-api-key",
+    component: AddFirstApiKey,
+    predicate: hasNoApiKeysPredicate,
+    order: 10,
+  });
 }

@@ -3,19 +3,29 @@ import fp from "fastify-plugin";
 import { WorkspaceService } from "../services/workspace-service.js";
 import type { ProfileService } from "../services/profile-service.js";
 import type { EventLog } from "../events/event-log.js";
+import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 import { isOwnerOrAdmin } from "../auth/user-auth.js";
-import { WORKSPACE_STATUSES, type WorkspaceStatus } from "@vonzio/shared";
+import { WORKSPACE_STATUSES, type Workspace, type WorkspaceStatus } from "@vonzio/shared";
 
 export interface WorkspaceRoutesOptions {
   workspaceService: WorkspaceService;
   profileService?: ProfileService;
   eventLog?: EventLog;
+  /** Optional — when present, GET responses are enriched with
+   *  `attached_tunnel` for the chat header VPN pill. */
+  orchestrator?: Pick<Orchestrator, "getActiveTunnelByAgentContainer">;
 }
 
 export const workspaceRoutes = fp(
   async (server: FastifyInstance, opts: WorkspaceRoutesOptions) => {
-    const { workspaceService, profileService, eventLog } = opts;
+    const { workspaceService, profileService, eventLog, orchestrator } = opts;
+
+    const withTunnel = (w: Workspace): Workspace => {
+      if (!orchestrator || !w.container_id) return w;
+      const tunnel = orchestrator.getActiveTunnelByAgentContainer(w.container_id);
+      return tunnel ? { ...w, attached_tunnel: tunnel } : w;
+    };
 
     server.get<{
       Querystring: {
@@ -44,12 +54,14 @@ export const workspaceRoutes = fp(
     }, async (request) => {
       const { status, page, limit } = request.query;
       const user = request.user!;
-      return await workspaceService.list({
+      const result = await workspaceService.list({
         userId: user.role === "admin" ? undefined : user.id,
         status,
         page: page ? parseInt(page, 10) : undefined,
         limit: limit ? parseInt(limit, 10) : undefined,
       });
+      if (!orchestrator) return result;
+      return { ...result, workspaces: result.workspaces.map(withTunnel) };
     });
 
     server.get<{ Params: { id: string } }>("/v1/workspaces/:id", {
@@ -64,7 +76,7 @@ export const workspaceRoutes = fp(
       if (!session || !isOwnerOrAdmin(request.user!, session.user_id)) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Session not found"));
       }
-      return session;
+      return withTunnel(session);
     });
 
     server.delete<{ Params: { id: string } }>("/v1/workspaces/:id", {

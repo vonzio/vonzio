@@ -117,6 +117,9 @@ export class Orchestrator extends EventEmitter {
     networkMode: string;
     refCount: number;
     version: string;
+    /** Human-readable tunnel name, surfaced to the dashboard's
+     *  workspace UI as "VPN: <name>" pill. */
+    name: string;
     dns?: string[];
     searchDomains?: string[];
   }>();
@@ -186,6 +189,17 @@ export class Orchestrator extends EventEmitter {
 
   clearPlatformToken(token: string): void {
     this.platformTokens.delete(token);
+  }
+
+  /** Returns the VPN tunnel currently routing the given agent container,
+   *  or null. Used by the workspace endpoint to render the "VPN: <name>"
+   *  pill in the dashboard chat header. */
+  getActiveTunnelByAgentContainer(containerId: string): { id: string; name: string } | null {
+    const pair = this.sidecarsByAgent.get(containerId);
+    if (!pair) return null;
+    const entry = this.sidecarsByTunnel.get(pair.tunnelId);
+    if (!entry) return null;
+    return { id: pair.tunnelId, name: entry.name };
   }
 
   start(): void {
@@ -615,7 +629,7 @@ export class Orchestrator extends EventEmitter {
       binds.push(`${wsVolume}:/workspace`, `${sdkVolume}:/home/agent/.claude`);
     }
 
-    const vpn = await this.ensureVpnSidecar(profile);
+    const vpn = await this.ensureVpnSidecar(profile, sessionId);
     const containerId = await this.deps.containerManager.createContainer({
       image: profile.container_image,
       registryAuth: this.buildRegistryAuth(profile),
@@ -1482,12 +1496,16 @@ export class Orchestrator extends EventEmitter {
    */
   private async ensureVpnSidecar(
     profile: Profile,
+    workspaceId?: string,
   ): Promise<{ sidecarId: string; tunnelId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
     const provider = this.deps.vpnTunnelProvider?.();
     const encryptionKey = this.deps.config.encryptionKey;
     if (!provider || !encryptionKey || !profile.user_id) return null;
     try {
-      const tunnel = await provider.resolveActiveTunnel(profile.user_id, profile.id);
+      // workspaceId, when passed, lets the provider consult a
+      // per-workspace tunnel override before falling back to the
+      // profile-based resolver.
+      const tunnel = await provider.resolveActiveTunnel(profile.user_id, profile.id, workspaceId);
       if (!tunnel) return null;
 
       // Reuse path: another agent already brought up a sidecar for
@@ -1572,17 +1590,35 @@ export class Orchestrator extends EventEmitter {
    *  bookkeeping. Called only by ensureVpnSidecar via the in-flight
    *  serialization. */
   private async createSidecar(
-    tunnel: { id: string; type: string; encryptedConfig: string; authBlobEncrypted?: string; egressLockdown?: boolean; fullTunnel?: boolean; sidecarImage: string; version: string },
+    tunnel: { id: string; name: string; type: string; encryptedConfig?: string; authBlobEncrypted?: string; egressLockdown?: boolean; fullTunnel?: boolean; sidecarImage: string; version: string },
     provider: NonNullable<ReturnType<NonNullable<OrchestratorDeps["vpnTunnelProvider"]>>>,
     encryptionKey: string,
   ): Promise<{ sidecarId: string; tunnelId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
-    const config = decrypt(tunnel.encryptedConfig, encryptionKey);
-    const env: Record<string, string> = {
-      VPN_CONFIG_B64: Buffer.from(config, "utf8").toString("base64"),
-    };
-    if (tunnel.authBlobEncrypted) {
-      const authBlob = decrypt(tunnel.authBlobEncrypted, encryptionKey);
-      env.VPN_AUTH_USER_PASS_B64 = Buffer.from(authBlob, "utf8").toString("base64");
+    const env: Record<string, string> = {};
+    if (tunnel.type === "tailscale") {
+      // Tailscale doesn't take a config file — the sidecar joins the
+      // tailnet via auth key alone. The key lives in authBlobEncrypted
+      // (reused for parity with OpenVPN's auth-user-pass blob).
+      if (!tunnel.authBlobEncrypted) {
+        this.log.error({ tunnelId: tunnel.id }, "Tailscale tunnel missing auth key");
+        return null;
+      }
+      const authkey = decrypt(tunnel.authBlobEncrypted, encryptionKey);
+      env.VPN_TS_AUTHKEY_B64 = Buffer.from(authkey, "utf8").toString("base64");
+      // Hostname seen on the tailnet — useful for ACLs and admin UI.
+      // Truncated tunnel id keeps it stable across sidecar restarts.
+      env.VPN_TS_HOSTNAME = `vonzio-${tunnel.id.replace(/^vpn_/, "").slice(0, 12)}`;
+    } else {
+      if (!tunnel.encryptedConfig) {
+        this.log.error({ tunnelId: tunnel.id, type: tunnel.type }, "Tunnel missing config");
+        return null;
+      }
+      const config = decrypt(tunnel.encryptedConfig, encryptionKey);
+      env.VPN_CONFIG_B64 = Buffer.from(config, "utf8").toString("base64");
+      if (tunnel.authBlobEncrypted) {
+        const authBlob = decrypt(tunnel.authBlobEncrypted, encryptionKey);
+        env.VPN_AUTH_USER_PASS_B64 = Buffer.from(authBlob, "utf8").toString("base64");
+      }
     }
     if (tunnel.fullTunnel) {
       // Default-route via tunnel — sidecar rewrites the config to add
@@ -1592,7 +1628,10 @@ export class Orchestrator extends EventEmitter {
     } else if (tunnel.egressLockdown) {
       env.VPN_EGRESS_LOCKDOWN = "1";
     }
-    const devices = tunnel.type === "openvpn" ? ["/dev/net/tun"] : undefined;
+    // OpenVPN and Tailscale both need a userspace tun device (Tailscale
+    // can run in userspace-only mode but kernel-mode is what we want
+    // for network_mode:container to expose a working interface).
+    const devices = (tunnel.type === "openvpn" || tunnel.type === "tailscale") ? ["/dev/net/tun"] : undefined;
     const sidecarId = await this.deps.containerManager.createContainer({
       image: tunnel.sidecarImage,
       env,
@@ -1625,6 +1664,7 @@ export class Orchestrator extends EventEmitter {
       networkMode,
       refCount: 1,
       version: tunnel.version,
+      name: tunnel.name,
       dns,
       searchDomains,
     });

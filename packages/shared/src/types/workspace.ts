@@ -25,6 +25,12 @@ export interface Workspace {
   last_active_at: string;
   created_at: string;
   expires_at: string;
+  /** Currently attached VPN tunnel, if any. Null when the workspace's
+   *  agent isn't routed through a tunnel (OSS, or SaaS user without
+   *  an enabled tunnel matching this profile). UI shows a pill in the
+   *  chat header so the operator can tell at a glance which session
+   *  is on which network. */
+  attached_tunnel?: { id: string; name: string } | null;
   /** Transient in-memory flag, NOT persisted. Set when a session is
    *  resurrected from an expired DB row — the SDK's session storage on
    *  the old container is gone (or never existed in this new container),

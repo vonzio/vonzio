@@ -603,6 +603,7 @@ export function Workspace() {
               modelOverride={activeWorkspace.model_override ?? null}
               profileDefaultModel={activeProfile?.model ?? null}
               profileId={activeProfile?.id}
+              attachedTunnel={activeWorkspace.attached_tunnel ?? null}
             />
           ) : isNarrow && (
             // Empty-state header on narrow viewports — without it there'd be
