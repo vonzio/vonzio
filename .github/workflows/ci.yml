@@ -98,7 +98,7 @@ jobs:
           file: docker/Dockerfile.agent.base
           push: false
           load: true
-          tags: ghcr.io/vonzio/core/agent-base:ci
+          tags: ghcr.io/vonzio/vonzio/agent-base:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

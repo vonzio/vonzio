@@ -2,15 +2,15 @@
 # vonzio core — one-shot self-host installer
 #
 # Two entry points (same script):
-#   curl -fsSL https://raw.githubusercontent.com/vonzio/core/main/install.sh | bash
-#   git clone https://github.com/vonzio/core.git && cd core && ./install.sh
+#   curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
+#   git clone https://github.com/vonzio/vonzio.git && cd vonzio && ./install.sh
 #
 # What it does:
 #   1. Detects your OS (macOS, Linux distro, or WSL).
 #   2. Checks for Docker, Docker Compose v2, Node 22+, git, make, openssl.
 #      For each missing dep, asks before installing it.
 #   3. If piped from curl with no local clone: prompts for an install
-#      directory and git-clones vonzio/core there.
+#      directory and git-clones vonzio/vonzio there.
 #   4. Generates a fresh .env with secure random secrets (or keeps existing).
 #   5. Starts a postgres container, runs Better Auth's schema migrations.
 #   6. Brings the stack up via `make docker-dev-oss`.
@@ -27,7 +27,7 @@
 set -euo pipefail
 
 readonly INSTALLER_VERSION="0.1.0"
-readonly REPO_URL="https://github.com/vonzio/core.git"
+readonly REPO_URL="https://github.com/vonzio/vonzio.git"
 readonly DEFAULT_INSTALL_DIR="${HOME}/vonzio"
 readonly NODE_MIN_MAJOR=22
 
@@ -95,7 +95,7 @@ esac
 # ─── Banner ────────────────────────────────────────────────────────────
 log ""
 log "${C_BOLD}vonzio core${C_RESET} installer ${C_DIM}v${INSTALLER_VERSION}${C_RESET}"
-log "${C_DIM}https://github.com/vonzio/core${C_RESET}"
+log "${C_DIM}https://github.com/vonzio/vonzio${C_RESET}"
 log ""
 
 # ─── Detect platform ───────────────────────────────────────────────────

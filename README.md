@@ -43,8 +43,8 @@ The installer checks for Docker, Compose v2, Node 22+, git, make, and openssl. I
 If you'd rather read the script first, the clone-then-run path uses the same code:
 
 ```bash
-git clone https://github.com/vonzio/core.git
-cd core
+git clone https://github.com/vonzio/vonzio.git
+cd vonzio
 ./install.sh
 ```
 

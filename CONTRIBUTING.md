@@ -14,7 +14,7 @@ Thanks for considering a contribution. This guide covers the basics; pair it wit
 The full recipe is in [docs/SELF_HOST.md](docs/SELF_HOST.md). The short version:
 
 ```bash
-git clone https://github.com/vonzio/core.git
+git clone https://github.com/vonzio/vonzio.git
 cd vonzio
 npm install
 
@@ -49,7 +49,7 @@ If you touched dashboard UI, take a screenshot and include it in the PR descript
 
 ## What's in scope
 
-The OSS repository (`vonzio/core`) covers the **data plane**: agent runtime, dashboard, widget, integrations runtime, MCP, sessions, playbooks, memories. Anything a single-user self-hoster needs.
+The OSS repository (`vonzio/vonzio`) covers the **data plane**: agent runtime, dashboard, widget, integrations runtime, MCP, sessions, playbooks, memories. Anything a single-user self-hoster needs.
 
 What's **not** in this repo (and won't be accepted as a PR here):
 - Multi-tenant signup, invites, plans, billing (lives in the proprietary `cp-server` package, behind a stable interface seam).
@@ -68,6 +68,6 @@ If you want to extend the multi-tenant story, the right approach is to build it 
 
 ## Getting help
 
-- **Bug reports / feature requests**: [GitHub Issues](https://github.com/vonzio/core/issues)
-- **Questions, design discussions**: [GitHub Discussions](https://github.com/vonzio/core/discussions)
+- **Bug reports / feature requests**: [GitHub Issues](https://github.com/vonzio/vonzio/issues)
+- **Questions, design discussions**: [GitHub Discussions](https://github.com/vonzio/vonzio/discussions)
 - **Security**: email `security@vonz.io` instead of filing a public issue. Please don't open public issues for vulnerabilities.

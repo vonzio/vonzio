@@ -41,10 +41,10 @@ jobs:
           ### Install
 
           \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/vonzio/core/main/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
           \`\`\`
 
-          Full guide: [docs/SELF_HOST.md](https://github.com/vonzio/core/blob/main/docs/SELF_HOST.md).
+          Full guide: [docs/SELF_HOST.md](https://github.com/vonzio/vonzio/blob/main/docs/SELF_HOST.md).
 
           ---
 

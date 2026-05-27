@@ -25,7 +25,7 @@ agent-image: ## Build the Docker agent image
 # ~5s — Docker's layer cache absorbs no-op rebuilds. docker-dev depends
 # on this, so first `make docker-dev` after a clean is the only slow run.
 agent-base-local: ## Build agent-base locally (required on non-amd64 dev machines)
-	docker build -t ghcr.io/vonzio/core/agent-base:latest -f docker/Dockerfile.agent.base .
+	docker build -t ghcr.io/vonzio/vonzio/agent-base:latest -f docker/Dockerfile.agent.base .
 
 api: ## Start the API server in dev mode (auto-reload)
 	TOOLS_DIR=./tools SKILLS_DIR=./skills npx tsx watch --clear-screen=false packages/core-server/src/index.ts

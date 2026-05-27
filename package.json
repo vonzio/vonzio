@@ -7,7 +7,7 @@
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vonzio/core.git"
+    "url": "https://github.com/vonzio/vonzio.git"
   },
   "workspaces": [
     "packages/shared",
