@@ -867,7 +867,7 @@ function setupSlackRelay(
   }
 
   // Send errors to Slack
-  orchestrator.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: { message: string }) => {
+  orchestrator.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: string) => {
     if (!sessionId) return;
     const ctx = await getSlackContext(sessionId);
     if (!ctx) return;
@@ -879,7 +879,7 @@ function setupSlackRelay(
       await slackService.sendMessage(ctx.botToken, {
         channel: ctx.channel,
         thread_ts: ctx.threadTs,
-        text: `:warning: Error: ${error?.message ?? "Agent task failed"}`,
+        text: `:warning: Error: ${error ?? "Agent task failed"}`,
       });
     } catch (err) {
       server.log.error({ err, sessionId }, "Failed to send error to Slack");

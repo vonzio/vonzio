@@ -1139,14 +1139,20 @@ export class Orchestrator extends EventEmitter {
         this.deps.queue.enqueue(retryTask);
       }, delay);
 
-      this.emit("task:retry", task.id, retryTask.attempt, delay);
+      this.emit("task:retry", task.id, task.session_id, retryTask.attempt, delay);
     } else {
       await this.updateTask(task.id, {
         status: "failed",
         finished_at: new Date().toISOString(),
         error: errorMessage,
       });
-      this.emit("task:failed", task.id, errorMessage);
+      // Include session_id so per-session subscribers (the chat WS that
+      // backs the workspace UI) get the failure event, not just per-task
+      // subscribers (admin task views, Telegram/Slack mirrors). Mirrors
+      // the shape of task:done. Without this the chat stays stuck on
+      // "working" forever — the spinner waits for a terminal event that
+      // never arrives on its channel.
+      this.emit("task:failed", task.id, task.session_id, errorMessage);
     }
   }
 

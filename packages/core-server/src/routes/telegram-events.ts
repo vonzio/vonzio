@@ -2039,7 +2039,7 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     }
   });
 
-  orchestrator.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: { message: string }) => {
+  orchestrator.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: string) => {
     if (!sessionId) return;
     stopTypingRefresh(sessionId);
     clearStreamingState(sessionId);
@@ -2053,7 +2053,7 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     try {
       await telegramService.sendMessage(ctx.botToken, {
         chat_id: ctx.chatId,
-        text: `⚠️ Error: ${error?.message ?? "Agent task failed"}`,
+        text: `⚠️ Error: ${error ?? "Agent task failed"}`,
       });
     } catch (err) {
       server.log.error({ err, sessionId }, "Failed to send error to Telegram");

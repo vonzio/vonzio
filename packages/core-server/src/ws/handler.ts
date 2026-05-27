@@ -197,8 +197,12 @@ export function setupWsHandler(
     }
   });
 
-  orchestrator.on("task:failed", (taskId: string, error: string) => {
-    connectionManager.sendToTask(taskId, { type: "error", task_id: taskId, code: ErrorCodes.TASK_FAILED, message: error });
+  orchestrator.on("task:failed", (taskId: string, sessionId: string | undefined, error: string) => {
+    const msg = { type: "error", task_id: taskId, code: ErrorCodes.TASK_FAILED, message: error };
+    // Use the shared relay so session-mode tasks reach the chat WS AND
+    // persist to the event log — refreshing after a failed turn will
+    // still show the error inline instead of a blank thread.
+    relayToSubscribers(taskId, sessionId, msg);
   });
 
   orchestrator.on("task:cancelled", (taskId: string) => {
