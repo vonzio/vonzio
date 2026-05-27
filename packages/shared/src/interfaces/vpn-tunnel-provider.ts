@@ -27,6 +27,14 @@ export interface TunnelInfo {
    */
   egressLockdown?: boolean;
   /**
+   * Routing mode. When true, the sidecar rewrites the tunnel config
+   * so 0.0.0.0/0 routes via the tunnel — public-internet traffic NATs
+   * out the VPN server's egress IP. Requires the VPN server to be
+   * configured for forwarding. When true, egressLockdown is redundant
+   * (only the tunnel has a usable route).
+   */
+  fullTunnel?: boolean;
+  /**
    * Monotonic version tag (the row's updated_at). Orchestrator
    * compares this against the cached sidecar's stored version; on
    * change, the cached sidecar is torn down so the next agent dispatch
