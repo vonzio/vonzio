@@ -1572,7 +1572,7 @@ export class Orchestrator extends EventEmitter {
    *  bookkeeping. Called only by ensureVpnSidecar via the in-flight
    *  serialization. */
   private async createSidecar(
-    tunnel: { id: string; type: string; encryptedConfig: string; authBlobEncrypted?: string; egressLockdown?: boolean; sidecarImage: string; version: string },
+    tunnel: { id: string; type: string; encryptedConfig: string; authBlobEncrypted?: string; egressLockdown?: boolean; fullTunnel?: boolean; sidecarImage: string; version: string },
     provider: NonNullable<ReturnType<NonNullable<OrchestratorDeps["vpnTunnelProvider"]>>>,
     encryptionKey: string,
   ): Promise<{ sidecarId: string; tunnelId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
@@ -1584,7 +1584,12 @@ export class Orchestrator extends EventEmitter {
       const authBlob = decrypt(tunnel.authBlobEncrypted, encryptionKey);
       env.VPN_AUTH_USER_PASS_B64 = Buffer.from(authBlob, "utf8").toString("base64");
     }
-    if (tunnel.egressLockdown) {
+    if (tunnel.fullTunnel) {
+      // Default-route via tunnel — sidecar rewrites the config to add
+      // 0.0.0.0/0 routes. egress_lockdown is implied (no other route
+      // exists) and we skip the iptables overhead.
+      env.VPN_FULL_TUNNEL = "1";
+    } else if (tunnel.egressLockdown) {
       env.VPN_EGRESS_LOCKDOWN = "1";
     }
     const devices = tunnel.type === "openvpn" ? ["/dev/net/tun"] : undefined;
