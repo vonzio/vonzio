@@ -1449,8 +1449,13 @@ export class Orchestrator extends EventEmitter {
   /**
    * Polls the OpenVPN sidecar for the DNS info its --up script writes
    * to /tmp/vpn-pushed-dns once the tunnel handshake completes. Returns
-   * null if the file never appears (timeout) or is empty (server pushed
-   * no DNS). Worst-case wait is ~10s; typical is <2s.
+   * null only if the file never gains content within the deadline.
+   *
+   * Implementation note: containerManager.readFile is `cat`-based, so
+   * a missing file returns an empty Buffer (not a throw) and an empty
+   * file does the same. Both look the same here; both mean "not ready
+   * yet" — keep polling until we see at least one DNS line or timeout.
+   * Worst-case wait is ~10s; typical is <2s.
    */
   private async readPushedDnsFromSidecar(
     sidecarId: string,
@@ -1460,19 +1465,21 @@ export class Orchestrator extends EventEmitter {
       try {
         const buf = await this.deps.containerManager.readFile(sidecarId, "/tmp/vpn-pushed-dns");
         const text = buf.toString("utf8");
-        const dns: string[] = [];
-        const searchDomains: string[] = [];
-        for (const line of text.split("\n")) {
-          const parts = line.trim().split(/\s+/);
-          if (parts[0] === "DNS" && parts[1]) dns.push(parts[1]);
-          else if (parts[0] === "SEARCH" && parts[1]) searchDomains.push(parts[1]);
+        if (text.length > 0) {
+          const dns: string[] = [];
+          const searchDomains: string[] = [];
+          for (const line of text.split("\n")) {
+            const parts = line.trim().split(/\s+/);
+            if (parts[0] === "DNS" && parts[1]) dns.push(parts[1]);
+            else if (parts[0] === "SEARCH" && parts[1]) searchDomains.push(parts[1]);
+          }
+          if (dns.length > 0) return { dns, searchDomains };
         }
-        if (dns.length === 0) return null;
-        return { dns, searchDomains };
       } catch {
-        // File not yet written; wait and retry.
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        // Read failure (rare — usually a brief race with the sidecar
+        // becoming ready). Treat same as empty: retry.
       }
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
     this.log.warn({ sidecarId }, "Timed out waiting for VPN sidecar to push DNS — agent may not resolve tunneled hostnames");
     return null;
