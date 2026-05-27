@@ -225,8 +225,13 @@ export class ContainerPool {
       for (const container of allContainers) {
         const inPool = this.containers.has(container.id);
         const inSession = sessionContainerIds.has(container.id);
+        // VPN sidecars are owned by the orchestrator's ensureVpnSidecar
+        // and paired-removed alongside their agent in safeRemoveContainer.
+        // The pool doesn't track them, so they look like orphans here.
+        // Skip them — the orchestrator's lifecycle is authoritative.
+        const isVpnSidecar = container.labels["vonzio-mode"] === "vpn-sidecar";
 
-        if (!inPool && !inSession) {
+        if (!inPool && !inSession && !isVpnSidecar) {
           try {
             await this.manager.removeContainer(container.id, true);
             this.onOrphanRemoved?.(container.id);
