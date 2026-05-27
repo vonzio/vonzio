@@ -20,6 +20,12 @@ export interface TunnelInfo {
    * username/password for `--auth-user-pass`). WireGuard ignores it.
    */
   authBlobEncrypted?: string;
+  /**
+   * When true, the sidecar applies iptables rules so attached agents
+   * can ONLY reach hosts via the tunnel — public-internet egress is
+   * blocked. Compliance-grade isolation.
+   */
+  egressLockdown?: boolean;
 }
 
 /**

@@ -1542,7 +1542,7 @@ export class Orchestrator extends EventEmitter {
    *  bookkeeping. Called only by ensureVpnSidecar via the in-flight
    *  serialization. */
   private async createSidecar(
-    tunnel: { id: string; type: string; encryptedConfig: string; authBlobEncrypted?: string; sidecarImage: string },
+    tunnel: { id: string; type: string; encryptedConfig: string; authBlobEncrypted?: string; egressLockdown?: boolean; sidecarImage: string },
     provider: NonNullable<ReturnType<NonNullable<OrchestratorDeps["vpnTunnelProvider"]>>>,
     encryptionKey: string,
   ): Promise<{ sidecarId: string; tunnelId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
@@ -1553,6 +1553,9 @@ export class Orchestrator extends EventEmitter {
     if (tunnel.authBlobEncrypted) {
       const authBlob = decrypt(tunnel.authBlobEncrypted, encryptionKey);
       env.VPN_AUTH_USER_PASS_B64 = Buffer.from(authBlob, "utf8").toString("base64");
+    }
+    if (tunnel.egressLockdown) {
+      env.VPN_EGRESS_LOCKDOWN = "1";
     }
     const devices = tunnel.type === "openvpn" ? ["/dev/net/tun"] : undefined;
     const sidecarId = await this.deps.containerManager.createContainer({
