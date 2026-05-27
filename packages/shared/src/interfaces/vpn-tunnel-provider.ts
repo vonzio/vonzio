@@ -33,4 +33,15 @@ export interface VpnTunnelProvider {
     userId: string,
     profileId: string,
   ): Promise<TunnelInfo | null>;
+  /**
+   * Best-effort event recorder for tunnel lifecycle observability —
+   * sidecar_up, sidecar_down, etc. cp-server's impl persists these to
+   * the audit table and maintains an in-memory active-session counter
+   * the list endpoint exposes. OSS default may noop.
+   */
+  recordEvent?(
+    tunnelId: string,
+    event: string,
+    details?: Record<string, unknown>,
+  ): Promise<void>;
 }

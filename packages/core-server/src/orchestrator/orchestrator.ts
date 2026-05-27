@@ -97,9 +97,11 @@ export class Orchestrator extends EventEmitter {
   private processing = false;
   private activeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private activeTasks = new Map<string, ActiveTask>();
-  // Tracks the WireGuard sidecar paired with each agent container so
+  // Tracks the VPN sidecar paired with each agent container so
   // safeRemoveContainer can clean it up. Empty for OSS (no tunnels).
-  private sidecarsByAgent = new Map<string, string>();
+  // tunnelId is carried so we can emit a sidecar_down event with
+  // the right context on cleanup.
+  private sidecarsByAgent = new Map<string, { sidecarId: string; tunnelId: string }>();
   private memoryTokens = new Map<string, { userId: string; profileId: string }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
@@ -308,7 +310,7 @@ export class Orchestrator extends EventEmitter {
           "vonzio-task-id": task.id,
         },
       });
-      if (vpn) this.sidecarsByAgent.set(containerId, vpn.sidecarId);
+      if (vpn) this.sidecarsByAgent.set(containerId, { sidecarId: vpn.sidecarId, tunnelId: vpn.tunnelId });
       await this.deps.containerManager.startContainer(containerId);
       if (vpn?.dns?.length) {
         await this.applyTunnelDns(containerId, vpn.dns, vpn.searchDomains);
@@ -561,7 +563,7 @@ export class Orchestrator extends EventEmitter {
         "vonzio-session-id": sessionId,
       },
     });
-    if (vpn) this.sidecarsByAgent.set(containerId, vpn.sidecarId);
+    if (vpn) this.sidecarsByAgent.set(containerId, { sidecarId: vpn.sidecarId, tunnelId: vpn.tunnelId });
     await this.deps.containerManager.startContainer(containerId);
     if (vpn?.dns?.length) {
       await this.applyTunnelDns(containerId, vpn.dns, vpn.searchDomains);
@@ -1341,13 +1343,24 @@ export class Orchestrator extends EventEmitter {
     // agent's network namespace doesn't outlive the tunnel by even a
     // moment. Failure here is non-fatal — orphaned sidecars get
     // reaped on next host restart.
-    const sidecarId = this.sidecarsByAgent.get(containerId);
-    if (sidecarId) {
+    const pair = this.sidecarsByAgent.get(containerId);
+    if (pair) {
       this.sidecarsByAgent.delete(containerId);
       try {
-        await this.deps.containerManager.removeContainer(sidecarId, true);
+        await this.deps.containerManager.removeContainer(pair.sidecarId, true);
       } catch {
         // Sidecar may already be gone
+      }
+      // Emit sidecar_down for observability. Provider may be unset on
+      // OSS or noop on the default impl — call optionally.
+      try {
+        await this.deps.vpnTunnelProvider?.()?.recordEvent?.(
+          pair.tunnelId,
+          "sidecar_down",
+          { sidecarId: pair.sidecarId, agentId: containerId },
+        );
+      } catch (err) {
+        this.log.warn({ err, tunnelId: pair.tunnelId }, "recordEvent(sidecar_down) failed");
       }
     }
     try {
@@ -1367,7 +1380,7 @@ export class Orchestrator extends EventEmitter {
    */
   private async ensureVpnSidecar(
     profile: Profile,
-  ): Promise<{ sidecarId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
+  ): Promise<{ sidecarId: string; tunnelId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
     const provider = this.deps.vpnTunnelProvider?.();
     const encryptionKey = this.deps.config.encryptionKey;
     if (!provider || !encryptionKey || !profile.user_id) return null;
@@ -1416,7 +1429,17 @@ export class Orchestrator extends EventEmitter {
       }
 
       this.log.info({ tunnelId: tunnel.id, sidecarId, dns, searchDomains }, "VPN sidecar up");
-      return { sidecarId, networkMode: `container:${sidecarId}`, dns, searchDomains };
+      // Emit sidecar_up event. Best-effort: failure here doesn't
+      // affect the agent launch.
+      try {
+        await provider.recordEvent?.(tunnel.id, "sidecar_up", {
+          sidecarId,
+          hasDns: !!(dns && dns.length > 0),
+        });
+      } catch (err) {
+        this.log.warn({ err, tunnelId: tunnel.id }, "recordEvent(sidecar_up) failed");
+      }
+      return { sidecarId, tunnelId: tunnel.id, networkMode: `container:${sidecarId}`, dns, searchDomains };
     } catch (err) {
       this.log.error({ err, profileId: profile.id }, "Failed to bring up VPN sidecar; proceeding without tunnel");
       return null;
