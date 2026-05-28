@@ -253,16 +253,19 @@ export function WorkspaceHeader({
       </div>
 
       <div className="flex items-center gap-1.5 text-xs shrink-0">
-        {/* Status pill */}
-        <Pill tone={statusTone} dot={connected && (status === "active" || status === "running")}>
-          {statusLabel}
-        </Pill>
+        {/* Status pill — hidden on mobile because the same signal is
+            already in the colored pip on the left side of the header. */}
+        <span className="hidden sm:inline-flex">
+          <Pill tone={statusTone} dot={connected && (status === "active" || status === "running")}>
+            {statusLabel}
+          </Pill>
+        </span>
 
         {attachedTunnel && (
           <span title={`Agent traffic routed via VPN tunnel "${attachedTunnel.name}"`} style={{ display: "inline-flex" }}>
             <Pill tone="ok">
-              <Shield className="w-3 h-3" style={{ marginRight: 4, display: "inline-block", verticalAlign: "-2px" }} />
-              VPN: {attachedTunnel.name}
+              <Shield className="w-3 h-3 sm:mr-1" style={{ display: "inline-block", verticalAlign: "-2px" }} />
+              <span className="hidden sm:inline">VPN: {attachedTunnel.name}</span>
             </Pill>
           </span>
         )}
