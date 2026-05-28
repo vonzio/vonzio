@@ -45,24 +45,39 @@ export class PlaybookService {
     });
   }
 
-  async list(userId: string): Promise<Playbook[]> {
+  async list(userId: string, orgId?: string): Promise<Playbook[]> {
+    // When orgId is supplied (SaaS), require user_id AND org_id to match
+    // (defense in depth). OSS callers pass undefined and the WHERE
+    // clause keeps the original user_id-only behaviour.
+    const whereExpr = orgId
+      ? and(eq(schema.playbooks.user_id, userId), eq(schema.playbooks.org_id, orgId))
+      : eq(schema.playbooks.user_id, userId);
     const rows = await this.db
       .select()
       .from(schema.playbooks)
-      .where(eq(schema.playbooks.user_id, userId))
+      .where(whereExpr)
       .orderBy(desc(schema.playbooks.created_at));
     return rows.map((r) => this.mapPlaybook(r));
   }
 
-  async get(id: string): Promise<Playbook | null> {
+  /**
+   * Fetch a playbook by id. Optionally enforces user_id and/or org_id.
+   * Without filters (legacy callers) returns whatever row matches the
+   * id; callers like the webhook trigger need that. Route handlers
+   * should pass the auth/org context to scope ownership.
+   */
+  async get(id: string, opts: { userId?: string; orgId?: string } = {}): Promise<Playbook | null> {
+    const conditions = [eq(schema.playbooks.id, id)];
+    if (opts.userId) conditions.push(eq(schema.playbooks.user_id, opts.userId));
+    if (opts.orgId) conditions.push(eq(schema.playbooks.org_id, opts.orgId));
     const rows = await this.db
       .select()
       .from(schema.playbooks)
-      .where(eq(schema.playbooks.id, id));
+      .where(and(...conditions));
     return rows.length > 0 ? this.mapPlaybook(rows[0]) : null;
   }
 
-  async create(userId: string, input: CreatePlaybookInput): Promise<Playbook> {
+  async create(userId: string, input: CreatePlaybookInput, orgId?: string): Promise<Playbook> {
     if (input.notification_channels !== undefined) {
       await this.validateChannels(userId, input.notification_channels);
     }
@@ -82,6 +97,9 @@ export class PlaybookService {
     const row = {
       id,
       user_id: userId,
+      // OSS rows leave org_id NULL; SaaS rows stamp it from the
+      // request's OrgContext so subsequent reads can scope properly.
+      org_id: orgId ?? null,
       profile_id: input.profile_id,
       name: input.name,
       description: input.description ?? "",
@@ -108,11 +126,14 @@ export class PlaybookService {
     id: string,
     userId: string,
     input: Partial<CreatePlaybookInput> & { enabled?: boolean },
+    orgId?: string,
   ): Promise<Playbook | null> {
+    const conditions = [eq(schema.playbooks.id, id), eq(schema.playbooks.user_id, userId)];
+    if (orgId) conditions.push(eq(schema.playbooks.org_id, orgId));
     const rows = await this.db
       .select()
       .from(schema.playbooks)
-      .where(and(eq(schema.playbooks.id, id), eq(schema.playbooks.user_id, userId)));
+      .where(and(...conditions));
     if (rows.length === 0) return null;
 
     if (input.notification_channels !== undefined) {
@@ -144,11 +165,13 @@ export class PlaybookService {
     return updated.length > 0 ? this.mapPlaybook(updated[0]) : null;
   }
 
-  async delete(id: string, userId: string): Promise<boolean> {
+  async delete(id: string, userId: string, orgId?: string): Promise<boolean> {
+    const conditions = [eq(schema.playbooks.id, id), eq(schema.playbooks.user_id, userId)];
+    if (orgId) conditions.push(eq(schema.playbooks.org_id, orgId));
     const rows = await this.db
       .select()
       .from(schema.playbooks)
-      .where(and(eq(schema.playbooks.id, id), eq(schema.playbooks.user_id, userId)));
+      .where(and(...conditions));
     if (rows.length === 0) return false;
 
     await this.db.delete(schema.playbookRuns).where(eq(schema.playbookRuns.playbook_id, id));
@@ -241,9 +264,16 @@ export class PlaybookService {
     return rows.map((r) => this.mapRun(r));
   }
 
-  async listRunsForUser(userId: string, limit = 50, playbookId?: string): Promise<PlaybookRun[]> {
+  async listRunsForUser(userId: string, limit = 50, playbookId?: string, orgId?: string): Promise<PlaybookRun[]> {
+    // playbook_runs has no org_id column today (runs inherit org from
+    // the parent playbook). When the caller supplies an orgId we JOIN
+    // through playbooks and filter on playbooks.org_id — keeping the
+    // tenant boundary enforced server-side rather than fetched-then-
+    // filtered. The JOIN already exists for playbook_name, so this is
+    // free.
     const conditions = [eq(schema.playbookRuns.user_id, userId)];
     if (playbookId) conditions.push(eq(schema.playbookRuns.playbook_id, playbookId));
+    if (orgId) conditions.push(eq(schema.playbooks.org_id, orgId));
     const rows = await this.db
       .select({
         run: schema.playbookRuns,

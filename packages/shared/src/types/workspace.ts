@@ -5,6 +5,10 @@ export interface Workspace {
   session_id: string;
   container_id: string | null;
   user_id: string;
+  /** SaaS tenant scope. Null/undefined on OSS deployments (and on legacy
+   *  rows created before the v9 backfill). When set, every read/write
+   *  path scopes by this id in addition to user_id (defense in depth). */
+  org_id?: string | null;
   profile_id: string;
   name: string | null;
   pinned: boolean;

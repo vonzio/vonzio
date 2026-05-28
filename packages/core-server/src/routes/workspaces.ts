@@ -56,6 +56,9 @@ export const workspaceRoutes = fp(
       const user = request.user!;
       const result = await workspaceService.list({
         userId: user.role === "admin" ? undefined : user.id,
+        // Forward the OrgContext when cp-server has populated it (SaaS).
+        // OSS deploys leave this undefined → no behaviour change.
+        orgId: request.orgContext?.org_id,
         status,
         page: page ? parseInt(page, 10) : undefined,
         limit: limit ? parseInt(limit, 10) : undefined,
@@ -73,7 +76,14 @@ export const workspaceRoutes = fp(
       },
     }, async (request, reply) => {
       const session = workspaceService.get(request.params.id);
-      if (!session || !isOwnerOrAdmin(request.user!, session.user_id)) {
+      // Auth: ownership OR admin, OR same-org membership (when an org
+      // context is set and the row's org_id matches). The org-match
+      // branch lets every org member see workspaces owned by another
+      // member in the same org without needing per-user fan-out.
+      const sessionOrgId = session?.org_id ?? null;
+      const orgCtxId = request.orgContext?.org_id;
+      const orgMatch = !!orgCtxId && sessionOrgId === orgCtxId;
+      if (!session || (!orgMatch && !isOwnerOrAdmin(request.user!, session.user_id))) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Session not found"));
       }
       return withTunnel(session);
@@ -93,11 +103,13 @@ export const workspaceRoutes = fp(
       // workspaces (which aren't in the in-memory registry) still resolve
       // their owner from the DB. Before this, expired workspaces 404'd on
       // delete even though they were visible in the sidebar history view.
-      const ownerId = await workspaceService.findOwnerForDelete(request.params.id);
-      if (!ownerId || !isOwnerOrAdmin(request.user!, ownerId)) {
+      const owner = await workspaceService.findOwnerForDelete(request.params.id);
+      const orgCtxId = request.orgContext?.org_id;
+      const orgMatch = !!orgCtxId && owner?.orgId === orgCtxId;
+      if (!owner || (!orgMatch && !isOwnerOrAdmin(request.user!, owner.userId))) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Session not found"));
       }
-      await workspaceService.delete(request.params.id);
+      await workspaceService.delete(request.params.id, { orgId: orgCtxId });
       return { status: "deleted", session_id: request.params.id };
     });
 
@@ -128,12 +140,15 @@ export const workspaceRoutes = fp(
       },
     }, async (request, reply) => {
       const session = workspaceService.get(request.params.id);
-      if (!session || !isOwnerOrAdmin(request.user!, session.user_id)) {
+      const sessionOrgId = session?.org_id ?? null;
+      const orgCtxId = request.orgContext?.org_id;
+      const orgMatch = !!orgCtxId && sessionOrgId === orgCtxId;
+      if (!session || (!orgMatch && !isOwnerOrAdmin(request.user!, session.user_id))) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       }
       const updated = await workspaceService.update(request.params.id, request.body as {
         name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null;
-      });
+      }, { orgId: orgCtxId });
       return updated;
     });
 
@@ -149,7 +164,10 @@ export const workspaceRoutes = fp(
       },
     }, async (request, reply) => {
       const workspace = workspaceService.get(request.params.id);
-      if (!workspace || !isOwnerOrAdmin(request.user!, workspace.user_id)) {
+      const workspaceOrgId = workspace?.org_id ?? null;
+      const orgCtxId = request.orgContext?.org_id;
+      const orgMatch = !!orgCtxId && workspaceOrgId === orgCtxId;
+      if (!workspace || (!orgMatch && !isOwnerOrAdmin(request.user!, workspace.user_id))) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       }
       if (!eventLog) return [];
@@ -163,7 +181,13 @@ export const workspaceRoutes = fp(
       }
 
       const workspace = workspaceService.get(request.params.id);
-      if (!workspace) {
+      // Apply the same auth gate as GET /:id — without this, any
+      // authenticated user could rename someone else's workspace by
+      // calling /generate-title with their session_id.
+      const workspaceOrgId = workspace?.org_id ?? null;
+      const orgCtxId = request.orgContext?.org_id ?? null;
+      const orgMatch = !!orgCtxId && workspaceOrgId === orgCtxId;
+      if (!workspace || (!orgMatch && !isOwnerOrAdmin(request.user!, workspace.user_id))) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       }
 

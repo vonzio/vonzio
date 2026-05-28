@@ -14,13 +14,17 @@ const TYPE_PRIORITY: Record<string, number> = {
 export class MemoryService {
   constructor(private db: DrizzleDB) {}
 
-  async create(userId: string, input: CreateMemoryInput): Promise<Memory> {
+  async create(userId: string, input: CreateMemoryInput, orgId?: string): Promise<Memory> {
     const id = `mem_${nanoid()}`;
     const now = new Date().toISOString();
 
     const row = {
       id,
       user_id: userId,
+      // NULL in OSS / when no OrgContext was set. Stamping at create
+      // time means every later read query can scope by org_id and
+      // still find this row.
+      org_id: orgId ?? null,
       profile_id: input.profile_id ?? null,
       type: input.type,
       name: input.name,
@@ -36,19 +40,27 @@ export class MemoryService {
     return row as Memory;
   }
 
-  async get(id: string): Promise<Memory | null> {
+  async get(id: string, opts: { userId?: string; orgId?: string } = {}): Promise<Memory | null> {
+    const conditions = [eq(schema.memories.id, id)];
+    if (opts.userId) conditions.push(eq(schema.memories.user_id, opts.userId));
+    if (opts.orgId) conditions.push(eq(schema.memories.org_id, opts.orgId));
     const rows = await this.db
       .select()
       .from(schema.memories)
-      .where(eq(schema.memories.id, id));
+      .where(and(...conditions));
     return (rows[0] as Memory) ?? null;
   }
 
   async list(
     userId: string,
-    opts?: { type?: string; profileId?: string; allScopes?: boolean; limit?: number; offset?: number },
+    opts?: { type?: string; profileId?: string; allScopes?: boolean; limit?: number; offset?: number; orgId?: string },
   ): Promise<Memory[]> {
     const conditions = [eq(schema.memories.user_id, userId)];
+
+    if (opts?.orgId) {
+      // Defense in depth: require BOTH user_id and org_id to match.
+      conditions.push(eq(schema.memories.org_id, opts.orgId));
+    }
 
     if (opts?.type) {
       conditions.push(eq(schema.memories.type, opts.type as Memory["type"]));
@@ -78,7 +90,7 @@ export class MemoryService {
     return rows as Memory[];
   }
 
-  async search(userId: string, input: SearchMemoryInput): Promise<Memory[]> {
+  async search(userId: string, input: SearchMemoryInput, orgId?: string): Promise<Memory[]> {
     const limit = input.limit ?? 10;
     const query = input.query;
 
@@ -103,6 +115,12 @@ export class MemoryService {
       ? sql`AND type = ${input.type}`
       : sql``;
 
+    // Org-scoping for raw-SQL search path: appended directly into the
+    // WHERE clause. NULL on OSS / unscoped → no-op fragment.
+    const orgCondition = orgId
+      ? sql`AND org_id = ${orgId}`
+      : sql``;
+
     let result;
 
     if (useIlike) {
@@ -113,6 +131,7 @@ export class MemoryService {
         WHERE user_id = ${userId}
           ${profileCondition}
           ${typeCondition}
+          ${orgCondition}
           AND (
             name ILIKE ${pattern} OR
             COALESCE(description, '') ILIKE ${pattern} OR
@@ -133,6 +152,7 @@ export class MemoryService {
         WHERE user_id = ${userId}
           ${profileCondition}
           ${typeCondition}
+          ${orgCondition}
           AND (
             name % ${query} OR
             COALESCE(description, '') % ${query} OR
@@ -153,11 +173,13 @@ export class MemoryService {
     return memories;
   }
 
-  async update(id: string, userId: string, input: UpdateMemoryInput): Promise<Memory | null> {
+  async update(id: string, userId: string, input: UpdateMemoryInput, orgId?: string): Promise<Memory | null> {
+    const conditions = [eq(schema.memories.id, id), eq(schema.memories.user_id, userId)];
+    if (orgId) conditions.push(eq(schema.memories.org_id, orgId));
     const existing = await this.db
       .select()
       .from(schema.memories)
-      .where(and(eq(schema.memories.id, id), eq(schema.memories.user_id, userId)));
+      .where(and(...conditions));
 
     if (existing.length === 0) return null;
 
@@ -176,17 +198,22 @@ export class MemoryService {
     return this.get(id);
   }
 
-  async delete(id: string, userId: string): Promise<boolean> {
+  async delete(id: string, userId: string, orgId?: string): Promise<boolean> {
+    const conditions = [eq(schema.memories.id, id), eq(schema.memories.user_id, userId)];
+    if (orgId) conditions.push(eq(schema.memories.org_id, orgId));
     const result = await this.db
       .delete(schema.memories)
-      .where(and(eq(schema.memories.id, id), eq(schema.memories.user_id, userId)))
+      .where(and(...conditions))
       .returning();
     return result.length > 0;
   }
 
-  async bulkDelete(userId: string, opts?: { type?: string; profileId?: string }): Promise<number> {
+  async bulkDelete(userId: string, opts?: { type?: string; profileId?: string; orgId?: string }): Promise<number> {
     const conditions = [eq(schema.memories.user_id, userId)];
 
+    if (opts?.orgId) {
+      conditions.push(eq(schema.memories.org_id, opts.orgId));
+    }
     if (opts?.type) {
       conditions.push(eq(schema.memories.type, opts.type as Memory["type"]));
     }

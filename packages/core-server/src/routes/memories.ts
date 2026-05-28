@@ -23,7 +23,14 @@ export const memoryRoutes = fp(
       const profileId = query.profile_id || undefined;
       const limit = query.limit ? Number(query.limit) : 50;
       const offset = query.offset ? Number(query.offset) : 0;
-      return memoryService.list(request.user!.id, { type, profileId, allScopes: !profileId, limit, offset });
+      return memoryService.list(request.user!.id, {
+        type,
+        profileId,
+        allScopes: !profileId,
+        limit,
+        offset,
+        orgId: request.orgContext?.org_id,
+      });
     });
 
     server.get("/v1/memories/search", async (request, reply) => {
@@ -37,14 +44,17 @@ export const memoryRoutes = fp(
         type,
         profile_id,
         limit,
-      });
+      }, request.orgContext?.org_id);
     });
 
     server.get<{ Params: { id: string } }>(
       "/v1/memories/:id",
       async (request, reply) => {
-        const memory = await memoryService.get(request.params.id);
-        if (!memory || memory.user_id !== request.user!.id) {
+        const memory = await memoryService.get(request.params.id, {
+          userId: request.user!.id,
+          orgId: request.orgContext?.org_id,
+        });
+        if (!memory) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Memory not found"));
         }
         return memory;
@@ -56,7 +66,7 @@ export const memoryRoutes = fp(
       if (!parsed.success) {
         return sendValidationError(reply, parsed.error);
       }
-      const memory = await memoryService.create(request.user!.id, parsed.data);
+      const memory = await memoryService.create(request.user!.id, parsed.data, request.orgContext?.org_id);
       return reply.code(201).send(memory);
     });
 
@@ -71,6 +81,7 @@ export const memoryRoutes = fp(
           request.params.id,
           request.user!.id,
           parsed.data,
+          request.orgContext?.org_id,
         );
         if (!updated) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Memory not found"));
@@ -82,7 +93,11 @@ export const memoryRoutes = fp(
     server.delete<{ Params: { id: string } }>(
       "/v1/memories/:id",
       async (request, reply) => {
-        const deleted = await memoryService.delete(request.params.id, request.user!.id);
+        const deleted = await memoryService.delete(
+          request.params.id,
+          request.user!.id,
+          request.orgContext?.org_id,
+        );
         if (!deleted) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Memory not found"));
         }
@@ -94,7 +109,11 @@ export const memoryRoutes = fp(
       const query = request.query as Record<string, string>;
       const type = query.type || undefined;
       const profileId = query.profile_id || undefined;
-      const count = await memoryService.bulkDelete(request.user!.id, { type, profileId });
+      const count = await memoryService.bulkDelete(request.user!.id, {
+        type,
+        profileId,
+        orgId: request.orgContext?.org_id,
+      });
       return { deleted: count };
     });
   },

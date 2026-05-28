@@ -583,7 +583,9 @@ export async function buildServer(deps: ServerDeps) {
     memoryService,
     resolveSession: (token) => {
       const session = orchestrator.resolveMemoryToken(token);
-      return session ? { userId: session.userId, profileId: session.profileId } : null;
+      return session
+        ? { userId: session.userId, profileId: session.profileId, orgId: session.orgId }
+        : null;
     },
   });
 
@@ -628,7 +630,9 @@ export async function buildServer(deps: ServerDeps) {
     eventLog,
     resolveSession: (token: string) => {
       const session = orchestrator.resolvePlatformToken(token);
-      return session ? { userId: session.userId, profileId: session.profileId } : null;
+      return session
+        ? { userId: session.userId, profileId: session.profileId, orgId: session.orgId }
+        : null;
     },
   });
 
