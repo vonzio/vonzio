@@ -10,6 +10,7 @@ export function createTracker(opts: TrackerOptions): Tracker {
       event: input.event,
       source: input.source ?? "server",
       user_id: input.userId ?? null,
+      org_id: input.orgId ?? null,
       session_id: input.sessionId ?? null,
       properties: input.properties ?? null,
       ip: input.ip ?? null,

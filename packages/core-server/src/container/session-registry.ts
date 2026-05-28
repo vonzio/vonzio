@@ -62,6 +62,7 @@ export class SessionRegistry {
     userId: string,
     profileId: string,
     persistent = false,
+    orgId: string | null = null,
   ): Promise<Workspace> {
     const now = new Date().toISOString();
     const lifetimeSecs = persistent
@@ -75,6 +76,7 @@ export class SessionRegistry {
       session_id: sessionId,
       container_id: containerId,
       user_id: userId,
+      org_id: orgId,
       profile_id: profileId,
       name: null,
       pinned: false,
@@ -102,6 +104,7 @@ export class SessionRegistry {
         session_id: sessionId,
         container_id: containerId,
         user_id: userId,
+        org_id: orgId,
         profile_id: profileId,
         persistent,
         status: "active",
@@ -295,6 +298,7 @@ export class SessionRegistry {
       session_id: row.session_id,
       container_id: null,
       user_id: row.user_id ?? "",
+      org_id: row.org_id ?? null,
       profile_id: row.profile_id,
       name: row.name ?? null,
       pinned: row.pinned,
@@ -341,12 +345,19 @@ export class SessionRegistry {
    * (i.e., the sidebar's "history" view does; hot per-request paths
    * that only need live sessions can skip it).
    */
-  async listInactiveFromDB(userId?: string): Promise<Workspace[]> {
-    const rows = userId
-      ? await this.db.select().from(schema.workspaces).where(
-          and(eq(schema.workspaces.status, "expired"), eq(schema.workspaces.user_id, userId)),
-        )
-      : await this.db.select().from(schema.workspaces).where(eq(schema.workspaces.status, "expired"));
+  async listInactiveFromDB(userId?: string, orgId?: string): Promise<Workspace[]> {
+    // Build the WHERE clause dynamically: status=expired is required;
+    // user_id and org_id stack when supplied. The org filter is done
+    // server-side so the SaaS workspace list doesn't pull rows from
+    // other tenants over the wire and then JS-filter them out.
+    const conditions = [eq(schema.workspaces.status, "expired")];
+    if (userId) conditions.push(eq(schema.workspaces.user_id, userId));
+    if (orgId) conditions.push(eq(schema.workspaces.org_id, orgId));
+
+    const rows = await this.db
+      .select()
+      .from(schema.workspaces)
+      .where(and(...conditions));
 
     return rows
       .filter((row) => !this.sessions.has(row.session_id))
@@ -354,6 +365,7 @@ export class SessionRegistry {
         session_id: row.session_id,
         container_id: row.container_id,
         user_id: row.user_id ?? "",
+        org_id: row.org_id ?? null,
         profile_id: row.profile_id,
         name: row.name ?? null,
         pinned: row.pinned,
@@ -451,6 +463,7 @@ export class SessionRegistry {
         session_id: row.session_id,
         container_id: row.container_id,
         user_id: row.user_id ?? "",
+        org_id: row.org_id ?? null,
         profile_id: row.profile_id,
         name: row.name ?? null,
         pinned: row.pinned,
@@ -611,6 +624,7 @@ export class SessionRegistry {
       session_id: sessionId,
       container_id: null,
       user_id: (row.user_id as string) ?? "",
+      org_id: (row.org_id as string | null | undefined) ?? null,
       profile_id: row.profile_id as string,
       name: (row.name as string) ?? null,
       pinned: row.pinned as boolean,

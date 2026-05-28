@@ -1,5 +1,11 @@
 export interface EventRecord {
   user_id?: string | null;
+  /**
+   * Optional org id. Stamped by SaaS callers from request.orgContext;
+   * NULL on OSS deployments. Persisted alongside user_id so admin
+   * dashboards can scope event queries per org.
+   */
+  org_id?: string | null;
   session_id?: string | null;
   event: string;
   source: "server" | "client";
@@ -33,6 +39,8 @@ export interface TrackInput {
   event: string;
   source?: "server" | "client";
   userId?: string | null;
+  /** SaaS callers pass request.orgContext?.org_id; OSS leaves it undefined. */
+  orgId?: string | null;
   sessionId?: string | null;
   properties?: Record<string, unknown> | null;
   ip?: string | null;

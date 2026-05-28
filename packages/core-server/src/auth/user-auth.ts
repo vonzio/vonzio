@@ -20,9 +20,23 @@ export function isOwnerOrAdmin(user: AuthUser, resourceUserId: string | null): b
   return user.id === resourceUserId;
 }
 
+/**
+ * OrgContext is populated by the cp-server (SaaS) OrgContext middleware
+ * when it runs. In OSS deployments cp-server isn't loaded so the field
+ * stays `undefined` — services treat that as "no org filtering" and fall
+ * back to plain user_id-only WHERE clauses. We declare the minimal shape
+ * here so OSS-only builds type-check without importing cp-server (which
+ * would create a backwards dep). cp-server is free to augment this with
+ * additional fields via its own `declare module`.
+ */
+export interface OrgContext {
+  org_id?: string;
+}
+
 declare module "fastify" {
   interface FastifyRequest {
     user?: AuthUser;
+    orgContext?: OrgContext;
   }
 }
 

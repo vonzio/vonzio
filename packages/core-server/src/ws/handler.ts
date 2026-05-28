@@ -232,6 +232,10 @@ export function setupWsHandler(
       socket.close(4001, "Unauthorized");
       return;
     }
+    // Pin the OrgContext at connection time. SaaS upgrades the WS via
+    // the same auth hook that populates orgContext on REST routes; OSS
+    // leaves it undefined → register() falls back to org_id=null.
+    const connectionOrgId = request.orgContext?.org_id ?? null;
 
     const connectionId = connectionManager.add(socket, user.id);
     if (!connectionId) {
@@ -255,7 +259,7 @@ export function setupWsHandler(
       }
 
       try {
-        await handleMessage(connectionId, user, msg);
+        await handleMessage(connectionId, user, connectionOrgId, msg);
       } catch (err) {
         connectionManager.sendTo(connectionId, {
           type: "error",
@@ -292,6 +296,7 @@ export function setupWsHandler(
   async function handleMessage(
     connectionId: string,
     user: NonNullable<FastifyRequest["user"]>,
+    connectionOrgId: string | null,
     msg: ClientMessage,
   ): Promise<void> {
     switch (msg.type) {
@@ -372,6 +377,7 @@ export function setupWsHandler(
           user.id,
           profileId,
           persistent,
+          connectionOrgId,
         );
         connectionManager.subscribeSession(connectionId, newSessionId);
         connectionManager.sendTo(connectionId, {

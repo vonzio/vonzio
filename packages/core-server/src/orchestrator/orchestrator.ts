@@ -137,11 +137,11 @@ export class Orchestrator extends EventEmitter {
   // wait this long before actually removing the sidecar — back-to-back
   // tasks reuse the same tunnel without re-handshaking.
   private sidecarTeardownTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private memoryTokens = new Map<string, { userId: string; profileId: string }>();
+  private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
   private tellerTokens = new Map<string, { userId: string; profileId: string }>();
-  private platformTokens = new Map<string, { userId: string; profileId: string }>();
+  private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private log: Logger;
 
   constructor(private deps: OrchestratorDeps) {
@@ -151,7 +151,7 @@ export class Orchestrator extends EventEmitter {
     this.log = deps.log?.child({ component: "orchestrator" }) ?? noopLogger;
   }
 
-  resolveMemoryToken(token: string): { userId: string; profileId: string } | undefined {
+  resolveMemoryToken(token: string): { userId: string; profileId: string; orgId: string | null } | undefined {
     return this.memoryTokens.get(token);
   }
 
@@ -183,7 +183,7 @@ export class Orchestrator extends EventEmitter {
     this.tellerTokens.delete(token);
   }
 
-  resolvePlatformToken(token: string): { userId: string; profileId: string } | undefined {
+  resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null } | undefined {
     return this.platformTokens.get(token);
   }
 
@@ -803,11 +803,17 @@ export class Orchestrator extends EventEmitter {
 
     // Memory integration: inject MCP server and build memory section for system prompt
     const userId = profile.user_id ?? "";
+    // Look up org_id from the active workspace so MCP handlers can
+    // scope reads/writes by tenant. The session may not be registered
+    // yet (first-task batch mode); null falls through to OSS behaviour.
+    const taskOrgId = task.session_id
+      ? this.deps.sessionRegistry.get(task.session_id)?.org_id ?? null
+      : null;
     let memorySection = "";
     if (profile.memory_enabled !== false && this.deps.memoryService && userId) {
       if (this.deps.config.internalServerUrl) {
         const memToken = `mem_${nanoid()}`;
-        this.memoryTokens.set(memToken, { userId, profileId: profile.id });
+        this.memoryTokens.set(memToken, { userId, profileId: profile.id, orgId: taskOrgId });
         mcpTokensToClean.push({ type: "memory", token: memToken });
         const memoryMcpUrl = `${this.deps.config.internalServerUrl}/mcp/memory`;
         nonSdkServers.push({
@@ -881,7 +887,7 @@ export class Orchestrator extends EventEmitter {
     // Platform MCP: inject server for agent-initiated platform operations (playbooks, tasks)
     if (this.deps.config.internalServerUrl && userId) {
       const platformToken = `platform_${nanoid()}`;
-      this.platformTokens.set(platformToken, { userId, profileId: profile.id });
+      this.platformTokens.set(platformToken, { userId, profileId: profile.id, orgId: taskOrgId });
       mcpTokensToClean.push({ type: "platform", token: platformToken });
       const platformMcpUrl = `${this.deps.config.internalServerUrl}/mcp/platform`;
       nonSdkServers.push({

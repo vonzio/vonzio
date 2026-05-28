@@ -7,6 +7,10 @@ import { MEMORY_TYPES } from "@vonzio/shared";
 interface MemoryMcpSession {
   userId: string;
   profileId: string;
+  /** SaaS tenant scope — null on OSS / when the workspace pre-dates the
+   *  v9 backfill. Passed into every memoryService call so cross-tenant
+   *  reads/writes are SQL-blocked even when the user_id collides. */
+  orgId: string | null;
 }
 
 export interface MemoryMcpOptions {
@@ -187,7 +191,7 @@ export const memoryMcpPlugin = fp(
         return reply.send(rpcError(id, -32000, "Invalid or expired session token"));
       }
 
-      const { userId, profileId } = session;
+      const { userId, profileId, orgId } = session;
 
       switch (body.method) {
         case "initialize":
@@ -215,7 +219,7 @@ export const memoryMcpPlugin = fp(
           const args = params.arguments ?? {};
 
           try {
-            const result = await handleToolCall(memoryService, userId, profileId, toolName, args);
+            const result = await handleToolCall(memoryService, userId, profileId, orgId, toolName, args);
             return reply.send(rpcResult(id, result));
           } catch (err) {
             const message = err instanceof Error ? err.message : "Unknown error";
@@ -235,9 +239,14 @@ async function handleToolCall(
   memoryService: MemoryService,
   userId: string,
   profileId: string,
+  orgId: string | null,
   toolName: string,
   args: Record<string, unknown>,
 ) {
+  // Coalesce null to undefined when calling services that accept optional
+  // orgId — they treat undefined as "no scoping" and null isn't a valid
+  // value for the eq() filter we use server-side.
+  const scopedOrgId = orgId ?? undefined;
   switch (toolName) {
     case "memory_search": {
       const query = args.query as string | undefined;
@@ -252,7 +261,7 @@ async function handleToolCall(
         type,
         profile_id: searchProfileId,
         limit: 10,
-      });
+      }, scopedOrgId);
 
       return toolResult(formatMemoriesForAgent(memories));
     }
@@ -279,7 +288,7 @@ async function handleToolCall(
         body,
         description: args.description as string | undefined,
         profile_id: writeProfileId,
-      });
+      }, scopedOrgId);
 
       return toolResult(`Memory saved: ${memory.id} (${memory.type}) "${memory.name}"`);
     }
@@ -293,7 +302,7 @@ async function handleToolCall(
       if (args.name !== undefined) input.name = args.name as string;
       if (args.description !== undefined) input.description = args.description as string;
 
-      const updated = await memoryService.update(memId, userId, input);
+      const updated = await memoryService.update(memId, userId, input, scopedOrgId);
       if (!updated) return toolResult(`Memory not found: ${memId}`, true);
 
       return toolResult(`Memory updated: ${updated.id} "${updated.name}"`);
@@ -303,7 +312,7 @@ async function handleToolCall(
       const memId = args.id as string | undefined;
       if (!memId) return toolResult("Missing required parameter: id", true);
 
-      const deleted = await memoryService.delete(memId, userId);
+      const deleted = await memoryService.delete(memId, userId, scopedOrgId);
       if (!deleted) return toolResult(`Memory not found: ${memId}`, true);
 
       return toolResult(`Memory deleted: ${memId}`);
@@ -319,6 +328,7 @@ async function handleToolCall(
         type,
         profileId: listProfileId,
         limit,
+        orgId: scopedOrgId,
       });
 
       return toolResult(formatMemoriesForAgent(memories));
@@ -328,8 +338,8 @@ async function handleToolCall(
       const memId = args.id as string | undefined;
       if (!memId) return toolResult("Missing required parameter: id", true);
 
-      const mem = await memoryService.get(memId);
-      if (!mem || mem.user_id !== userId) {
+      const mem = await memoryService.get(memId, { userId, orgId: scopedOrgId });
+      if (!mem) {
         return toolResult(`Memory not found: ${memId}`, true);
       }
       return toolResult(formatMemoryFull(mem));

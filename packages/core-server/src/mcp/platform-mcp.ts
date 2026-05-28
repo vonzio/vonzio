@@ -14,6 +14,11 @@ import { WORKSPACE_STATUSES } from "@vonzio/shared";
 interface PlatformMcpSession {
   userId: string;
   profileId: string;
+  /** SaaS tenant scope — null on OSS / when the workspace pre-dates the
+   *  v9 backfill. Passed into every playbook/workspace service call so
+   *  agent-initiated platform ops respect the same org boundary as the
+   *  HTTP routes. */
+  orgId: string | null;
 }
 
 export interface PlatformMcpOptions {
@@ -354,11 +359,16 @@ async function handleToolCall(
   toolName: string,
   args: Record<string, unknown>,
 ) {
-  const { userId, profileId } = session;
+  const { userId, profileId, orgId } = session;
+  // Coalesce null → undefined so service methods that take `orgId?: string`
+  // treat OSS / pre-backfill rows as "no scoping". Drizzle's eq() rejects
+  // null and the OSS path expects undefined.
+  const scopedOrgId = orgId ?? undefined;
 
   // Resolve and authorize a workspace by session_id arg in one step. Returns
   // either the workspace or a ready-to-return tool error. Same opaque error
-  // for missing/not-found/not-yours so existence isn't leaked across users.
+  // for missing/not-found/not-yours so existence isn't leaked across users
+  // or orgs.
   function requireOwnedWorkspace(args: Record<string, unknown>): { workspace: Workspace } | { error: ReturnType<typeof toolResult> } {
     const sessionId = args.session_id;
     if (typeof sessionId !== "string" || sessionId.length === 0) {
@@ -366,6 +376,13 @@ async function handleToolCall(
     }
     const w = workspaceService.get(sessionId);
     if (!w || w.user_id !== userId) {
+      return { error: toolResult("Workspace not found", true) };
+    }
+    // Org-scope check: when the MCP session is bound to a tenant, the
+    // requested workspace must belong to the same tenant. Without this,
+    // an agent in tenant A could enumerate tenant B's workspaces via
+    // session_id smuggling (same user_id, different org).
+    if (orgId && w.org_id !== orgId) {
       return { error: toolResult("Workspace not found", true) };
     }
     return { workspace: w };
@@ -411,14 +428,14 @@ async function handleToolCall(
         },
       };
 
-      const playbook = await playbookService.create(userId, input);
+      const playbook = await playbookService.create(userId, input, scopedOrgId);
       return toolResult(
         `Playbook created successfully.\nID: ${playbook.id}\nName: ${playbook.name}\nTrigger: ${playbook.trigger_type}\nEnabled: ${playbook.enabled}`,
       );
     }
 
     case "playbook_list": {
-      const playbooks = await playbookService.list(userId);
+      const playbooks = await playbookService.list(userId, scopedOrgId);
       if (playbooks.length === 0) return toolResult("No playbooks found.");
 
       const lines = playbooks.map((p) =>
@@ -431,8 +448,8 @@ async function handleToolCall(
       const id = args.playbook_id as string;
       if (!id) return toolResult("Missing required parameter: playbook_id", true);
 
-      const playbook = await playbookService.get(id);
-      if (!playbook || playbook.user_id !== userId) return toolResult("Playbook not found", true);
+      const playbook = await playbookService.get(id, { userId, orgId: scopedOrgId });
+      if (!playbook) return toolResult("Playbook not found", true);
 
       return toolResult(JSON.stringify(playbook, null, 2));
     }
@@ -449,7 +466,7 @@ async function handleToolCall(
       if (args.enabled !== undefined) updates.enabled = args.enabled as boolean;
 
       if (args.max_chains !== undefined || args.budget_cap_usd !== undefined || args.max_turns_per_chain !== undefined) {
-        const existing = await playbookService.get(id);
+        const existing = await playbookService.get(id, { userId, orgId: scopedOrgId });
         if (!existing) return toolResult("Playbook not found", true);
         updates.chain_config = {
           ...existing.chain_config,
@@ -459,7 +476,7 @@ async function handleToolCall(
         };
       }
 
-      const updated = await playbookService.update(id, userId, updates);
+      const updated = await playbookService.update(id, userId, updates, scopedOrgId);
       if (!updated) return toolResult("Playbook not found or access denied", true);
 
       return toolResult(`Playbook ${id} updated successfully.`);
@@ -469,8 +486,8 @@ async function handleToolCall(
       const id = args.playbook_id as string;
       if (!id) return toolResult("Missing required parameter: playbook_id", true);
 
-      const playbook = await playbookService.get(id);
-      if (!playbook || playbook.user_id !== userId) return toolResult("Playbook not found", true);
+      const playbook = await playbookService.get(id, { userId, orgId: scopedOrgId });
+      if (!playbook) return toolResult("Playbook not found", true);
 
       // Fire-and-forget — the chain runner handles the execution
       const runPromise = chainRunner.execute(playbook, userId);
@@ -490,6 +507,13 @@ async function handleToolCall(
 
       const run = await playbookService.getRun(runId);
       if (!run || run.user_id !== userId) return toolResult("Run not found", true);
+      // Org boundary: runs don't carry org_id themselves — inherit
+      // from the parent playbook. Reject if the playbook isn't in our
+      // tenant (same opaque "not found" message).
+      if (scopedOrgId) {
+        const parent = await playbookService.get(run.playbook_id, { userId, orgId: scopedOrgId });
+        if (!parent) return toolResult("Run not found", true);
+      }
 
       const lines = [
         `Run ID: ${run.id}`,
@@ -577,6 +601,7 @@ async function handleToolCall(
 
       const { workspaces } = await workspaceService.list({
         userId,
+        orgId: scopedOrgId,
         status,
         includeArchived,
         starredOnly,
@@ -634,7 +659,7 @@ async function handleToolCall(
         return toolResult("No updatable fields supplied — allowed: name, starred, archived, model_override", true);
       }
 
-      const updated = await workspaceService.update(existing.session_id, updates);
+      const updated = await workspaceService.update(existing.session_id, updates, { orgId: scopedOrgId });
       if (!updated) return toolResult("Workspace not found", true);
       return toolResult(`Workspace ${existing.session_id} updated.\n${JSON.stringify(updates, null, 2)}`);
     }
@@ -728,7 +753,7 @@ async function handleToolCall(
       const limit = clampInt(args.limit, 20, 1, 100);
       const playbookId = typeof args.playbook_id === "string" && args.playbook_id.length > 0 ? args.playbook_id : undefined;
 
-      const runs = await playbookService.listRunsForUser(userId, limit, playbookId);
+      const runs = await playbookService.listRunsForUser(userId, limit, playbookId, scopedOrgId);
 
       if (runs.length === 0) return toolResult("No playbook runs found.");
 

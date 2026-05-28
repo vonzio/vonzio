@@ -1,4 +1,4 @@
-import { eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
 import { SessionRegistry } from "../container/session-registry.js";
@@ -7,6 +7,12 @@ import type { Workspace, WorkspaceStatus } from "@vonzio/shared";
 
 export interface WorkspaceFilters {
   userId?: string;
+  /**
+   * When set, the WHERE clause requires user_id AND org_id to match
+   * (defense in depth). Undefined on OSS deployments — falls back to
+   * plain user_id filtering, preserving the OSS behaviour unchanged.
+   */
+  orgId?: string;
   status?: WorkspaceStatus;
   /** Default true; pass false to hide archived workspaces. */
   includeArchived?: boolean;
@@ -39,14 +45,26 @@ export class WorkspaceService {
         : this.registry.listAll();
     }
 
+    // Org-scoped filter (defense in depth): when orgId is provided,
+    // the in-memory Workspace row's org_id must match. Workspaces
+    // created without an org_id (legacy OSS rows that pre-date the v9
+    // backfill, or OSS deployments where no OrgContext is ever set)
+    // are filtered out by intent when an orgId is required.
+    if (filters.orgId) {
+      all = all.filter((w) => w.org_id === filters.orgId);
+    }
+
     // Merge in expired workspaces from the DB. The registry deletes
     // expired sessions from its in-memory map (to bound memory) so
     // without this the API hides them entirely — bug the user reported
     // on v0.1.81 where 91 expired workspaces were invisible. Skip the
     // DB query when the caller asked for a non-expired status filter
-    // (no expired rows would match anyway, save the round-trip).
+    // (no expired rows would match anyway, save the round-trip). The
+    // org filter is pushed down to the SQL WHERE clause via
+    // listInactiveFromDB(userId, orgId), avoiding a fetch-then-JS-filter
+    // step that would pull cross-tenant rows through the wire.
     if (!filters.status || filters.status === "expired") {
-      const inactive = await this.registry.listInactiveFromDB(filters.userId);
+      const inactive = await this.registry.listInactiveFromDB(filters.userId, filters.orgId);
       all = all.concat(inactive);
     }
 
@@ -87,7 +105,7 @@ export class WorkspaceService {
     };
   }
 
-  async update(sessionId: string, fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; last_run_model?: string | null }): Promise<Workspace | null> {
+  async update(sessionId: string, fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; last_run_model?: string | null }, opts: { orgId?: string } = {}): Promise<Workspace | null> {
     // Expired sessions live only in the DB (SessionRegistry deletes them
     // from its in-memory Map on reap). The old early-return here meant
     // the user couldn't change `model_override`, `name`, `starred`, etc.
@@ -117,10 +135,19 @@ export class WorkspaceService {
     if (fields.last_run_model !== undefined) dbUpdate.last_run_model = fields.last_run_model;
 
     if (Object.keys(dbUpdate).length > 0) {
+      // Defense in depth: when caller supplied an org context, require
+      // BOTH session_id AND org_id to match. Without orgId, behaviour
+      // is unchanged (OSS path).
+      const whereExpr = opts.orgId
+        ? and(
+            eq(schema.workspaces.session_id, sessionId),
+            eq(schema.workspaces.org_id, opts.orgId),
+          )
+        : eq(schema.workspaces.session_id, sessionId);
       const result = await this.db
         .update(schema.workspaces)
         .set(dbUpdate)
-        .where(eq(schema.workspaces.session_id, sessionId))
+        .where(whereExpr)
         .returning();
       // If the in-memory session was gone (expired) we still want the
       // dashboard to see the updated row reflected — load it from the
@@ -132,6 +159,7 @@ export class WorkspaceService {
           session_id: row.session_id,
           container_id: row.container_id,
           user_id: row.user_id ?? "",
+          org_id: row.org_id ?? null,
           profile_id: row.profile_id,
           name: row.name ?? null,
           pinned: row.pinned,
@@ -185,27 +213,46 @@ export class WorkspaceService {
    * ownership check before calling), or null when the row doesn't
    * exist. Caller is responsible for the auth gate.
    */
-  async findOwnerForDelete(sessionId: string): Promise<string | null> {
+  /**
+   * Returns the owner info (user_id and org_id) for a workspace so the
+   * caller can run an ownership/admin gate before calling `delete`.
+   * Returns the row's user_id and org_id when found, or null when no
+   * row exists. The caller is responsible for the auth check.
+   */
+  async findOwnerForDelete(sessionId: string): Promise<{ userId: string | null; orgId: string | null } | null> {
     const live = this.registry.get(sessionId);
-    if (live) return live.user_id;
+    if (live) {
+      return { userId: live.user_id, orgId: live.org_id ?? null };
+    }
     const rows = await this.db
-      .select({ user_id: schema.workspaces.user_id, container_id: schema.workspaces.container_id })
+      .select({
+        user_id: schema.workspaces.user_id,
+        org_id: schema.workspaces.org_id,
+        container_id: schema.workspaces.container_id,
+      })
       .from(schema.workspaces)
       .where(eq(schema.workspaces.session_id, sessionId))
       .limit(1);
-    return rows[0]?.user_id ?? null;
+    if (rows.length === 0) return null;
+    return { userId: rows[0].user_id ?? null, orgId: rows[0].org_id ?? null };
   }
 
-  async delete(sessionId: string): Promise<boolean> {
+  async delete(sessionId: string, opts: { orgId?: string } = {}): Promise<boolean> {
     const live = this.registry.get(sessionId);
     let containerId: string | null = live?.container_id ?? null;
     if (!live) {
       // Expired workspaces aren't in the in-memory registry; load the
       // container id from DB so we can still try to tear it down.
+      const lookupExpr = opts.orgId
+        ? and(
+            eq(schema.workspaces.session_id, sessionId),
+            eq(schema.workspaces.org_id, opts.orgId),
+          )
+        : eq(schema.workspaces.session_id, sessionId);
       const rows = await this.db
         .select({ container_id: schema.workspaces.container_id })
         .from(schema.workspaces)
-        .where(eq(schema.workspaces.session_id, sessionId))
+        .where(lookupExpr)
         .limit(1);
       if (rows.length === 0) return false;
       containerId = rows[0].container_id ?? null;
@@ -218,7 +265,15 @@ export class WorkspaceService {
       }
     }
     if (live) this.registry.remove(sessionId);
-    await this.db.delete(schema.workspaces).where(eq(schema.workspaces.session_id, sessionId));
+    // Defense in depth: scope DELETE to org_id when supplied so we
+    // can't accidentally cross-tenant delete via a smuggled session_id.
+    const whereExpr = opts.orgId
+      ? and(
+          eq(schema.workspaces.session_id, sessionId),
+          eq(schema.workspaces.org_id, opts.orgId),
+        )
+      : eq(schema.workspaces.session_id, sessionId);
+    await this.db.delete(schema.workspaces).where(whereExpr);
     return true;
   }
 }
