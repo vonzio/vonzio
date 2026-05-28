@@ -20,6 +20,7 @@
     "./errors": "./src/errors.ts",
     "./auth/user-auth": "./src/auth/user-auth.ts",
     "./auth/crypto": "./src/auth/crypto.ts",
+    "./auth/better-auth": "./src/auth/better-auth.ts",
     "./orchestrator/orchestrator": "./src/orchestrator/orchestrator.ts"
   },
   "scripts": {

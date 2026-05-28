@@ -10,6 +10,34 @@ import type { DrizzleDB } from "../db/index.js";
 import { emailLayout } from "../email/templates.js";
 import type { Tracker } from "../lib/event-tracker/index.js";
 
+/**
+ * Optional extra database hooks SaaS layers (cp-server) can register on top
+ * of the OSS core's Better Auth instance. Each hook is composed *after* the
+ * corresponding built-in hook runs.
+ *
+ * **Important: post-commit semantics.** Better Auth's `user.create.after`
+ * hook runs AFTER the user row has been committed to the database (via
+ * `queueAfterTransactionHook`). A throw from extraHooks.userCreateAfter
+ * surfaces to the client as a 500, but the user row is NOT rolled back —
+ * the user can sign in but is left in an "orphan" state with whatever
+ * downstream state the hook would have created missing.
+ *
+ * Hook authors MUST:
+ *   1. Keep hooks idempotent (so a manual retry / next-login recovery works).
+ *   2. Implement a lazy-recovery path downstream (e.g. cp-server's
+ *      OrgContext middleware detects a missing personal org and creates
+ *      one on demand).
+ *
+ * Do NOT rely on the throw-to-abort pattern for transactional consistency.
+ */
+export type ExtraAuthHooks = {
+  /**
+   * Composed AFTER the existing user.create.after hook. Runs post-commit;
+   * see ExtraAuthHooks type docstring for the orphan-state caveat.
+   */
+  userCreateAfter?: (user: { id: string; email: string; name: string | null }) => Promise<void>;
+};
+
 function resolveLoginMethod(context: { path?: string } | null | undefined): string | null {
   const path = context?.path;
   if (!path) return null;
@@ -30,7 +58,10 @@ function resolveLoginMethod(context: { path?: string } | null | undefined): stri
 // `Auth` alias below (ReturnType<typeof createAuth>) which preserves
 // inference without needing the unportable zod path.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker?: Tracker, extraPlugins: any[] = []): any {
+export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker?: Tracker, extraPlugins: any[] = [], extraHooks: ExtraAuthHooks | null | undefined = {}): any {
+  // Normalize so explicit null from callers doesn't bypass the default
+  // and then NPE on `extraHooks.userCreateAfter`.
+  const hooks: ExtraAuthHooks = extraHooks ?? {};
   const resend = config.RESEND_API_KEY ? new Resend(config.RESEND_API_KEY) : null;
 
   const auth = betterAuth({
@@ -161,6 +192,16 @@ export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker
               userId: user.id,
               properties: { email: user.email, method: resolveLoginMethod(context) },
             });
+
+            // SaaS hook (e.g. cp-server personal-org auto-create). Post-commit; see
+            // ExtraAuthHooks for the orphan-user caveat.
+            if (hooks.userCreateAfter) {
+              await hooks.userCreateAfter({
+                id: user.id,
+                email: user.email,
+                name: user.name ?? null,
+              });
+            }
           },
         },
       },
