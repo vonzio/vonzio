@@ -651,6 +651,21 @@ const migrations: Migration[] = [
       console.log(`  migration 20: re-encrypted ${processed} row(s) across ${tables.length} tables`);
     },
   },
+  {
+    version: 21,
+    description: "Add nullable org_id column + single-column index to workspaces, playbooks, memories, invites, api_keys, events (populated by cp-server in SaaS; stays NULL in OSS)",
+    up: async (handle) => {
+      // Postgres supports transactional DDL, so either all 12 statements
+      // apply or none — no half-migrated state on partial failure.
+      await handle.db.transaction(async (tx) => {
+        const tables = ["workspaces", "playbooks", "memories", "invites", "api_keys", "events"];
+        for (const table of tables) {
+          await tx.execute(sql.raw(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS org_id TEXT`));
+          await tx.execute(sql.raw(`CREATE INDEX IF NOT EXISTS ${table}_org_id_idx ON ${table}(org_id)`));
+        }
+      });
+    },
+  },
 ];
 
 /**

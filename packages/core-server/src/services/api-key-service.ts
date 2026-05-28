@@ -163,7 +163,7 @@ export class ApiKeyService {
   }
 
   private mapRow(
-    row: typeof schema.anthropicKeys.$inferSelect,
+    row: Omit<typeof schema.anthropicKeys.$inferSelect, "org_id">,
     redact: boolean,
     allowedUserIds: string[],
   ): AnthropicKey {

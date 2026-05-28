@@ -15,7 +15,7 @@ import type { Config } from "./config.js";
 import type { DrizzleDB } from "./db/index.js";
 import { schema } from "./db/index.js";
 import type { ContainerManager } from "@vonzio/shared";
-import { createAuth, mountBetterAuth } from "./auth/better-auth.js";
+import { createAuth, mountBetterAuth, type ExtraAuthHooks } from "./auth/better-auth.js";
 import { fromNodeHeaders } from "better-auth/node";
 import { userAuthHook, adminOnlyHook } from "./auth/user-auth.js";
 import { buildDefaultCoreDeps } from "./lib/build-core-deps.js";
@@ -370,7 +370,15 @@ export async function buildServer(deps: ServerDeps) {
   // are merged in here; OSS leaves the array empty.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const extraAuthPlugins: any[] = cpServerModule?.getAuthPlugins?.() ?? [];
-  const auth = createAuth(config, pgPool, db, eventTracker, extraAuthPlugins);
+  // Extra databaseHooks contributions from cp-server (e.g. personal-org
+  // auto-create on signup). Optional-chained so OSS-only deployments and
+  // older cp-server builds without this export keep working unchanged —
+  // createAuth then sees the default empty object.
+  // `await` defends against an accidentally-async getAuthHooks: on a Promise
+  // it unwraps; on a sync return it's a no-op. Without this, a Promise would
+  // satisfy `?? {}` (truthy) and then userCreateAfter would be undefined.
+  const extraAuthHooks: ExtraAuthHooks = (await cpServerModule?.getAuthHooks?.({ db })) ?? {};
+  const auth = createAuth(config, pgPool, db, eventTracker, extraAuthPlugins, extraAuthHooks);
 
   // First-run OSS setup wizard. Creates the lone admin on a fresh
   // single-user instance, then disables itself (the no-users precondition
