@@ -8,10 +8,12 @@ import {
   type ButtonHTMLAttributes,
   type CSSProperties,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type SVGProps,
   type TextareaHTMLAttributes,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -464,20 +466,87 @@ export function AvatarStack({ children }: { children: ReactNode }) {
 
 /* ─── Tabs ─── */
 export type TabDef = { value: string; label: ReactNode };
-export function Tabs({ tabs, value, onChange, children }: { tabs: TabDef[]; value?: string; onChange?: (v: string) => void; children?: ReactNode | ((active: string | undefined) => ReactNode) }) {
+
+/**
+ * WAI-ARIA tablist with full keyboard navigation:
+ *   - Tab into the active trigger only (roving tabindex)
+ *   - Left/Right Arrow cycles between triggers
+ *   - Home / End jump to first / last
+ *   - aria-selected, aria-controls / id link triggers to the panel
+ *   - role=tabpanel on the body so AT announces context
+ *
+ * Caller can supply its own id base via `idBase` so multiple Tabs
+ * instances on the same page don't collide. Defaults to a stable
+ * useId-derived prefix.
+ */
+export function Tabs({
+  tabs,
+  value,
+  onChange,
+  children,
+  idBase: idBaseProp,
+  ariaLabel,
+}: {
+  tabs: TabDef[];
+  value?: string;
+  onChange?: (v: string) => void;
+  children?: ReactNode | ((active: string | undefined) => ReactNode);
+  idBase?: string;
+  ariaLabel?: string;
+}) {
+  const generatedId = useId();
+  const idBase = idBaseProp ?? generatedId;
   const [internal, setInternal] = useState<string | undefined>(tabs?.[0]?.value);
   const active = value ?? internal;
   const set = onChange ?? setInternal;
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>, currentIdx: number) => {
+    let next: number | null = null;
+    if (e.key === "ArrowRight") next = (currentIdx + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") next = (currentIdx - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = tabs.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    set(tabs[next].value);
+    // Move focus to the newly-active trigger so the user can keep
+    // arrowing without re-tabbing.
+    const id = `${idBase}-tab-${tabs[next].value}`;
+    document.getElementById(id)?.focus();
+  };
+
   return (
     <div className="vz-tabs">
-      <div className="vz-tabs__list" role="tablist">
-        {tabs.map((t) => (
-          <button key={t.value} role="tab" className="vz-tabs__trigger" data-active={active === t.value} onClick={() => set(t.value)}>
-            {t.label}
-          </button>
-        ))}
+      <div className="vz-tabs__list" role="tablist" aria-label={ariaLabel}>
+        {tabs.map((t, idx) => {
+          const selected = active === t.value;
+          return (
+            <button
+              key={t.value}
+              id={`${idBase}-tab-${t.value}`}
+              role="tab"
+              type="button"
+              className="vz-tabs__trigger"
+              data-active={selected}
+              aria-selected={selected}
+              aria-controls={`${idBase}-panel-${t.value}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => set(t.value)}
+              onKeyDown={(e) => onKeyDown(e, idx)}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
-      {typeof children === "function" ? children(active) : children}
+      <div
+        role="tabpanel"
+        id={`${idBase}-panel-${active ?? ""}`}
+        aria-labelledby={`${idBase}-tab-${active ?? ""}`}
+        tabIndex={0}
+      >
+        {typeof children === "function" ? children(active) : children}
+      </div>
     </div>
   );
 }
@@ -597,6 +666,72 @@ export function Modal({
         {footer && <div className="vz-modal__footer">{footer}</div>}
       </div>
     </div>
+  );
+}
+
+/* ─── Confirm dialog (branded confirm()) ─── */
+
+/**
+ * Branded replacement for native `confirm()`. Renders inside the brand
+ * Modal so the destructive prompt matches the rest of the dashboard
+ * and gets proper focus management, ARIA, and styling — Safari's
+ * native dialog adds the page origin ("vonz.io says:") and can be
+ * suppressed entirely after one use.
+ *
+ * Used as a controlled component: caller owns `open` state, passes
+ * `onConfirm` (typically the destructive action) and `onCancel` (close
+ * the dialog). `tone="danger"` swaps the confirm button to the danger
+ * variant. Set `confirming={true}` while the destructive action is in
+ * flight — disables both buttons and shows a busy label.
+ */
+export function Confirm({
+  open,
+  title,
+  body,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  tone = "danger",
+  confirming = false,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: ReactNode;
+  body?: ReactNode;
+  confirmLabel?: ReactNode;
+  cancelLabel?: ReactNode;
+  tone?: "danger" | "primary";
+  confirming?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal
+      open={open}
+      // Hide the X entirely while in-flight (Modal renders X only when
+      // !dismissable && onClose); this matches the rest of the
+      // brand-kit pattern for irreversible-while-running actions.
+      onClose={confirming ? undefined : onCancel}
+      title={title}
+      dismissable={!confirming}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {body && <div style={{ fontSize: 13, color: "var(--vz-ink)" }}>{body}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={confirming}>
+            {cancelLabel}
+          </Button>
+          <Button
+            type="button"
+            variant={tone === "danger" ? "danger" : "primary"}
+            onClick={onConfirm}
+            disabled={confirming}
+          >
+            {confirming ? "Working…" : confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
