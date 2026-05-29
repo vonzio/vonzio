@@ -115,6 +115,14 @@ export function revokeInvite(id: string): Promise<{ status: string }> {
 export interface AnthropicKeyInfo {
   id: string;
   user_id?: string | null;
+  /**
+   * When set, this row is the materialization of a SaaS-only
+   * org_credential the user has access to via team membership.
+   * The user is NOT the owner — managed in /org/settings → Credentials
+   * by the org owner. Editor / delete affordances should be hidden.
+   * OSS deployments leave this null.
+   */
+  org_id?: string | null;
   name: string;
   provider: string;
   api_key?: string;

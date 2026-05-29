@@ -26,6 +26,9 @@ export class ApiKeyService {
     const row = {
       id,
       user_id: userId ?? null,
+      // user-side create path never sets org_id; only the cp-server
+      // materialization path (OrgCredentialService) populates it.
+      org_id: null,
       name: input.name,
       provider: input.provider,
       encrypted_api_key: input.api_key ? encrypt(input.api_key, this.encryptionKey) : null,
@@ -163,13 +166,17 @@ export class ApiKeyService {
   }
 
   private mapRow(
-    row: Omit<typeof schema.anthropicKeys.$inferSelect, "org_id">,
+    row: typeof schema.anthropicKeys.$inferSelect,
     redact: boolean,
     allowedUserIds: string[],
   ): AnthropicKey {
     return {
       id: row.id,
       user_id: row.user_id,
+      // org_id is populated by cp-server when the row is the
+      // materialization of an org_credential (shared team key). OSS
+      // leaves it null — the column is nullable everywhere.
+      org_id: row.org_id,
       name: row.name,
       provider: row.provider,
       api_key: redact
