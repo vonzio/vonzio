@@ -12,7 +12,7 @@ import { useUser } from "@/contexts/UserContext.js";
 import { authClient } from "@/lib/auth-client.js";
 import { useIsMobile } from "@/hooks/use-mobile.js";
 import { useTheme } from "@/hooks/useTheme.js";
-import { getNavItems, getUserMenuItems, useEntitlements, type NavItemReg } from "@/registry/index.js";
+import { getNavItems, getTopbarSlots, getUserMenuItems, useEntitlements, type NavItemReg, type TopbarSlotReg } from "@/registry/index.js";
 import { OnboardingHost } from "./OnboardingHost.js";
 import {
   AppShell as ShellLayout,
@@ -196,8 +196,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     </button>
   );
 
+  const renderTopbarSlots = (placement: TopbarSlotReg["placement"]) => {
+    const slots = getTopbarSlots(placement).filter((s) => !s.entitlement || entitlements.includes(s.entitlement));
+    if (slots.length === 0) return null;
+    return (
+      <>
+        {slots.map((s) => {
+          const C = s.component;
+          return <C key={s.id} />;
+        })}
+      </>
+    );
+  };
+
+  const leftSlots = renderTopbarSlots("left");
+  const rightSlots = renderTopbarSlots("right");
+  const actionSlots = renderTopbarSlots("actions");
+
   const actions = (
     <>
+      {actionSlots}
       {themeToggle}
       {userMenu}
     </>
@@ -220,6 +238,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         crumbs={deriveCrumbs(location.pathname)}
         onCmdK={() => { /* TODO wire CommandPalette */ }}
         actions={actions}
+        leftSlots={leftSlots}
+        rightSlots={rightSlots}
       />
     </>
   );

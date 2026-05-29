@@ -730,14 +730,19 @@ export function TopBar({
   onCmdK,
   cmdKHint = "⌘K",
   actions,
+  leftSlots,
+  rightSlots,
 }: {
   crumbs: Crumb[];
   onCmdK?: () => void;
   cmdKHint?: string;
   actions?: ReactNode;
+  leftSlots?: ReactNode;
+  rightSlots?: ReactNode;
 }) {
   return (
     <>
+      {leftSlots && <div className="vz-topbar__left-slots">{leftSlots}</div>}
       <nav className="vz-topbar__crumbs" aria-label="Breadcrumb">
         {crumbs.map((c, i) => {
           const isLast = i === crumbs.length - 1;
@@ -756,6 +761,7 @@ export function TopBar({
           <span className="vz-topbar__cmdk-hint">{cmdKHint}</span>
         </button>
       )}
+      {rightSlots && <div className="vz-topbar__right-slots">{rightSlots}</div>}
       {actions && <div className="vz-topbar__actions">{actions}</div>}
     </>
   );
