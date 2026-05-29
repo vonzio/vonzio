@@ -37,6 +37,13 @@ export interface SubagentDefinition {
 export interface AnthropicKey {
   id: string;
   user_id?: string | null;
+  /**
+   * When set, the key is materialized from an org_credential (SaaS
+   * only). The user sees it in their list because they're a member of
+   * the org, but it's owned by the org owner — read-only from the
+   * user's perspective. OSS deployments leave this null.
+   */
+  org_id?: string | null;
   name: string;
   provider: ProfileProvider;
   api_key?: string;
