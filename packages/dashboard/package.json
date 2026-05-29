@@ -21,6 +21,8 @@
     "./contexts/UserContext": "./src/contexts/UserContext.tsx",
     "./hooks/useTheme": "./src/hooks/useTheme.ts",
     "./hooks/use-mobile": "./src/hooks/use-mobile.ts",
+    "./hooks/useHashTab": "./src/hooks/useHashTab.ts",
+    "./hooks/useApi": "./src/hooks/useApi.ts",
     "./registry": "./src/registry/index.ts",
     "./App": "./src/App.tsx",
     "./app.css": "./src/app.css"
