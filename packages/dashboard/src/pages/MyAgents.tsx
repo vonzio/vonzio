@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi.js";
+import { slugify } from "../lib/utils.js";
 import {
   fetchProfiles, deleteProfile,
   fetchUserTools, createUserTool, deleteUserTool,
@@ -80,14 +81,7 @@ export function MyAgents() {
 // ───────────────────────────────────────────────────────────────────
 
 function slugifyName(value: string): string {
-  const base = value
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-");
-  return base || "agent";
+  return slugify(value) || "agent";
 }
 
 function ProfileSection() {

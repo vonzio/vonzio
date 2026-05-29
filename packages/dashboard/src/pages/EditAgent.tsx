@@ -36,6 +36,7 @@ import {
 } from "../api/client.js";
 import { fetchDockerImages, type DockerImageInfo } from "../api/admin.js";
 import { useApi } from "../hooks/useApi.js";
+import { slugify } from "../lib/utils.js";
 import { ToolPillSelect } from "../components/ToolPillSelect.js";
 import { OllamaModelPicker } from "../components/OllamaModelPicker.js";
 import { ProfileModelSelect } from "../components/ProfileModelSelect.js";
@@ -47,13 +48,7 @@ import { ChecklistRows } from "../components/ChecklistRows.js";
 const TAB_VALUES = ["overview", "tools", "extensions", "network"] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
-function slugifyName(value: string): string {
-  return value.toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48);
-}
+const slugifyName = (value: string): string => slugify(value, 48);
 
 export function EditAgent() {
   const { id: routeId } = useParams<{ id: string }>();
