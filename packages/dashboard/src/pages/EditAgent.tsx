@@ -355,7 +355,7 @@ export function EditAgent() {
           </h1>
           <div style={{ display: "flex", gap: 8 }}>
             <Button variant="ghost" size="sm" onClick={() => navigate("/agents")}>Cancel</Button>
-            <Button size="sm" onClick={handleSave}>
+            <Button size="sm" onClick={handleSave} disabled={saving || profileModel.trim() === ""}>
               {saving ? "Saving…" : editingId ? "Save" : "Create"}
             </Button>
           </div>

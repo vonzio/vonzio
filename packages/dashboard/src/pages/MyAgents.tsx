@@ -101,7 +101,13 @@ function ProfileSection() {
     catch (e) { setError(e instanceof Error ? e.message : "Delete failed"); }
   };
 
-  const ownProfiles = profiles?.filter((p) => p.user_id === user.id) ?? [];
+  // Materialized team agents have user_id === current user but
+  // `team_owned: true`. Split them out so the "Your profiles" section
+  // doesn't include rows the member can't edit. Server already
+  // enforces read-only via 403 on PATCH/DELETE; this just hides the
+  // affordances and groups visually.
+  const ownProfiles = profiles?.filter((p) => p.user_id === user.id && !p.team_owned) ?? [];
+  const teamProfiles = profiles?.filter((p) => p.team_owned) ?? [];
   const sharedProfiles = profiles?.filter((p) => !p.user_id) ?? [];
   const isFirstProfile = ownProfiles.length === 0 && !loading;
 
@@ -161,6 +167,23 @@ function ProfileSection() {
         </div>
       )}
 
+      {teamProfiles.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <div style={{ fontFamily: "var(--vz-font-mono)", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--vz-muted-2)", marginBottom: 12 }}>
+            Team agents · {teamProfiles.length}
+          </div>
+          <div className="vz-card-grid">
+            {teamProfiles.map((p) => (
+              <ProfileCard
+                key={p.id}
+                profile={p}
+                teamOwned
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {sharedProfiles.length > 0 && (
         <div style={{ marginTop: 32 }}>
           <div style={{ fontFamily: "var(--vz-font-mono)", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--vz-muted-2)", marginBottom: 12 }}>
@@ -200,23 +223,28 @@ function ProfileSection() {
 function ProfileCard({
   profile,
   shared,
+  teamOwned,
   onEdit,
   onDuplicate,
   onDelete,
 }: {
   profile: ProfileSummary;
   shared?: boolean;
+  /** Materialized from an org_profile — read-only for members. No
+   *  edit / duplicate / delete affordances. */
+  teamOwned?: boolean;
   onEdit?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
 }) {
   const toolCount = profile.default_tools?.length ?? 0;
   const hasKey = !!profile.api_key_id;
+  const cardClick = teamOwned ? undefined : (onEdit ?? onDuplicate);
 
   return (
     <Card
-      className="vz-card--hoverable"
-      onClick={onEdit ?? onDuplicate}
+      className={teamOwned ? undefined : "vz-card--hoverable"}
+      onClick={cardClick}
       style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
@@ -225,8 +253,9 @@ function ProfileCard({
             <span style={{ fontWeight: 600, fontSize: 15, color: "var(--vz-ink)", letterSpacing: "-0.01em" }}>
               {profile.name}
             </span>
+            {teamOwned && <Pill tone="accent">team</Pill>}
             {shared && <Pill tone="info">shared</Pill>}
-            {hasKey && !shared && (
+            {hasKey && !shared && !teamOwned && (
               <span title="API key set" style={{ display: "inline-flex", color: "var(--vz-ok)" }}>
                 <KeyIcon size={13} />
               </span>
