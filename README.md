@@ -5,8 +5,8 @@
 <h1 align="center">vonzio</h1>
 
 <p align="center">
-  The runtime for production agents — bring your own model.<br>
-  Open-source, self-hostable, isolated Docker workspaces per session.
+  Run your agents in containers you control.<br>
+  Open-source, self-hostable, single-tenant, bring your own model.
 </p>
 
 <p align="center">
@@ -29,6 +29,30 @@ vonzio runs agents in fresh Docker containers — one per conversation. You brin
 - **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria
 - **Memory and skills** — persistent agent memories, reusable skill snippets, custom subagents
 - **MCP runtime** — bring your own MCP servers, or use the built-ins (memory, notify, gmail, teller, platform)
+
+## Who this is for
+
+vonzio targets **single-tenant and trusted-team deployments**: you run
+it on infrastructure you own, with prompts and tools you control.
+
+**Use it for**
+
+- Personal coding agents on your laptop or a private box
+- A trusted team running shared agents against your own data
+- Embedding a customer-support widget where you control the system prompt
+- Self-hosting an agent runtime that other people on your team can use
+
+**Do not use it (without further hardening) for**
+
+- Hosting arbitrary user-submitted code or prompts from the public internet
+- Hostile multi-tenant scenarios — agent containers share the host kernel
+- Regulated workloads that require hardware-level isolation
+
+vonzio runs agents in Docker containers, not microVMs. Read
+[docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for the full threat
+model and [docs/HARDENING.md](docs/HARDENING.md) for opt-in steps
+(gVisor, restricted Docker socket, network policies) that close the
+gap for higher-trust deployments.
 
 ## Quickstart
 

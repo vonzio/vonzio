@@ -148,6 +148,11 @@ The production stack:
 
 There's also a `deploy.sh` script that bootstraps a fresh Debian/Ubuntu server end-to-end — read the script before running it.
 
+**Before deploying anywhere with sensitive data**, read
+[SECURITY_MODEL.md](./SECURITY_MODEL.md) for the threat model and
+[HARDENING.md](./HARDENING.md) for opt-in steps (gVisor runtime,
+restricted Docker socket, network policies) beyond the defaults.
+
 ## Troubleshooting
 
 ### "relation \"user\" does not exist" on first boot
