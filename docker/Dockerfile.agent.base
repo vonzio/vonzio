@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # agents that read/write user databases (Supabase/Postgres, MySQL,
     # Redis, SQLite). Each is small (~5-15 MB).
     postgresql-client default-mysql-client redis-tools sqlite3 \
-    sudo procps file \
+    procps file \
     && rm -rf /var/lib/apt/lists/* \
     # Symlink fd (Debian names it fdfind).
     && ln -sf /usr/bin/fdfind /usr/bin/fd
@@ -58,10 +58,15 @@ RUN chmod +x /app/cleanup.sh /app/git-credential-helper.sh /app/entrypoint.sh
 RUN git config --system credential.helper /app/git-credential-helper.sh
 
 # Unprivileged agent user (claude-agent-sdk's bypassPermissions refuses to
-# run as root) + workspace + sudoers + npm-global prefix.
+# run as root) + workspace + npm-global prefix.
+#
+# Deliberately NO sudo and no sudoers entry. The agent runs strictly as the
+# unprivileged `agent` user with no path to root inside the container. If a
+# deployer needs runtime apt installs they should bake them into a custom
+# agent image (the supported extension point) rather than handing the LLM
+# root-equivalent power — see docs/HARDENING.md.
 RUN useradd -m -s /bin/bash agent && \
-    mkdir -p /workspace/output && \
-    echo 'agent ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/agent
+    mkdir -p /workspace/output
 
 RUN mkdir -p /home/agent/.npm-global && chown agent:agent /home/agent/.npm-global
 

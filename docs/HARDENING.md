@@ -149,6 +149,29 @@ agents.example.com {
 }
 ```
 
+## Custom agent images for runtime dependencies
+
+The default agent image runs strictly as the unprivileged `agent` user
+with no `sudo`. If your agents need tools beyond the base image's
+preinstalled set (curl, git, gh, jq, ripgrep, language runtimes,
+database clients, Chromium, the Claude Agent SDK, etc.), extend the
+base image rather than letting the agent escalate at runtime:
+
+```dockerfile
+FROM ghcr.io/vonzio/vonzio/agent-base:latest
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    <your-extra-packages> \
+    && rm -rf /var/lib/apt/lists/*
+USER agent
+```
+
+Build, push to your own registry, and point a profile at the new image
+via the dashboard's container-image picker. This keeps runtime
+behavior reproducible and prevents prompt-driven `sudo apt install`
+patterns that would otherwise punch through container isolation.
+
 ## Pin base images
 
 The reference compose file pulls `latest` tags for some images. For a
