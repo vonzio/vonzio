@@ -133,8 +133,11 @@ The following are known weaknesses we are actively hardening. They are
 documented here so deployers can make informed decisions; the project
 roadmap tracks fixes.
 
-- The agent container image grants the in-container user passwordless
-  `sudo`. This will be narrowed or removed in v0.2.
+- ~~The agent container image grants the in-container user passwordless
+  `sudo`.~~ Fixed in v0.2: the agent user is now strictly unprivileged
+  with no path to root inside the container. Deployers who need
+  runtime package installs should bake them into a custom agent image
+  (see [HARDENING.md](./HARDENING.md)).
 - core-server has direct access to `/var/run/docker.sock`. A
   docker-socket-proxy is on the v0.2 roadmap.
 - The reference `docker-compose.yml` ships with fallback secret strings
