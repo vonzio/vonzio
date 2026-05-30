@@ -7,10 +7,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * insert site is one map lookup.
  *
  * **Producers (set the value):**
- *   - cp-server's permissive orgContext middleware calls
- *     `setActiveOrgId(org_id)` on every HTTP request after resolving
- *     the X-Org-Id header or `?org_id` query param. The value
- *     propagates through every `await` in the request lifetime.
+ *   - cp-server's permissive orgContext middleware wraps Fastify's
+ *     continuation in `runWithOrgIdContinuation(org_id, done)` on every
+ *     HTTP request after resolving the X-Org-Id header or `?org_id`
+ *     query param. The value propagates through every `await` in the
+ *     request lifetime.
  *   - The WS message handler wraps each incoming message in
  *     `runWithOrgId(connectionOrgId, ...)` so the org pinned at WS
  *     upgrade time flows through any code the message triggers.
@@ -42,22 +43,6 @@ export function getActiveOrgId(): string | null {
 }
 
 /**
- * Pin an org id to the current async chain. Subsequent reads of
- * `getActiveOrgId()` from the same chain (including through `await`
- * boundaries) return this value. Idempotent re-entry with the same
- * value is a no-op.
- *
- * Use this from Fastify hooks (`preHandler`, `onRequest`) where you
- * can't wrap downstream work in a callback — the hook sets the
- * value, then returns, and Fastify resumes the request inside the
- * same async chain. For callback-style integration (e.g. WS message
- * handler, orchestrator dispatch) prefer `runWithOrgId`.
- */
-export function setActiveOrgId(orgId: string | null): void {
-  if (orgId) orgIdStorage.enterWith(orgId);
-}
-
-/**
  * Run `fn` inside a fresh async-local scope with `orgId` pinned. The
  * returned promise resolves with `fn`'s result. When `orgId` is null
  * the storage is not entered — `getActiveOrgId()` returns whatever
@@ -73,4 +58,21 @@ export async function runWithOrgId<T>(
 ): Promise<T> {
   if (!orgId) return fn();
   return orgIdStorage.run(orgId, fn);
+}
+
+/**
+ * Sync continuation-wrapping variant for Fastify callback-style hooks.
+ * `als.enterWith` doesn't work reliably when called from inside an async
+ * hook because Fastify's continuation runs in a different async chain
+ * than the one that called enterWith. Wrapping `next` inside `als.run`
+ * is the only pattern that guarantees the rest of the request — every
+ * subsequent hook, the route handler, and any code they await — sees
+ * `getActiveOrgId() === orgId`.
+ */
+export function runWithOrgIdContinuation(
+  orgId: string | null,
+  next: (err?: Error) => void,
+): void {
+  if (!orgId) return next();
+  orgIdStorage.run(orgId, () => next());
 }
