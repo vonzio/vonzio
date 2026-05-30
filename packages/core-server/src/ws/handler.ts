@@ -16,6 +16,7 @@ import { rewriteAgentImages } from "../services/agent-output-rewriter.js";
 import type { EventLog } from "../events/event-log.js";
 import { ErrorCodes } from "../errors.js";
 import { submitTaskSchema } from "../routes/validation.js";
+import { runWithOrgId } from "../lib/active-org.js";
 
 /**
  * Generate a short workspace title using the Claude API.
@@ -78,6 +79,14 @@ export interface WsHandlerOptions {
   eventLog: EventLog;
   imageRewriterService: ImageRewriterService;
   log?: Logger;
+  /**
+   * Optional SaaS hook (see CoreDeps.recordTaskOrg) — when present and
+   * a WS submit message arrives on a connection with a pinned org id,
+   * we link the new task to that org so the orchestrator can resolve
+   * it before launching the workspace. OSS deployments leave this
+   * undefined.
+   */
+  recordTaskOrg?: (taskId: string, orgId: string) => Promise<void>;
 }
 
 const ORCHESTRATOR_EVENTS = [
@@ -259,7 +268,13 @@ export function setupWsHandler(
       }
 
       try {
-        await handleMessage(connectionId, user, connectionOrgId, msg);
+        // Pin the connection's org to the AsyncLocalStorage so any
+        // workspace insert site downstream (sessionRegistry.register
+        // with no explicit orgId, future writers via getActiveOrgId())
+        // picks it up without each call site threading it through.
+        await runWithOrgId(connectionOrgId, () =>
+          handleMessage(connectionId, user, connectionOrgId, msg),
+        );
       } catch (err) {
         connectionManager.sendTo(connectionId, {
           type: "error",
@@ -337,6 +352,14 @@ export function setupWsHandler(
           parsed.data,
           profileIds,
         );
+        // Link the task to the connection's pinned org so the
+        // orchestrator's resolveOrgIdForTask returns it when the
+        // workspace launches. Same mechanism the REST /v1/tasks
+        // route uses; await before queueing so the orchestrator
+        // can't race the link insert.
+        if (connectionOrgId && opts.recordTaskOrg) {
+          await opts.recordTaskOrg(result.task_id, connectionOrgId);
+        }
         connectionManager.subscribeTask(connectionId, result.task_id);
         connectionManager.sendTo(connectionId, {
           type: "queued",
