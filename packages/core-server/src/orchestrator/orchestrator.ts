@@ -66,6 +66,13 @@ export interface OrchestratorDeps {
    * the swap.
    */
   vpnTunnelProvider?: () => VpnTunnelProvider | undefined;
+  /**
+   * Optional SaaS hook (see CoreDeps.resolveOrgIdForTask) — called
+   * before launching a new workspace for a task. Returns the org_id
+   * the workspace row should be tagged with. OSS deployments leave
+   * this undefined.
+   */
+  resolveOrgIdForTask?: (taskId: string) => Promise<string | null>;
   db: DrizzleDB;
   log?: Logger;
   config: {
@@ -616,12 +623,18 @@ export class Orchestrator extends EventEmitter {
         // invisible in the UI. resumeSession's ownership check
         // (workspace.user_id !== integration.user_id) would also reject it.
         // Pre-fix this was task.profile_id in both slots.
+        // SaaS layer (if present) supplies the org_id the new
+        // workspace should be tagged with. OSS deployments leave the
+        // hook undefined so orgId stays null — and OSS workspaces
+        // don't have the NOT NULL CHECK constraint that requires it.
+        const orgId = (await this.deps.resolveOrgIdForTask?.(task.id)) ?? null;
         session = await this.deps.sessionRegistry.register(
           task.session_id,
           containerId,
           profile.user_id ?? task.profile_id,
           task.profile_id,
           profile.persistent_sessions,
+          orgId,
         );
       } else {
         this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);

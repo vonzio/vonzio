@@ -24,4 +24,19 @@ export interface CoreDeps {
   usageEmitter: UsageEmitter;
   entitlementsProvider: EntitlementsProvider;
   vpnTunnelProvider: VpnTunnelProvider;
+  /**
+   * Optional — fired after a task is submitted so a SaaS layer can
+   * link the task to an org (cp-server stores this in its task_orgs
+   * side-table). OSS deployments leave this undefined; tasks then
+   * have no org affinity and downstream workspace inserts get
+   * org_id=null (OSS doesn't have the NOT NULL CHECK).
+   */
+  recordTaskOrg?: (taskId: string, orgId: string) => Promise<void>;
+  /**
+   * Optional — fired by the orchestrator before launching a workspace
+   * for a task. Returns the org_id (if any) the task should be tagged
+   * with. cp-server resolves it from task_orgs; OSS returns null
+   * (kept undefined so the orchestrator skips the call).
+   */
+  resolveOrgIdForTask?: (taskId: string) => Promise<string | null>;
 }
