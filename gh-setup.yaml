@@ -1,0 +1,104 @@
+account:
+  type: organization
+  name: vonzio
+
+defaults:
+  visibility: public
+  default_branch: main
+  delete_branch_on_merge: true
+  # Squash-only matches every commit on main today — one commit per PR,
+  # clean linear log. Merge and rebase styles disabled so a contributor
+  # can't accidentally pick the wrong button on the green button.
+  allow_squash_merge: true
+  allow_merge_commit: false
+  allow_rebase_merge: false
+  allow_auto_merge: true
+  has_issues: true
+  has_wiki: false
+  has_discussions: false
+  branch_protection:
+    preset: custom
+    require_pr: true
+    # Solo project for now; 0 approvals lets the owner self-merge once
+    # CI is green. Bump to 1 when a second maintainer joins.
+    required_approvals: 0
+    dismiss_stale_reviews: false
+    require_status_checks: true
+    status_checks:
+      - test
+      - typecheck
+      - install.sh shellcheck
+      - agent-base build
+    require_up_to_date: true
+    # Admins (i.e. the owner) still go through PR + CI. Direct pushes
+    # to main are blocked — the only way in is a green PR.
+    enforce_admins: true
+    allow_force_push: false
+    allow_deletions: false
+
+labels:
+  # replace_defaults: true wipes GitHub's stock labels (duplicate,
+  # invalid, wontfix) — we keep only the ones we'll actually use.
+  replace_defaults: true
+  items:
+    - name: bug
+      color: d73a4a
+      description: Something isn't working
+    - name: enhancement
+      color: a2eeef
+      description: New feature or request
+    - name: documentation
+      color: 0075ca
+      description: Improvements or additions to documentation
+    - name: good first issue
+      color: 7057ff
+      description: Good for newcomers
+    - name: help wanted
+      color: "008672"
+      description: Extra attention is needed
+    - name: question
+      color: d876e3
+      description: Further information is requested
+    - name: icebox
+      color: C5DEF5
+      description: Parked — valid but not prioritized
+    - name: security
+      color: ee0701
+      description: Security-sensitive
+    - name: dependencies
+      color: 0366d6
+      description: Dependency updates (Dependabot)
+
+repos:
+  - name: vonzio
+    description: The runtime for production agents — bring your own model. Open-source, self-hostable, isolated Docker workspaces per session.
+    visibility: public
+    homepage: https://vonz.io
+    topics:
+      - ai-agent
+      - ai-agents
+      - agent-runtime
+      - managed-agents
+      - agent-development-environment
+      - bring-your-own-model
+      - llm
+      - self-hosted
+      - typescript
+      - react
+      - fastify
+      - docker
+      - postgresql
+    # ci: omitted intentionally — gh-setup would overwrite our custom
+    # multi-job ci.yml (test / typecheck / shellcheck / agent-base
+    # build) with its single-job docker template. The existing CI is
+    # already tuned and gated on by branch protection above.
+
+governance:
+  contributing: true
+  code_of_conduct: true
+  security_policy: true
+
+security:
+  dependabot: true
+  secret_scanning: true
+  code_scanning: true
