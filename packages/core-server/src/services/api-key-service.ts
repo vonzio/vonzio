@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { encrypt, decrypt } from "../auth/crypto.js";
 import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
+import { getActiveOrgId } from "../lib/active-org.js";
 import type { AnthropicKey, ProfileProvider } from "@vonzio/shared";
 
 export interface CreateApiKeyInput {
@@ -64,7 +65,17 @@ export class ApiKeyService {
     return this.mapRow(rows[0], false, allowedUserIds);
   }
 
-  /** List keys visible to a user: their own + shared keys where they are in api_key_users */
+  /** List keys visible to a user: their own + shared keys where they are in api_key_users.
+   *
+   * Active-org scoping: shared keys with org_id set are only included
+   * when the active org (from getActiveOrgId()) matches. This prevents
+   * cross-tenant leak — a member of Vonzio + their own personal org
+   * sees the Vonzio team key only when active org IS Vonzio. Personal-
+   * scope keys (user_id matches) and legacy admin-shared keys (user_id
+   * null AND org_id null) are visible regardless. OSS deployments
+   * never pin an active org → org_id-tagged shared keys stay hidden,
+   * which is the right OSS default (cp-server isn't running anyway).
+   */
   async list(userId?: string, userRole?: string): Promise<AnthropicKey[]> {
     const rows = await this.db.select().from(schema.anthropicKeys);
 
@@ -81,11 +92,15 @@ export class ApiKeyService {
       return rows.map((r) => this.mapRow(r, true, junctionMap.get(r.id) ?? []));
     }
 
+    const activeOrgId = getActiveOrgId();
+
     // User sees: their own keys + shared keys they are explicitly granted access to
     return rows
       .filter((r) => {
         if (r.user_id === userId) return true; // own key
         if (!r.user_id) {
+          // Shared key tagged with an org → only visible when active org matches.
+          if (r.org_id && r.org_id !== activeOrgId) return false;
           if (userRole === "admin") return true;
           const allowed = junctionMap.get(r.id) ?? [];
           return allowed.includes(userId);
