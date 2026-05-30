@@ -50,4 +50,43 @@ export interface CoreDeps {
     userId: string,
     activeOrgId: string | null,
   ) => Promise<Set<string>>;
+  /**
+   * Optional — fired after a profile is created so cp-server can link
+   * it to the active org in profile_orgs. OSS leaves this undefined;
+   * profiles then have no org affinity (existing OSS behaviour).
+   */
+  recordProfileOrg?: (profileId: string, orgId: string) => Promise<void>;
+  /**
+   * Optional — fired after a profile is deleted so cp-server can drop
+   * its profile_orgs row. OSS leaves this undefined; the row never
+   * existed anyway.
+   */
+  forgetProfileOrg?: (profileId: string) => Promise<void>;
+  /**
+   * Optional — given a user, the active org, and the candidate set of
+   * profile ids the user owns / has access to, return the subset that
+   * should be VISIBLE in the active org. Returning `null` means "no
+   * filter applies" (OSS / no active-org context). Returning a Set
+   * means "include only these ids".
+   */
+  visibleProfileIdsForOrg?: (
+    userId: string,
+    activeOrgId: string | null,
+    candidateProfileIds: string[],
+  ) => Promise<Set<string> | null>;
+  /**
+   * Optional — returns true when the given profile_id is a row that
+   * cp-server materialized from an org_profile (team-shared agent).
+   * OSS PATCH/DELETE /v1/profiles/:id rejects with 403 when this is
+   * true; the row is read-only to members (owner edits via
+   * /api/orgs/:slug/profiles instead).
+   */
+  isMaterializedOrgProfile?: (profileId: string) => Promise<boolean>;
+  /**
+   * Optional — batch variant of `isMaterializedOrgProfile`. Returns
+   * the subset of `profileIds` that are materialized org_profiles.
+   * Used by GET /v1/profiles to tag each row with `team_owned: true`
+   * so the dashboard can segment "Your agents" vs "Team agents".
+   */
+  materializedOrgProfileIds?: (profileIds: string[]) => Promise<Set<string>>;
 }

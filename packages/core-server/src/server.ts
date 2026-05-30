@@ -555,7 +555,32 @@ export async function buildServer(deps: ServerDeps) {
     });
     v1.register(workspaceRoutes, { workspaceService, profileService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
-    v1.register(profileRoutes, { profileService, apiKeyService, modelListService });
+    v1.register(profileRoutes, {
+      profileService,
+      apiKeyService,
+      modelListService,
+      // Late-binding wrappers — cp-server populates these AFTER
+      // server.ts captures coreDeps. Same pattern as recordTaskOrg /
+      // hiddenUserSecretIdsForOrg above.
+      recordProfileOrg: (profileId, orgId) => coreDeps.recordProfileOrg
+        ? coreDeps.recordProfileOrg(profileId, orgId)
+        : Promise.resolve(),
+      forgetProfileOrg: (profileId) => coreDeps.forgetProfileOrg
+        ? coreDeps.forgetProfileOrg(profileId)
+        : Promise.resolve(),
+      visibleProfileIdsForOrg: (userId, activeOrgId, candidates) =>
+        coreDeps.visibleProfileIdsForOrg
+          ? coreDeps.visibleProfileIdsForOrg(userId, activeOrgId, candidates)
+          : Promise.resolve(null),
+      isMaterializedOrgProfile: (profileId) =>
+        coreDeps.isMaterializedOrgProfile
+          ? coreDeps.isMaterializedOrgProfile(profileId)
+          : Promise.resolve(false),
+      materializedOrgProfileIds: (profileIds) =>
+        coreDeps.materializedOrgProfileIds
+          ? coreDeps.materializedOrgProfileIds(profileIds)
+          : Promise.resolve(new Set<string>()),
+    });
     v1.register(userResourceRoutes, {
       db,
       apiKeyService,
@@ -572,6 +597,13 @@ export async function buildServer(deps: ServerDeps) {
         coreDeps.hiddenUserSecretIdsForOrg
           ? coreDeps.hiddenUserSecretIdsForOrg(userId, activeOrgId)
           : Promise.resolve(new Set()),
+    });
+    // Docker image catalogue — same data as /admin/images, but
+    // visible to any logged-in user (org owners need it for the
+    // team-agent editor's container picker). Image names aren't
+    // sensitive.
+    v1.get<{ Querystring: { filter?: string } }>("/v1/images", async (request) => {
+      return containerManager.listImages(request.query.filter ?? "vonzio");
     });
     v1.register(gitOAuthRoutes, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(slackOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
@@ -715,6 +747,7 @@ export async function buildServer(deps: ServerDeps) {
       adminOnlyHook,
       coreDeps,
       orchestrator,
+      modelListService,
       config: {
         BETTER_AUTH_URL: config.BETTER_AUTH_URL,
         EMAIL_FROM: config.EMAIL_FROM,
