@@ -24,6 +24,9 @@
     "./hooks/useHashTab": "./src/hooks/useHashTab.ts",
     "./hooks/useApi": "./src/hooks/useApi.ts",
     "./registry": "./src/registry/index.ts",
+    "./components/McpServerEditor": "./src/components/McpServerEditor.tsx",
+    "./components/ToolPillSelect": "./src/components/ToolPillSelect.tsx",
+    "./components/ProfileModelSelect": "./src/components/ProfileModelSelect.tsx",
     "./App": "./src/App.tsx",
     "./app.css": "./src/app.css"
   },
