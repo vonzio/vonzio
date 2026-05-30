@@ -247,6 +247,9 @@ export interface ProfileSummary {
   default_tools: string[];
   concurrency_limit: number;
   user_id?: string | null;
+  /** SaaS-only — true when this row was materialized from an
+   *  org_profile (team-shared agent). Read-only for members. */
+  team_owned?: boolean;
   created_at: string;
   last_used_at?: string;
 }
