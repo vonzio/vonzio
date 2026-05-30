@@ -1,5 +1,22 @@
 const BASE = "/v1";
 
+/**
+ * Active-org storage key, shared with cp-dashboard's orgs extension.
+ * SaaS deployments write it from the topbar OrgSwitcher; OSS leaves
+ * it unset, in which case no X-Org-Id is sent and the server's
+ * orgContext stays undefined (OSS code path).
+ */
+const ORG_ID_STORAGE_KEY = "vonzio_current_org_id";
+
+function readCurrentOrgId(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return localStorage.getItem(ORG_ID_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -7,6 +24,14 @@ async function request<T>(
   const headers: Record<string, string> = { ...options.headers as Record<string, string> };
   if (options.body) {
     headers["Content-Type"] = "application/json";
+  }
+  // Inject the active org if set (SaaS only). Without this, server
+  // routes like POST /v1/tasks have no orgContext and can't tag the
+  // resulting workspace — cp-server's CHECK constraint then rejects
+  // the insert.
+  const orgId = readCurrentOrgId();
+  if (orgId) {
+    headers["X-Org-Id"] = orgId;
   }
   const res = await fetch(`${BASE}${path}`, {
     ...options,
