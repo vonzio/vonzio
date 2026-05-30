@@ -240,7 +240,13 @@ export async function buildServer(deps: ServerDeps) {
     integrationService,
     eventLog,
     vpnTunnelProvider: () => coreDeps.vpnTunnelProvider,
-    resolveOrgIdForTask: coreDeps.resolveOrgIdForTask,
+    // Late-bind: cp-server's registerCpServer mutates
+    // coreDeps.resolveOrgIdForTask AFTER the orchestrator is built.
+    // Read at call time, mirror of vpnTunnelProvider's getter.
+    resolveOrgIdForTask: (taskId) =>
+      coreDeps.resolveOrgIdForTask
+        ? coreDeps.resolveOrgIdForTask(taskId)
+        : Promise.resolve(null),
     db,
     log: server.log,
     config: {
@@ -539,7 +545,13 @@ export async function buildServer(deps: ServerDeps) {
     v1.register(taskRoutes, {
       taskService,
       profileService,
-      recordTaskOrg: coreDeps.recordTaskOrg,
+      // Late-bind for the same reason resolveOrgIdForTask is — cp-server
+      // mounts AFTER v1 is registered. Reading at call time picks up
+      // the mutation.
+      recordTaskOrg: (taskId, orgId) =>
+        coreDeps.recordTaskOrg
+          ? coreDeps.recordTaskOrg(taskId, orgId)
+          : Promise.resolve(),
     });
     v1.register(workspaceRoutes, { workspaceService, profileService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
