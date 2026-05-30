@@ -351,7 +351,21 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/v1/stream`);
+    // SaaS only — append the active org id as a query param because
+    // browsers can't set custom headers on WebSocket upgrade. The
+    // server-side permissive orgContext hook reads this as a
+    // fallback to X-Org-Id. OSS leaves the localStorage key unset
+    // → no param → no behavior change.
+    const orgQuery = (() => {
+      if (typeof localStorage === "undefined") return "";
+      try {
+        const id = localStorage.getItem("vonzio_current_org_id");
+        return id ? `?org_id=${encodeURIComponent(id)}` : "";
+      } catch {
+        return "";
+      }
+    })();
+    const ws = new WebSocket(`${protocol}//${window.location.host}/v1/stream${orgQuery}`);
 
     ws.onopen = () => {
       setConnected(true);

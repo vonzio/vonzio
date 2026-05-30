@@ -3,6 +3,7 @@ import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
 import type { Workspace, WorkspaceStatus } from "@vonzio/shared";
 import type { ContainerManager } from "@vonzio/shared";
+import { getActiveOrgId } from "../lib/active-org.js";
 
 export interface SessionRegistryCallbacks {
   onIdleExpiry: (sessionId: string, containerId: string) => Promise<void>;
@@ -64,6 +65,14 @@ export class SessionRegistry {
     persistent = false,
     orgId: string | null = null,
   ): Promise<Workspace> {
+    // Fall back to the AsyncLocalStorage-pinned active org so callers
+    // running inside a request/connection scope don't have to thread
+    // org_id through every layer. cp-server populates it via its
+    // permissive middleware (HTTP) and the WS message handler wraps
+    // dispatch in runWithOrgId (WS + orchestrator). OSS deployments
+    // never set the storage so this fallback is null — existing
+    // behavior. See packages/core-server/src/lib/active-org.ts.
+    const effectiveOrgId = orgId ?? getActiveOrgId();
     const now = new Date().toISOString();
     const lifetimeSecs = persistent
       ? this.config.workstationMaxLifetimeSecs
@@ -76,7 +85,7 @@ export class SessionRegistry {
       session_id: sessionId,
       container_id: containerId,
       user_id: userId,
-      org_id: orgId,
+      org_id: effectiveOrgId,
       profile_id: profileId,
       name: null,
       pinned: false,
@@ -104,7 +113,7 @@ export class SessionRegistry {
         session_id: sessionId,
         container_id: containerId,
         user_id: userId,
-        org_id: orgId,
+        org_id: effectiveOrgId,
         profile_id: profileId,
         persistent,
         status: "active",

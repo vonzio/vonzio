@@ -584,6 +584,13 @@ export async function buildServer(deps: ServerDeps) {
       eventLog,
       imageRewriterService,
       log: server.log,
+      // Same late-binding pattern as the /v1/tasks route — cp-server
+      // mutates coreDeps.recordTaskOrg AFTER this register call, so a
+      // direct field reference would capture undefined forever.
+      recordTaskOrg: (taskId, orgId) =>
+        coreDeps.recordTaskOrg
+          ? coreDeps.recordTaskOrg(taskId, orgId)
+          : Promise.resolve(),
     });
   });
 
