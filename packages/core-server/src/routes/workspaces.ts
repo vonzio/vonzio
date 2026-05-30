@@ -76,14 +76,23 @@ export const workspaceRoutes = fp(
       },
     }, async (request, reply) => {
       const session = workspaceService.get(request.params.id);
-      // Auth: ownership OR admin, OR same-org membership (when an org
-      // context is set and the row's org_id matches). The org-match
-      // branch lets every org member see workspaces owned by another
-      // member in the same org without needing per-user fan-out.
       const sessionOrgId = session?.org_id ?? null;
       const orgCtxId = request.orgContext?.org_id;
-      const orgMatch = !!orgCtxId && sessionOrgId === orgCtxId;
-      if (!session || (!orgMatch && !isOwnerOrAdmin(request.user!, session.user_id))) {
+      const isAdmin = request.user!.role === "admin";
+      // Auth model:
+      //  - admin always passes (ops/debugging).
+      //  - SaaS (orgCtxId set): require strict org-match. The active
+      //    org is the tenant scope; the workspace's owner alone is not
+      //    enough — switching orgs must hide the workspace even from
+      //    its owner, so a user pasting an old URL while in a different
+      //    org context can't keep poking at cross-org state.
+      //  - OSS (orgCtxId undefined): owner-or-admin check, unchanged.
+      let allowed: boolean;
+      if (!session) allowed = false;
+      else if (isAdmin) allowed = true;
+      else if (orgCtxId) allowed = sessionOrgId === orgCtxId;
+      else allowed = session.user_id === request.user!.id;
+      if (!session || !allowed) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Session not found"));
       }
       return withTunnel(session);

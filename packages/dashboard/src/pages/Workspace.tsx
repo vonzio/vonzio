@@ -52,7 +52,7 @@ export function Workspace() {
   const { id: routeId } = useParams<{ id: string }>();
   const { data: profiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
 
-  const { grouped, update, remove, refetch } = useWorkspaces();
+  const { grouped, update, remove, refetch, loading: workspacesLoading } = useWorkspaces();
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(routeId ?? null);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   // Pre-workspace model selection. The ModelPicker is now interactive in the
@@ -217,6 +217,19 @@ export function Workspace() {
   // Get the active workspace's profile
   const allWorkspaces = [...grouped.starred, ...grouped.active, ...grouped.paused, ...grouped.archived];
   const activeWorkspace = allWorkspaces.find((w) => w.session_id === activeWorkspaceId);
+
+  // Org-scope guard: a routeId that doesn't resolve to any visible
+  // workspace after the list has loaded means the workspace either
+  // doesn't exist or belongs to a different org than the active one
+  // (server filters /v1/workspaces by request.orgContext.org_id). Send
+  // the user to / instead of leaving them on a half-functional page
+  // where activeWorkspace is undefined.
+  useEffect(() => {
+    if (!routeId) return;
+    if (workspacesLoading) return;
+    if (activeWorkspace) return;
+    navigate("/", { replace: true });
+  }, [routeId, workspacesLoading, activeWorkspace, navigate]);
   // Resolve activeProfile in this order: real workspace owner → user's
   // empty-state pick from AgentPicker → first profile. The middle case
   // matters so the ModelPicker (and the rest of the composer chrome) shows
