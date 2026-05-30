@@ -240,6 +240,7 @@ export async function buildServer(deps: ServerDeps) {
     integrationService,
     eventLog,
     vpnTunnelProvider: () => coreDeps.vpnTunnelProvider,
+    resolveOrgIdForTask: coreDeps.resolveOrgIdForTask,
     db,
     log: server.log,
     config: {
@@ -535,7 +536,11 @@ export async function buildServer(deps: ServerDeps) {
       getUserId: getUserIdFromRequest,
     });
     v1.register(eventRoutes, { tracker: eventTracker });
-    v1.register(taskRoutes, { taskService, profileService });
+    v1.register(taskRoutes, {
+      taskService,
+      profileService,
+      recordTaskOrg: coreDeps.recordTaskOrg,
+    });
     v1.register(workspaceRoutes, { workspaceService, profileService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
     v1.register(profileRoutes, { profileService, apiKeyService, modelListService });

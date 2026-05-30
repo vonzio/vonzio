@@ -9,6 +9,14 @@ import { submitTaskSchema, sendValidationError } from "./validation.js";
 export interface TaskRoutesOptions {
   taskService: TaskService;
   profileService: ProfileService;
+  /**
+   * Optional SaaS hook — when present, called after a task is
+   * accepted so cp-server can link it to the active org (from
+   * `request.orgContext`). OSS deployments leave this undefined.
+   * Failure surfaces as 500 so a downstream workspace launch can't
+   * silently lose its org affinity.
+   */
+  recordTaskOrg?: (taskId: string, orgId: string) => Promise<void>;
 }
 
 export const taskRoutes = fp(
@@ -42,6 +50,14 @@ export const taskRoutes = fp(
           parsed.data,
           profiles.map((p) => p.id),
         );
+        // Link the task to the caller's active org if a SaaS layer
+        // has wired the hook. Awaits before sending the response so
+        // the orchestrator's resolveOrgIdForTask call (which can
+        // race the task's first dispatch) always sees the row.
+        const orgId = request.orgContext?.org_id;
+        if (orgId && opts.recordTaskOrg) {
+          await opts.recordTaskOrg(result.task_id, orgId);
+        }
         return reply.code(201).send(result);
       } catch (err) {
         if (err instanceof ForbiddenError) {
