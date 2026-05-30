@@ -39,4 +39,15 @@ export interface CoreDeps {
    * (kept undefined so the orchestrator skips the call).
    */
   resolveOrgIdForTask?: (taskId: string) => Promise<string | null>;
+  /**
+   * Optional — given a user + the active org, return the set of
+   * user_secrets row ids that should be HIDDEN. cp-server uses this
+   * to hide team-shared secrets (materialized from a different org's
+   * org_secrets) when the active org isn't that team. OSS returns an
+   * empty set; the user sees all their user_secrets rows uniformly.
+   */
+  hiddenUserSecretIdsForOrg?: (
+    userId: string,
+    activeOrgId: string | null,
+  ) => Promise<Set<string>>;
 }

@@ -556,7 +556,23 @@ export async function buildServer(deps: ServerDeps) {
     v1.register(workspaceRoutes, { workspaceService, profileService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
     v1.register(profileRoutes, { profileService, apiKeyService, modelListService });
-    v1.register(userResourceRoutes, { db, apiKeyService, profileService, toolFileService, skillService, subagentService, gitProviderService, secretVaultService });
+    v1.register(userResourceRoutes, {
+      db,
+      apiKeyService,
+      profileService,
+      toolFileService,
+      skillService,
+      subagentService,
+      gitProviderService,
+      secretVaultService,
+      // Late-bind: cp-server mutates coreDeps.hiddenUserSecretIdsForOrg
+      // AFTER this register call, same pattern as recordTaskOrg /
+      // resolveOrgIdForTask in PRs #52 + #53.
+      hiddenUserSecretIdsForOrg: (userId, activeOrgId) =>
+        coreDeps.hiddenUserSecretIdsForOrg
+          ? coreDeps.hiddenUserSecretIdsForOrg(userId, activeOrgId)
+          : Promise.resolve(new Set()),
+    });
     v1.register(gitOAuthRoutes, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(slackOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(telegramSetupRoutes, { config, integrationService, telegramService, profileService, workspaceService, platformBotService });
