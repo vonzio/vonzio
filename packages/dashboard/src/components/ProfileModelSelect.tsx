@@ -36,6 +36,13 @@ interface Props {
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
+  /**
+   * Optional override for how the live model list is fetched. SaaS
+   * surfaces (org-agent editor) pass a fetcher that hits
+   * `/api/orgs/:slug/profiles/:id/models` instead of the default
+   * `/v1/profiles/:id/models`. Default = fetchProfileModels.
+   */
+  fetcher?: (profileId: string) => Promise<{ models: ProfileModel[] }>;
 }
 
 // Legacy alias labels kept for one purpose only: if a profile's stored
@@ -52,6 +59,7 @@ export function ProfileModelSelect({
   value,
   onChange,
   disabled,
+  fetcher,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [models, setModels] = useState<ProfileModel[]>([]);
@@ -61,6 +69,11 @@ export function ProfileModelSelect({
   // Fetch error: actionable ("check the API key / try again").
   // No API key: status quo ("save the profile first").
   const [fetchError, setFetchError] = useState(false);
+  // Substring filter for the live list. Cleared on close so re-opening
+  // is always a fresh search. Matches on id OR display_name (case
+  // insensitive) so users typing "opus" find Claude Opus regardless of
+  // version suffix.
+  const [filter, setFilter] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -72,7 +85,8 @@ export function ProfileModelSelect({
     let cancelled = false;
     setLoading(true);
     setFetchError(false);
-    fetchProfileModels(profileId)
+    const doFetch = fetcher ?? fetchProfileModels;
+    doFetch(profileId)
       .then((res) => {
         if (!cancelled) setModels(res.models ?? []);
       })
@@ -99,10 +113,21 @@ export function ProfileModelSelect({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
+  // Reset the filter every time the menu closes so re-opening starts
+  // fresh — typing "opus" then closing should NOT leave "opus" filling
+  // the search box on next open.
+  useEffect(() => {
+    if (!open) setFilter("");
+  }, [open]);
+
   // Trigger label: live model's display_name when matched; legacy alias
   // label when the stored value is a family alias; raw id otherwise.
+  // Empty value shows as a placeholder — the editor must guard save
+  // until the user picks (Claude Code's SDK can invent phantom model
+  // ids like "claude-opus-4-7[1m]" when left to pick its own default,
+  // breaking the agent at run time).
   function labelFor(v: string): string {
-    if (v === "") return "Default";
+    if (v === "") return "Pick a model…";
     if (LEGACY_ALIAS_LABEL[v]) return LEGACY_ALIAS_LABEL[v];
     const live = models.find((m) => m.id === v);
     return live?.display_name ?? v;
@@ -114,6 +139,18 @@ export function ProfileModelSelect({
   const valueInList = value === "" || models.some((m) => m.id === value);
   const legacyEntry = !valueInList ? value : null;
 
+  // Filtered model list — substring match on both the id and the
+  // human display name so users can type "opus" or "claude-3" and
+  // find what they want. Empty filter = full list.
+  const needle = filter.trim().toLowerCase();
+  const filteredModels = needle === ""
+    ? models
+    : models.filter(
+        (m) =>
+          m.id.toLowerCase().includes(needle) ||
+          (m.display_name?.toLowerCase().includes(needle) ?? false),
+      );
+
   return (
     <div className="vz-select" ref={ref} data-disabled={disabled ? "true" : undefined}>
       <button
@@ -122,7 +159,9 @@ export function ProfileModelSelect({
         onClick={() => !disabled && setOpen((o) => !o)}
         disabled={disabled}
       >
-        <span style={{ color: "var(--vz-ink)" }}>{labelFor(value)}</span>
+        <span style={{ color: value === "" ? "var(--vz-muted-2)" : "var(--vz-ink)" }}>
+          {labelFor(value)}
+        </span>
         <Icon.chevron />
       </button>
       {open && (
@@ -138,32 +177,48 @@ export function ProfileModelSelect({
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {/* "Default" — let the SDK pick whatever it considers current. */}
-          <div
-            role="option"
-            aria-selected={value === ""}
-            className={`vz-menu__item ${value === "" ? "vz-menu__item--active" : ""}`}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onChange("");
-              setOpen(false);
-            }}
-            style={{ alignItems: "center", justifyContent: "space-between", gap: 8 }}
-          >
-            <span>Default</span>
-            <span
+          {/* Search box — only shown once there's a meaningful number
+              of models to filter (no point with 0-1 results). */}
+          {models.length > 3 && (
+            <div
               style={{
-                fontFamily: "var(--vz-font-mono)",
-                fontSize: 11,
-                color: "var(--vz-muted-2)",
+                position: "sticky",
+                top: 0,
+                background: "var(--vz-surface)",
+                paddingBottom: 4,
+                marginBottom: 4,
+                borderBottom: "1px solid var(--vz-border)",
+                zIndex: 1,
               }}
+              onMouseDown={(e) => e.stopPropagation()}
             >
-              SDK chooses
-            </span>
-          </div>
-
-          {(legacyEntry || models.length > 0 || loading) && <div className="vz-menu__sep" />}
+              <input
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter models…"
+                autoFocus
+                style={{
+                  width: "100%",
+                  padding: "6px 10px",
+                  fontSize: 12,
+                  fontFamily: "var(--vz-font-mono)",
+                  background: "var(--vz-surface-2)",
+                  border: "1px solid var(--vz-border)",
+                  borderRadius: 4,
+                  color: "var(--vz-ink)",
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setFilter("");
+                    setOpen(false);
+                  }
+                }}
+              />
+            </div>
+          )}
 
           {/* Legacy/unknown stored value — keeps it pickable for safety. */}
           {legacyEntry && (
@@ -226,8 +281,19 @@ export function ProfileModelSelect({
                 ? "Couldn't load models. The API key may be invalid or the provider unreachable."
                 : "No models returned. The linked API key may have no model access yet."}
             </div>
+          ) : filteredModels.length === 0 ? (
+            <div
+              style={{
+                padding: "10px 12px",
+                fontSize: 12,
+                color: "var(--vz-muted-2)",
+                lineHeight: 1.5,
+              }}
+            >
+              No models match “{filter}”.
+            </div>
           ) : (
-            models.map((m) => (
+            filteredModels.map((m) => (
               <div
                 key={m.id}
                 role="option"
