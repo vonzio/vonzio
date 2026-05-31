@@ -9,6 +9,20 @@
 
 FROM node:22-slim
 
+# Pull the latest debian security patches into every rebuild. The
+# node:22-slim base lags upstream by days-to-weeks; `apt-get upgrade`
+# brings libgnutls30, linux-libc-dev, and friends current with whatever
+# the security tracker has on the date of build. This is what makes the
+# Trivy CI gate satisfiable -- without this step the base image carries
+# whatever CVEs accumulated since node:22-slim was last rebuilt.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
+# The bundled npm in node:22-slim ships an older picomatch (HIGH ReDoS).
+# Upgrade npm globally so its dependency tree is patched. agent-runner
+# uses npx + npm install at agent startup, so an out-of-date npm here
+# means an out-of-date dep tree there.
+RUN npm install -g npm@latest
+
 # System tools for Claude Code agents.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget git ca-certificates openssh-client \

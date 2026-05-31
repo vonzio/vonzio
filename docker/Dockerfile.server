@@ -1,7 +1,16 @@
 FROM node:22-slim
 
-# Install build tools for native modules (better-sqlite3, bcrypt)
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+# Pull the latest debian security patches into every rebuild. See the
+# matching comment in Dockerfile.agent.base for the reasoning. Combined
+# with the install step below to keep the apt cache write-then-clean.
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+# The bundled npm in node:22-slim ships an older picomatch (CVE-2026-33671,
+# ReDoS, HIGH). Upgrade npm globally so its dependency tree is patched --
+# we use npm at image-build time (npm install) and at runtime (`npx`).
+RUN npm install -g npm@latest
 
 WORKDIR /app
 
@@ -48,6 +57,37 @@ RUN chmod +x ./scripts/start-prod.sh
 # ── Layer 3: build dashboard + widget ──
 RUN cd packages/dashboard && npx vite build
 RUN cd packages/widget && npx vite build
+
+# ── Layer 4: prune devDependencies ──
+# After vite has built the dashboard + widget bundles we no longer need
+# vite, drizzle-kit, vitest, tailwindcss, or any other build-time tool.
+# Pruning removes them from the runtime image, which cuts the attack
+# surface significantly: drizzle-kit pulls in the deprecated
+# `@esbuild-kit/esm-loader` which bundles an ancient esbuild Go binary
+# (~20 HIGH/CRITICAL CVEs in its embedded Go stdlib), and vite pulls
+# in its own esbuild copy. tsx was moved from core-server's
+# devDependencies to dependencies so this prune doesn't take it out
+# (start-prod.sh runs the server via `npx tsx`).
+RUN npm prune --omit=dev
+
+# `npm prune --omit=dev` keeps `drizzle-kit` and `@esbuild-kit` because
+# better-auth declares drizzle-kit as a peerOptional (npm treats peers
+# as required even with --omit=dev). Our runtime doesn't invoke
+# drizzle-kit -- better-auth migrations run via `npx @better-auth/cli`
+# in start-prod.sh, which fetches fresh, not from local node_modules.
+#
+# Also delete the top-level hoisted `esbuild` + `@esbuild` -- npm marks
+# them extraneous after prune (they were brought in by devDeps' transitive
+# graph and nothing in our prod tree depends on them anymore), but it
+# leaves them on disk. Trivy still scans the orphan binary's embedded
+# Go stdlib and reports CVEs from it. tsx ships its own newer esbuild
+# under `node_modules/tsx/node_modules/`, untouched by this delete --
+# that's the one start-prod.sh actually invokes.
+RUN rm -rf \
+    node_modules/drizzle-kit \
+    node_modules/@esbuild-kit \
+    node_modules/@esbuild \
+    node_modules/esbuild
 
 ARG VONZIO_VERSION=dev
 ENV VONZIO_VERSION=$VONZIO_VERSION
