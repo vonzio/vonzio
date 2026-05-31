@@ -69,6 +69,14 @@ const configSchema = z.object({
   DOCKER_NETWORK: z.string().optional(),
   AGENT_IMAGE: z.string().default("vonzio-agent:latest"),
 
+  // Plugins
+  // Comma-separated list of plugin packages to load at boot, e.g.
+  // "@vonzio/plugin-telegram,@vonzio/plugin-slack@^0.1". Loader strips
+  // the @version-constraint suffix -- whatever the package resolver
+  // installed at npm-install / image-build time is what runs. Empty /
+  // unset = no plugins. See packages/core-server/src/plugins/loader.ts.
+  VONZIO_PLUGINS: z.string().optional(),
+
   // Batch + pooled concurrency
   MAX_CONCURRENT_AGENTS: z.coerce.number().default(4),
   TASK_TIMEOUT_SECONDS: z.coerce.number().default(300),

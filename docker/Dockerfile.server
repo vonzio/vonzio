@@ -32,6 +32,7 @@ WORKDIR /app
 # to build on any maintainer's laptop, not just the CI runner.
 COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/plugin-api/package.json packages/plugin-api/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
 COPY packages/widget/package.json packages/widget/
@@ -43,6 +44,7 @@ RUN npm install
 # Now copy the actual source. Changes here invalidate the build layers below
 # but NOT the npm install layer above.
 COPY packages/shared/ packages/shared/
+COPY packages/plugin-api/ packages/plugin-api/
 COPY packages/core-server/ packages/core-server/
 COPY packages/dashboard/ packages/dashboard/
 COPY packages/widget/ packages/widget/
