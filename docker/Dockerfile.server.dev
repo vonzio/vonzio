@@ -21,6 +21,7 @@ WORKDIR /app
 # can use the committed lockfile because it's built in CI on Linux.
 COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/plugin-api/package.json packages/plugin-api/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
 COPY packages/widget/package.json packages/widget/
