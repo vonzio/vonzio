@@ -23,25 +23,12 @@
 import { sql } from "drizzle-orm";
 import { encodeThreadClaim, encodeThreadDismiss } from "@vonzio/shared";
 import type { NotificationHandler, PluginContext } from "@vonzio/plugin-api";
+import type { TelegramConfig } from "./types.js";
 import {
   TelegramService,
   markdownToTelegram,
   splitTelegramMessage,
 } from "./services/telegram-service.js";
-
-/**
- * Provider-specific config we expect on the integration row's `config`
- * field after `decrypt: true`. Field names match what
- * integration-service writes (see TelegramConfig in core's
- * integration-service.ts -- the plugin owns its own copy so the
- * eventual cross-package break is mechanical).
- */
-interface TelegramConfig {
-  bot_token: string;
-  bot_user_id?: string;
-  owner_tg_user_id?: string;
-  link_code?: string;
-}
 
 interface TelegramNotifyMetadata {
   userId?: string;

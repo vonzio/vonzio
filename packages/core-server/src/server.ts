@@ -53,7 +53,13 @@ import { slackOAuthRoutes, slackOAuthCallbackRoute } from "./routes/slack-oauth.
 import { gmailOAuthRoutes, gmailOAuthCallbackRoute } from "./routes/gmail-oauth.js";
 import { tellerConnectRoutes } from "./routes/teller-connect.js";
 import { slackEventsRoutes } from "./routes/slack-events.js";
-import { telegramSetupRoutes, resyncTelegramBotCommands } from "./routes/telegram-setup.js";
+// telegramSetupRoutes + resyncTelegramBotCommands now live in
+// @vonzio/plugin-telegram. The plugin's init() registers the same
+// /v1/integrations/telegram/* routes (via routePrefix:
+// { kind: "absolute" }) and fires resyncTelegramBotCommands at boot.
+// Nothing references this module in core anymore -- left in place
+// only because telegram-events.ts is still here and PlatformBotService
+// init still happens in this file.
 import { telegramEventsRoutes } from "./routes/telegram-events.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { IntegrationService } from "./services/integration-service.js";
@@ -632,7 +638,8 @@ export async function buildServer(deps: ServerDeps) {
     });
     v1.register(gitOAuthRoutes, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(slackOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
-    v1.register(telegramSetupRoutes, { config, integrationService, telegramService, profileService, workspaceService, platformBotService });
+    // /v1/integrations/telegram/* routes moved to
+    // @vonzio/plugin-telegram (registered via the plugin's init()).
     v1.register(gmailOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(tellerConnectRoutes, { config, integrationService });
     v1.register(integrationRoutes, { integrationService, notificationService, profileService });
@@ -913,16 +920,12 @@ export async function buildServer(deps: ServerDeps) {
     // env vars are set. Silent no-op otherwise. Never throws — failure
     // disables the feature without taking the server down.
     await platformBotService.init();
-    // Background re-sync of every connected bot's slash-command menu.
-    // Telegram clients cache the menu, so bots paired before a
-    // BOT_COMMANDS update keep serving the stale list until we call
-    // setMyCommands again. Fire-and-forget so it doesn't gate readiness.
-    void resyncTelegramBotCommands({
-      integrationService,
-      telegramService,
-      platformBotToken: platformBotService.getToken(),
-      log: server.log,
-    });
+    // resyncTelegramBotCommands moved to @vonzio/plugin-telegram --
+    // the plugin's init() fires it on boot. Kept the comment trail
+    // because the platform-bot's webhook still resolves through
+    // platformBotService.init() above (telegram-events.ts is still
+    // in core), so the boot ORDER still matters: platformBot.init()
+    // BEFORE the plugin's loader runs.
 
     // Plugin loader runs AFTER core routes + services are wired so
     // plugin init() sees a fully-built server. Sandboxed: a failed
@@ -936,6 +939,13 @@ export async function buildServer(deps: ServerDeps) {
       mcpRegistry,
       scheduler,
       integrationService,
+      profileService,
+      workspaceService,
+      // Transitional: telegram-events.ts is still in core, so the
+      // singleton PlatformBotService is constructed here and shared
+      // with the plugin's setup routes via PluginCore. Goes away when
+      // telegram-events.ts moves into the plugin.
+      telegramPlatformBot: platformBotService,
     });
 
     server.log.info("Vonzio server ready");

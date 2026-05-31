@@ -1,21 +1,75 @@
+// Telegram setup routes, moved from
+// packages/core-server/src/routes/telegram-setup.ts as part of the
+// 3C extraction arc. URL paths (/v1/integrations/telegram/*) kept
+// verbatim via the plugin's `routePrefix: { kind: "absolute" }`
+// declaration so the dashboard's API client + any browser bookmarks
+// don't break.
+//
+// Service deps come through structural types from @vonzio/plugin-api
+// (PluginIntegrationLookup etc.) rather than the concrete core
+// services, so this module compiles standalone -- no edge from
+// plugin-telegram into core-server.
+
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
-import type { Config } from "../config.js";
-import type { IntegrationService, TelegramConfig } from "../services/integration-service.js";
+import type { FastifyRequest } from "fastify";
+import type {
+  AuthUser,
+  PluginIntegrationLookup,
+  PluginProfileLookup,
+  PluginWorkspaceLookup,
+  PluginTelegramPlatformBot,
+} from "@vonzio/plugin-api";
+
+/**
+ * `request.user` is decorated by core's userAuthHook on the /v1
+ * scope. The plugin-api package can't declare the augmentation
+ * (would collide with core's own module-merge), so we cast at the
+ * boundary. The `!` on (request as ...).user! is safe because the
+ * /v1 scope enforces auth before routes run.
+ */
+function getUser(request: FastifyRequest): AuthUser {
+  return (request as FastifyRequest & { user?: AuthUser }).user!;
+}
+import type { TelegramConfig } from "../types.js";
 import type { TelegramService } from "../services/telegram-service.js";
-import type { ProfileService } from "../services/profile-service.js";
-import type { WorkspaceService } from "../services/workspace-service.js";
-import type { PlatformBotService } from "../services/platform-bot-service.js";
-import { ErrorCodes, errorResponse } from "../errors.js";
+
+/**
+ * Minimal error-response helper. Lives inside the plugin so the
+ * plugin doesn't pull in core-server as a runtime dep (would create
+ * a circular package edge). Shape matches what the dashboard expects
+ * (`{ error: { code, message } }`).
+ */
+const ErrorCodes = {
+  UNAUTHORIZED: "UNAUTHORIZED",
+  FORBIDDEN: "FORBIDDEN",
+  NOT_FOUND: "NOT_FOUND",
+  VALIDATION_FAILED: "VALIDATION_FAILED",
+  INTERNAL_ERROR: "INTERNAL_ERROR",
+  PRECONDITION_FAILED: "PRECONDITION_FAILED",
+  BAD_GATEWAY: "BAD_GATEWAY",
+} as const;
+
+type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
+
+function errorResponse(code: ErrorCode, message: string): { error: { code: ErrorCode; message: string } } {
+  return { error: { code, message } };
+}
 
 export interface TelegramSetupRoutesOptions {
-  config: Config;
-  integrationService: IntegrationService;
+  /** BETTER_AUTH_URL — used to construct the webhook URL Telegram POSTs to. */
+  betterAuthUrl: string;
+  integrationService: PluginIntegrationLookup;
   telegramService: TelegramService;
-  profileService: ProfileService;
-  workspaceService: WorkspaceService;
-  platformBotService: PlatformBotService;
+  profileService: PluginProfileLookup;
+  workspaceService: PluginWorkspaceLookup;
+  /**
+   * Always passed (plugin's init() substitutes a disabled stub when
+   * core doesn't expose one). The stub's isConfigured() returns false
+   * so the platform-bot connect endpoint returns 503 cleanly.
+   */
+  platformBotService: PluginTelegramPlatformBot;
 }
 
 /**
@@ -99,10 +153,14 @@ export const BOT_COMMANDS = [
  * platform bot's identity, but we only need to sync it once.
  */
 export async function resyncTelegramBotCommands(deps: {
-  integrationService: IntegrationService;
+  integrationService: PluginIntegrationLookup;
   telegramService: TelegramService;
   platformBotToken: string | null;
-  log: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+  /** Pino-shaped logger (`info(obj, msg)` / `warn(obj, msg)`). PluginLogger satisfies this. */
+  log: {
+    info(meta: Record<string, unknown> | string, msg?: string): void;
+    warn(meta: Record<string, unknown> | string, msg?: string): void;
+  };
 }): Promise<void> {
   const { integrationService, telegramService, platformBotToken, log } = deps;
   const tokens = new Set<string>();
@@ -143,8 +201,8 @@ export async function resyncTelegramBotCommands(deps: {
  */
 export const telegramSetupRoutes = fp(
   async (server: FastifyInstance, opts: TelegramSetupRoutesOptions) => {
-    const { config, integrationService, telegramService, profileService, workspaceService, platformBotService } = opts;
-    const webhookBase = config.BETTER_AUTH_URL.replace(/\/$/, "");
+    const { betterAuthUrl, integrationService, telegramService, profileService, workspaceService, platformBotService } = opts;
+    const webhookBase = betterAuthUrl.replace(/\/$/, "");
 
     /**
      * Resolve {profile_id → slug+name} so each bot summary can show
@@ -182,7 +240,7 @@ export const telegramSetupRoutes = fp(
     server.post<{ Body: { bot_token: string; bound_profile_id?: string | null } }>(
       "/v1/integrations/telegram/connect",
       async (request, reply) => {
-        const user = request.user!;
+        const user = getUser(request);
         const botToken = (request.body?.bot_token ?? "").trim();
         const boundProfileId = request.body?.bound_profile_id ?? null;
         if (!botToken || !/^\d+:[A-Za-z0-9_-]{30,}$/.test(botToken)) {
@@ -294,7 +352,7 @@ export const telegramSetupRoutes = fp(
     server.post<{ Body: { bound_profile_id?: string | null } }>(
       "/v1/integrations/telegram/connect-platform",
       async (request, reply) => {
-        const user = request.user!;
+        const user = getUser(request);
         const platformMeta = platformBotService.getMetadata();
         if (!platformMeta) {
           return reply.code(503).send(errorResponse(
@@ -358,7 +416,7 @@ export const telegramSetupRoutes = fp(
     // List all Telegram bots connected to this user — supersedes the
     // legacy /status which only returned the first bot.
     server.get("/v1/integrations/telegram/bots", async (request) => {
-      const user = request.user!;
+      const user = getUser(request);
       const bots = await integrationService.listByUserAndType(user.id, "telegram");
       // Resolve profile slug/name once per unique bound_profile_id so we
       // don't re-list profiles per bot. With realistic bot counts (1-5)
@@ -385,7 +443,7 @@ export const telegramSetupRoutes = fp(
     server.get<{ Params: { sessionId: string } }>(
       "/v1/integrations/telegram/bots/for-workspace/:sessionId",
       async (request, reply) => {
-        const user = request.user!;
+        const user = getUser(request);
         const workspace = workspaceService.get(request.params.sessionId);
         if (!workspace || workspace.user_id !== user.id) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
@@ -422,11 +480,11 @@ export const telegramSetupRoutes = fp(
     // Legacy single-bot status. Kept for backwards-compat with older
     // dashboard builds; returns the first bot or `connected: false`.
     server.get("/v1/integrations/telegram/status", async (request) => {
-      const user = request.user!;
+      const user = getUser(request);
       const integration = await integrationService.getByUserAndType(user.id, "telegram");
       if (!integration) return { connected: false };
       const cfg = integration.config as unknown as TelegramConfig;
-      const bound = await resolveBoundProfile(user.id, cfg.bound_profile_id);
+      const bound = await resolveBoundProfile(user.id, cfg.bound_profile_id ?? undefined);
       return { connected: true, ...botSummary(integration, bound.slug, bound.name) };
     });
 
@@ -435,7 +493,7 @@ export const telegramSetupRoutes = fp(
     server.patch<{ Params: { id: string }; Body: { bound_profile_id: string | null } }>(
       "/v1/integrations/telegram/bots/:id",
       async (request, reply) => {
-        const user = request.user!;
+        const user = getUser(request);
         const integration = await integrationService.get(request.params.id, { decrypt: true });
         if (!integration || integration.user_id !== user.id || integration.type !== "telegram") {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Bot not found"));
@@ -461,7 +519,7 @@ export const telegramSetupRoutes = fp(
     server.post<{ Body: { bot_id?: string } }>(
       "/v1/integrations/telegram/regenerate-link-code",
       async (request, reply) => {
-        const user = request.user!;
+        const user = getUser(request);
         const integration = await pickBot(user.id, request.body?.bot_id);
         if (!integration) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "No Telegram bot"));
         const cfg = integration.config as unknown as TelegramConfig;
@@ -479,7 +537,7 @@ export const telegramSetupRoutes = fp(
     server.post<{ Body: { bot_id?: string } }>(
       "/v1/integrations/telegram/disconnect",
       async (request, reply) => {
-        const user = request.user!;
+        const user = getUser(request);
         const existing = await pickBot(user.id, request.body?.bot_id);
         if (!existing) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "No Telegram bot"));

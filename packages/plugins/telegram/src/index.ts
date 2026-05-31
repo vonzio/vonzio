@@ -1,70 +1,110 @@
-// @vonzio/plugin-telegram -- backend half.
+// @vonzio/plugin-telegram — backend half.
 //
-// POC SCAFFOLD: this file is the minimum viable plugin shape -- it
-// satisfies the VonzioPlugin contract and proves the loader path
-// end-to-end. The real Telegram routes / service / migrations land
-// in subsequent PRs of the 3C arc.
-//
-// Today this plugin:
-//  - declares its env-config namespace (TELEGRAM_*)
+// What this plugin does at this point in the 3C arc:
+//  - declares its env-config namespace (PLATFORM_TELEGRAM_*) plus
+//    BETTER_AUTH_URL (read out of process.env, not validated -- core
+//    already validated it and rejects on invalid)
 //  - registers a notification handler for kind "telegram" that
-//    no-ops with a structured log (so a notify request that would
-//    have gone to Telegram doesn't 404 silently while extraction is
-//    in flight)
-//  - serves a /plugins/telegram/health route so the routing wire-up
-//    is observable
+//    resolves the recipient -> integration row -> Bot API send
+//  - registers the /v1/integrations/telegram/* setup routes
+//    (route paths preserved verbatim via routePrefix: { kind:
+//    "absolute" } so the dashboard's API client + bookmarks don't
+//    break -- this validates the legacy-URL escape hatch on the
+//    plugin contract)
+//  - runs resyncTelegramBotCommands once at boot to refresh every
+//    paired bot's /setMyCommands menu
 //
-// Future PRs in the 3C arc fold in:
-//  - telegram-service.ts (API client)
-//  - telegram-events.ts (webhook + relay)
-//  - telegram-setup.ts (per-user + platform-bot setup)
-//  - schema + migrations (telegram_active_sessions, telegram_sessions,
-//    telegram_playbook_threads)
-//  - resyncTelegramBotCommands scheduled job
-//  - orchestrator hook (replace orchestrator's direct DB read with a
-//    SessionEvents subscription)
+// Still to land in 3C follow-ups:
+//  - telegram-events.ts (webhook + relay) -- biggest remaining piece
+//  - db schema + migrations (telegram_*_sessions, telegram_playbook_threads)
+//  - orchestrator hook (replace orchestrator's direct DB read of
+//    telegramSessions with a SessionEvents subscription)
+//  - dashboard Telegram UI (settings card actual content)
 
 import { z } from "zod";
-import type { VonzioPlugin } from "@vonzio/plugin-api";
+import type { VonzioPlugin, PluginTelegramPlatformBot } from "@vonzio/plugin-api";
+import { TelegramService } from "./services/telegram-service.js";
 import { buildTelegramNotifyHandler } from "./notify-handler.js";
+import { telegramSetupRoutes, resyncTelegramBotCommands } from "./routes/setup.js";
 
 const configSchema = z.object({
-  // Shared platform bot (matches the existing core env vars so the
-  // extraction won't require deployers to rename anything).
   PLATFORM_TELEGRAM_BOT_TOKEN: z.string().optional(),
   PLATFORM_TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  // BETTER_AUTH_URL is a CORE env var (not telegram-specific). We
+  // re-validate it here so the plugin's webhook construction has it
+  // typed -- core has already loaded process.env.dotenv so the
+  // value is set.
+  BETTER_AUTH_URL: z.string().default("http://localhost:3000"),
 });
 
-type TelegramConfig = z.infer<typeof configSchema>;
+type TelegramPluginConfig = z.infer<typeof configSchema>;
 
-const plugin: VonzioPlugin<TelegramConfig> = {
+/**
+ * When core didn't expose its PlatformBotService (rare -- typically
+ * happens in test setups), supply a disabled stub so the setup
+ * routes' platform-bot connect endpoint can return a clean 503
+ * instead of crashing on .getMetadata().
+ */
+const disabledPlatformBot: PluginTelegramPlatformBot = {
+  getMetadata: () => null,
+  getToken: () => null,
+  getWebhookSecret: () => null,
+  isConfigured: () => false,
+};
+
+const plugin: VonzioPlugin<TelegramPluginConfig> = {
   name: "telegram",
   apiVersion: "0.1.0",
   configSchema,
+  routePrefix: { kind: "absolute", prefix: "/v1/integrations/telegram" },
 
   async init(ctx) {
     ctx.log.info(
       { hasPlatformBot: Boolean(ctx.config.PLATFORM_TELEGRAM_BOT_TOKEN) },
-      "telegram plugin init (POC scaffold)",
+      "telegram plugin init",
     );
 
-    // Health check -- proves the route wires under the plugin prefix.
-    // routePrefix defaults to { kind: "auto" }, so this URL becomes
-    // GET /plugins/telegram/health at runtime.
-    ctx.server.get("/plugins/telegram/health", async () => ({
+    const telegramService = new TelegramService();
+    const platformBot = ctx.core.telegramPlatformBot ?? disabledPlatformBot;
+
+    // Health check -- proves the route wires alongside the legacy
+    // setup routes. Same /v1/integrations/telegram prefix so it sits
+    // next to /v1/integrations/telegram/config without extra fastify
+    // scope.
+    ctx.server.get("/v1/integrations/telegram/_health", async () => ({
       plugin: "telegram",
       status: "ok",
       apiVersion: "0.1.0",
-      hasPlatformBot: Boolean(ctx.config.PLATFORM_TELEGRAM_BOT_TOKEN),
+      hasPlatformBot: platformBot.isConfigured(),
     }));
 
-    // Real notification handler -- resolves the integration via
-    // ctx.core.integrations.get(), formats markdown to MarkdownV2,
-    // chunks to <=4000 chars, sends through the Bot API with
-    // plain-text fallback, optionally writes a telegram_playbook_threads
-    // row for thread-claim. Moved from core-server's notification-service
-    // as part of the 3C inversion arc.
+    // Register all the legacy /v1/integrations/telegram/* setup routes
+    // via the moved-here fastify-plugin. Same registration shape as
+    // when this was wired in core-server's buildServer.
+    await ctx.server.register(telegramSetupRoutes, {
+      betterAuthUrl: ctx.config.BETTER_AUTH_URL,
+      integrationService: ctx.core.integrations,
+      telegramService,
+      profileService: ctx.core.profiles,
+      workspaceService: ctx.core.workspaces,
+      platformBotService: platformBot,
+    });
+
+    // Real notification handler -- resolves req.recipient (integration
+    // id) -> bot_token + chat -> chunked MarkdownV2 send with
+    // plain-text fallback -> thread-claim row persistence.
     ctx.notificationBus.registerHandler("telegram", buildTelegramNotifyHandler(ctx));
+
+    // Fire-and-forget command-menu resync. Telegram caches the slash-
+    // command menu client-side, so any deploy that changes BOT_COMMANDS
+    // needs to push the new list to every paired bot once. Failure
+    // logs but doesn't block startup.
+    void resyncTelegramBotCommands({
+      integrationService: ctx.core.integrations,
+      telegramService,
+      platformBotToken: platformBot.getToken(),
+      log: ctx.log,
+    });
   },
 };
 

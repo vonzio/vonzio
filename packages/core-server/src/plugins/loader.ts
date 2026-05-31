@@ -105,20 +105,53 @@ function assertPluginShape(
 }
 
 /**
- * Subset of IntegrationService the loader uses to build the
- * `PluginCore.integrations` adapter. Typed structurally (not by
- * importing IntegrationService directly) so the loader stays
- * decoupled from the service module's internal types -- swapping out
- * the implementation behind this interface doesn't ripple here.
+ * Subsets of core services the loader uses to build the typed
+ * adapters on PluginCore. Each is structural (not class-typed) so
+ * the loader stays decoupled from the concrete service module --
+ * swapping out an implementation behind this interface doesn't
+ * ripple into plugin code.
  */
+type IntegrationRow = {
+  id: string;
+  user_id: string;
+  type: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+};
+
 export interface IntegrationServiceLike {
-  get(id: string, opts?: { decrypt?: boolean }): Promise<{
-    id: string;
+  get(id: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow | null>;
+  getByUserAndType(userId: string, type: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow | null>;
+  listByType(type: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow[]>;
+  listByUserAndType(userId: string, type: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow[]>;
+  findByTypeAndExternalId(type: string, externalId: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow | null>;
+  // Signature mirrors core's IntegrationService.create (positional
+  // userId/type/config + optional scopeInput).
+  create(userId: string, type: string, config: Record<string, unknown>, scopeInput?: unknown): Promise<IntegrationRow>;
+  update(id: string, input: Partial<{ config: Record<string, unknown>; enabled: boolean; scope: string; profile_ids: string[] }>): Promise<IntegrationRow | null>;
+  // IntegrationService.delete actually returns boolean (did-it-exist).
+  // The loader adapter narrows that to void in the plugin-facing
+  // contract, but this structural type captures the real signature.
+  delete(id: string): Promise<boolean>;
+}
+
+export interface ProfileServiceLike {
+  list(userId: string): Promise<Array<{ id: string; slug: string | null; name: string }>>;
+}
+
+export interface WorkspaceServiceLike {
+  get(sessionId: string): {
+    session_id: string;
     user_id: string;
-    type: string;
-    config: Record<string, unknown>;
-    enabled: boolean;
-  } | null>;
+    profile_id?: string | null;
+  } | null;
+}
+
+export interface TelegramPlatformBotLike {
+  getMetadata(): { botUserId: string; botUsername: string } | null;
+  getToken(): string | null;
+  getWebhookSecret(): string | null;
+  isConfigured(): boolean;
 }
 
 export interface LoadPluginsOpts {
@@ -130,6 +163,10 @@ export interface LoadPluginsOpts {
   mcpRegistry: McpRegistryImpl;
   scheduler: SchedulerImpl;
   integrationService: IntegrationServiceLike;
+  profileService: ProfileServiceLike;
+  workspaceService: WorkspaceServiceLike;
+  /** Optional -- only telegram plugin uses it; absent in test setups. */
+  telegramPlatformBot?: TelegramPlatformBotLike;
 }
 
 /**
@@ -224,11 +261,27 @@ export function buildPluginContext<TConfig>(args: {
       decrypt: (ciphertext) => decrypt(ciphertext, opts.config.ENCRYPTION_KEY),
     },
     integrations: {
-      // Thin wrapper -- the structural IntegrationServiceLike type
-      // matches the real service's signature exactly so this is just
+      // Thin wrappers -- IntegrationServiceLike's structural shape
+      // matches the real service's signature 1:1 so this is just
       // method forwarding.
       get: (id, getOpts) => opts.integrationService.get(id, getOpts),
+      getByUserAndType: (userId, type, o) => opts.integrationService.getByUserAndType(userId, type, o),
+      listByType: (type, o) => opts.integrationService.listByType(type, o),
+      listByUserAndType: (userId, type, o) => opts.integrationService.listByUserAndType(userId, type, o),
+      findByTypeAndExternalId: (type, ext, o) => opts.integrationService.findByTypeAndExternalId(type, ext, o),
+      create: (userId, type, config, scopeInput) => opts.integrationService.create(userId, type, config, scopeInput),
+      update: (id, input) => opts.integrationService.update(id, input),
+      // IntegrationService.delete returns boolean (did-it-exist); the
+      // plugin contract is fire-and-forget so we drop the return.
+      delete: async (id) => { await opts.integrationService.delete(id); },
     },
+    profiles: {
+      list: (userId) => opts.profileService.list(userId),
+    },
+    workspaces: {
+      get: (sessionId) => opts.workspaceService.get(sessionId),
+    },
+    telegramPlatformBot: opts.telegramPlatformBot,
   };
 
   return {

@@ -178,12 +178,62 @@ export interface PluginIntegration {
 }
 
 /**
- * Narrow adapter around core's IntegrationService. Plugins use this
- * in their notification handlers to look up the user-integration row
- * corresponding to the `req.recipient` they were dispatched.
+ * Adapter around core's IntegrationService. Plugins use this to look
+ * up + manage user-integration rows (Slack tokens, Telegram bots,
+ * Gmail OAuth grants, etc.). All eight methods mirror core's
+ * IntegrationService surface 1:1 -- the structural shape lets the
+ * loader pass the real service through without leaking the concrete
+ * class type into plugin-api.
  */
 export interface PluginIntegrationLookup {
   get(id: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration | null>;
+  getByUserAndType(userId: string, type: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration | null>;
+  listByType(type: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration[]>;
+  listByUserAndType(userId: string, type: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration[]>;
+  findByTypeAndExternalId(type: string, externalId: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration | null>;
+  create(userId: string, type: string, config: Record<string, unknown>, scopeInput?: unknown): Promise<PluginIntegration>;
+  update(id: string, input: Partial<{ config: Record<string, unknown>; enabled: boolean; scope: string; profile_ids: string[] }>): Promise<PluginIntegration | null>;
+  delete(id: string): Promise<void>;
+}
+
+/**
+ * Narrow read-only profile lookup. Plugins use this when validating
+ * that a user-supplied profile_id (e.g. for binding a Telegram bot to
+ * a specific agent profile) actually belongs to the caller.
+ */
+export interface PluginProfileLookup {
+  list(userId: string): Promise<Array<{ id: string; slug: string | null; name: string }>>;
+}
+
+/**
+ * Narrow read-only workspace lookup. Plugins use this when surfacing
+ * workspace-bound resources (e.g. Telegram deep-links into a
+ * workspace).
+ */
+export interface PluginWorkspaceLookup {
+  get(sessionId: string): {
+    session_id: string;
+    user_id: string;
+    profile_id?: string | null;
+  } | null;
+}
+
+/**
+ * Telegram-specific platform-bot surface. Transitional -- exposed on
+ * PluginCore until telegram-events.ts moves into the plugin, at
+ * which point PlatformBotService instantiation moves with it and
+ * this field disappears from PluginCore. Until then, the telegram
+ * plugin's setup routes need a reference to the in-core singleton
+ * that telegram-events also holds, so we expose it here.
+ *
+ * Structural typing -- the concrete class lives in core-server's
+ * services/. Other plugins ignore this field.
+ */
+export interface PluginTelegramPlatformBot {
+  getMetadata(): { botUserId: string; botUsername: string } | null;
+  getToken(): string | null;
+  getWebhookSecret(): string | null;
+  isConfigured(): boolean;
 }
 
 /**
@@ -217,6 +267,25 @@ export interface PluginCore {
    * provider (Slack workspace, Telegram bot, etc.).
    */
   integrations: PluginIntegrationLookup;
+
+  /**
+   * Profile lookup (read-only). Plugins use this when validating
+   * profile_ids in their own routes.
+   */
+  profiles: PluginProfileLookup;
+
+  /**
+   * Workspace lookup (read-only). Plugins use this for ownership
+   * checks on workspace-bound resources.
+   */
+  workspaces: PluginWorkspaceLookup;
+
+  /**
+   * Telegram-specific transitional bridge. See PluginTelegramPlatformBot
+   * for why this lives on PluginCore until telegram-events.ts moves.
+   * Other plugins should ignore this field.
+   */
+  telegramPlatformBot?: PluginTelegramPlatformBot;
 }
 
 /** Minimal logger contract. Backed by core's pino logger at runtime. */
@@ -317,6 +386,30 @@ export interface Scheduler {
    * so a slow fn won't queue up backlog.
    */
   interval(name: string, ms: number, fn: () => Promise<void>): void;
+}
+
+/**
+ * The auth-decorated user attached to a FastifyRequest by core's
+ * userAuthHook. Plugins receive this as `request.user` inside any
+ * route that runs under an auth-gated scope (e.g. /v1/*).
+ *
+ * Plugins typed against this interface should cast at the request
+ * site -- `const user = request.user as AuthUser` -- because the
+ * module augmentation that sets `user?: AuthUser` on FastifyRequest
+ * lives in core-server's auth/user-auth.ts; declaring it again here
+ * would create a conflicting declaration in plugin-api's tsconfig
+ * project.
+ *
+ * The shape mirrors core's AuthUser (id + email + role + minor
+ * fields) but is structurally typed here so plugin-api doesn't have
+ * to import from core-server.
+ */
+export interface AuthUser {
+  id: string;
+  email: string;
+  name?: string;
+  role: string;
+  feature_flags?: string;
 }
 
 export { assertApiCompatible } from "./version.js";
