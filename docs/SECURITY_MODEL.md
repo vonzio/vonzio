@@ -152,10 +152,13 @@ roadmap tracks fixes.
   core-server actually needs (CONTAINERS, EXEC, IMAGES, VOLUMES,
   EVENTS, PING) are reachable, and BUILD/SYSTEM/SWARM/SECRETS/NETWORKS
   remain default-deny.
-- The reference `docker-compose.yml` ships with fallback secret strings
-  for development. The installer overwrites these; production users who
-  run `docker compose up` directly without `.env` get insecure
-  defaults. Fail-fast required-secret syntax is on the v0.2 roadmap.
+- ~~The reference `docker-compose.yml` ships with fallback secret strings
+  for development.~~ Fixed in v0.2: `ENCRYPTION_KEY`, `BETTER_AUTH_SECRET`,
+  and `POSTGRES_PASSWORD` now use compose's `${VAR:?required}` syntax —
+  running `docker compose up` without them set fails fast with a clear
+  error message pointing at `./install.sh` or the manual openssl
+  invocation. The placeholder strings (`change-this-to-a-secure-...`)
+  that previously let the stack boot with an insecure default are gone.
 
 See the [HARDENING.md](./HARDENING.md) guide for mitigations available
 today.

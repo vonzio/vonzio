@@ -5,7 +5,7 @@ services:
     environment:
       - POSTGRES_DB=vonzio
       - POSTGRES_USER=vonzio
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-vonzio_dev}
+      - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?required — set in .env or run ./install.sh which generates one with: openssl rand -hex 16}"
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -79,11 +79,19 @@ services:
       # real-domain HTTPS termination.
       - "${SERVER_PORT:-3000}:3000"
     environment:
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-change-this-to-a-secure-32-char-secret!}
+      # ENCRYPTION_KEY + BETTER_AUTH_SECRET are credential vault keys.
+      # If they change between boots, every encrypted row in the DB
+      # becomes undecryptable (AES-GCM auth-tag mismatch). The `:?required`
+      # syntax makes compose hard-fail before container start instead of
+      # silently falling back to a placeholder string -- the foot-gun
+      # that originally surfaced these as known limitations in
+      # docs/SECURITY_MODEL.md. Generate via the install.sh script or
+      # manually with the openssl invocations shown in the error text.
+      - "ENCRYPTION_KEY=${ENCRYPTION_KEY:?required — set in .env or run ./install.sh which generates one with: openssl rand -hex 32}"
+      - "BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?required — set in .env or run ./install.sh which generates one with: openssl rand -hex 32}"
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
       - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-false}
-      - DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:-vonzio_dev}@postgres:5432/vonzio
+      - "DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:?required — set in .env}@postgres:5432/vonzio"
       # Route Docker API through the socket-proxy (see docker-proxy service
       # above). DOCKER_HOST takes precedence over DOCKER_SOCKET in
       # core-server's config resolver.

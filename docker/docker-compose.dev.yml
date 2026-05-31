@@ -53,8 +53,11 @@ services:
       # by the base compose).
       - "${DASHBOARD_PORT:-5173}:5173"
     environment:
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-change-this-to-a-secure-32-char-secret!}
+      # Required even in dev -- the foot-gun is the same (data encrypted
+      # under a placeholder becomes undecryptable when a real key is set
+      # later). install.sh generates these automatically.
+      - "ENCRYPTION_KEY=${ENCRYPTION_KEY:?required — set in .env or run ./install.sh which generates one with: openssl rand -hex 32}"
+      - "BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?required — set in .env or run ./install.sh which generates one with: openssl rand -hex 32}"
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:5173}
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173,http://localhost:3000}
       - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-true}
@@ -62,7 +65,7 @@ services:
       - EMAIL_FROM=${EMAIL_FROM:-Vonzio <noreply@vonz.io>}
       - PLATFORM_TELEGRAM_BOT_TOKEN=${PLATFORM_TELEGRAM_BOT_TOKEN:-}
       - PLATFORM_TELEGRAM_WEBHOOK_SECRET=${PLATFORM_TELEGRAM_WEBHOOK_SECRET:-}
-      - DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:-vonzio_dev}@postgres:5432/vonzio
+      - "DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:?required — set in .env}@postgres:5432/vonzio"
       - DOCKER_SOCKET=/var/run/docker.sock
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true

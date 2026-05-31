@@ -55,15 +55,18 @@ services:
       # an image from a previous deploy (when no server source changed) and
       # still report the correct deployed version in /api/config.
       - VONZIO_VERSION=${VONZIO_VERSION:-dev}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
-      - BETTER_AUTH_URL=https://${DOMAIN}
+      # Required. Hard-fail with a useful message instead of compose's
+      # generic "variable is not set" warning + late AES-GCM auth-tag
+      # mismatch on every decrypt. install.sh generates these.
+      - "ENCRYPTION_KEY=${ENCRYPTION_KEY:?required — generate with: openssl rand -hex 32}"
+      - "BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?required — generate with: openssl rand -hex 32}"
+      - "BETTER_AUTH_URL=https://${DOMAIN:?required — public hostname, e.g. agents.example.com}"
       - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-false}
       - RESEND_API_KEY=${RESEND_API_KEY:-}
       - EMAIL_FROM=${EMAIL_FROM:-Vonzio <noreply@vonz.io>}
       - PLATFORM_TELEGRAM_BOT_TOKEN=${PLATFORM_TELEGRAM_BOT_TOKEN:-}
       - PLATFORM_TELEGRAM_WEBHOOK_SECRET=${PLATFORM_TELEGRAM_WEBHOOK_SECRET:-}
-      - DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD}@postgres:5432/vonzio
+      - "DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:?required — set in .env}@postgres:5432/vonzio"
       # Route through docker-socket-proxy (defined in docker-compose.yml).
       # Traefik below keeps a direct socket mount because label-based
       # service discovery isn't exposed by docker-socket-proxy; Traefik
