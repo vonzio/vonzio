@@ -357,6 +357,156 @@ export interface PluginSessionPresenceRegistry {
 }
 
 /**
+ * Subset of `SubmitTaskInput` plugins use when handing core a new
+ * task. Mirrors core's interface 1:1 but lives in plugin-api so
+ * plugins don't have to import from core-server. New optional fields
+ * can be added; required-field changes need an apiVersion bump.
+ */
+export interface PluginTaskInput {
+  mode?: "session" | "batch" | "pooled" | "single";
+  prompt: string;
+  profile_id?: string;
+  session_id?: string;
+  allowed_tools?: string[];
+  egress_domains?: string[];
+  max_turns?: number;
+  max_budget_usd?: number;
+  model?: string;
+  effort?: string;
+  timeout_seconds?: number;
+}
+
+/**
+ * Narrow facade over `TaskService.submit` for plugins that launch
+ * tasks from external triggers (e.g. a chat message arrives ->
+ * submit a session task). callerProfileIds gates which profiles the
+ * caller is allowed to submit against; plugins typically pass
+ * `[input.profile_id!]` since the trigger is bound to one profile.
+ */
+export interface PluginTaskSubmitter {
+  submit(
+    input: PluginTaskInput,
+    callerProfileIds: string[],
+  ): Promise<{ task_id: string; status: string; created_at: string }>;
+}
+
+/**
+ * Session lifecycle mutations the plugin needs for chat-initiated
+ * sessions (e.g. /new in Telegram creates a session before any
+ * dashboard tab has bound to it). Read-only ownership stays on
+ * `core.workspaces`; this surface is for create-and-mutate.
+ */
+export interface PluginSessionLifecycle {
+  /**
+   * Insert a new workspace row + in-memory entry. `persistent` true
+   * survives container teardown; `orgId` defaults to null on OSS.
+   */
+  register(
+    sessionId: string,
+    userId: string,
+    profileId: string,
+    opts?: { persistent?: boolean; orgId?: string | null },
+  ): Promise<{ session_id: string; user_id: string; profile_id: string }>;
+  /** Push expiry forward (ISO-8601 timestamp). */
+  extendExpiry(sessionId: string, expiresAtIso: string): Promise<void>;
+  /** Move the session between status states (e.g. "idle" -> "active"). */
+  setStatus(sessionId: string, status: "active" | "resumable" | "idle" | "expired"): Promise<void>;
+  /** Set of session_ids the dashboard currently has WS-connected. */
+  getConnectedSessionIds(): Set<string>;
+}
+
+/**
+ * Narrow orchestrator surface plugins call directly. Today this is
+ * just wakeWorkspaceContainer (the "boot a container for this session
+ * before submitting a task to it" call). More methods land here only
+ * with clear plugin need + a justification block on the field.
+ *
+ * `ResolvedProfile` is imported from @vonzio/shared rather than
+ * mirrored structurally -- the type is wide (env, tools, claude_md,
+ * setup_commands, persistent_sessions, ...) and the orchestrator
+ * reads more of it as features land. Mirroring would silently drift.
+ */
+export interface PluginOrchestrator {
+  wakeWorkspaceContainer(
+    sessionId: string,
+    profile: import("@vonzio/shared").ResolvedProfile,
+  ): Promise<string | null>;
+}
+
+/**
+ * Append-only session event log used by the dashboard's replay view.
+ * Plugins that bridge an external surface to a session (telegram /new
+ * inbound, slack reply) append user_message events so the dashboard
+ * timeline shows them. Read is used by webhook callback handlers
+ * that need to replay context.
+ */
+export interface PluginEventLog {
+  append(sessionId: string, type: string, data: Record<string, unknown>): void;
+  read(
+    sessionId: string,
+    afterSeq?: number,
+  ): Array<{ seq: number; type: string; data: Record<string, unknown>; ts: number }>;
+}
+
+/**
+ * Dashboard WS push. Plugins call this to broadcast an event to the
+ * dashboard tab(s) watching a session (e.g. "an external chat reply
+ * just landed -- here it is in real time"). Same channel core uses
+ * for orchestrator events.
+ */
+export interface PluginConnectionManager {
+  sendToSession(sessionId: string, message: Record<string, unknown>): void;
+}
+
+/**
+ * Image rewriter for inline `![alt](url)` markdown in agent output.
+ * Chat surfaces that don't render inline images (Telegram) need to
+ * strip the references and queue the URLs for a separate sendPhoto
+ * call. forSession signs the URLs so chat backends fetching them
+ * can authenticate against the preview gateway.
+ */
+export interface PluginImageRewriter {
+  forSession(
+    sessionId: string,
+    text: string,
+  ): Promise<{
+    textWithUrls: string;
+    textWithoutImages: string;
+    images: Array<{ url: string; alt: string; originalUrl: string }>;
+  } | null>;
+}
+
+/**
+ * Model picker for chat-side "switch model" interactions. Returns the
+ * available list + the profile's current default so the picker can
+ * mark a "current" pin without a second profile fetch.
+ */
+export interface PluginModelList {
+  listForProfile(profileId: string): Promise<
+    | {
+        ok: true;
+        models: Array<{ id: string; display_name: string | null; provider: "anthropic" | "ollama" }>;
+        profileDefault: string | null;
+      }
+    | { ok: false; status: number; error: string }
+  >;
+}
+
+/**
+ * Extended profile lookup. The existing `PluginProfileLookup` only
+ * does `list(userId)`; chat surfaces also need to resolve a single
+ * profile's full ResolvedProfile (model defaults, allowed tools,
+ * setup commands, etc.) to hand to `core.orchestrator.wakeWorkspaceContainer`.
+ *
+ * Kept on a separate field rather than widening PluginProfileLookup
+ * so plugins that need only `.list()` aren't forced to depend on the
+ * full ResolvedProfile type tree.
+ */
+export interface PluginProfileResolver {
+  getResolved(profileId: string): Promise<import("@vonzio/shared").ResolvedProfile | null>;
+}
+
+/**
  * Core services exposed to plugins. Add fields here only with strong
  * justification -- the surface is a stability commitment.
  */
@@ -428,6 +578,63 @@ export interface PluginCore {
    * actual DB read.
    */
   sessionPresence: PluginSessionPresenceRegistry;
+
+  /**
+   * Submit new tasks from a plugin (e.g. a chat surface received a
+   * user message; submit a session task with the prompt). Same gate
+   * as the dashboard's submit route: caller must have access to the
+   * profile via callerProfileIds.
+   */
+  tasks: PluginTaskSubmitter;
+
+  /**
+   * Mutate session state. Used by chat surfaces that initiate
+   * sessions from outside the dashboard (e.g. Telegram /new).
+   */
+  sessionLifecycle: PluginSessionLifecycle;
+
+  /**
+   * Orchestrator surface: wake a workspace container for a session
+   * before submitting a task. Plugins call this from their session-
+   * resume codepath after pairing a chat message with an existing
+   * workspace.
+   */
+  orchestrator: PluginOrchestrator;
+
+  /**
+   * Append-only event log. Plugins write user_message events when
+   * relaying inbound chat messages so they show up in the dashboard
+   * timeline; read is used by webhook handlers that need session
+   * context.
+   */
+  eventLog: PluginEventLog;
+
+  /**
+   * Dashboard WS push surface. Plugins use it to broadcast events
+   * sourced from the external chat into the dashboard view of the
+   * session.
+   */
+  connectionManager: PluginConnectionManager;
+
+  /**
+   * Image rewriter for chat surfaces that don't render inline
+   * markdown images. Returns the stripped text + a signed-URL list
+   * the plugin can hand to the chat API's sendPhoto-equivalent.
+   */
+  imageRewriter: PluginImageRewriter;
+
+  /**
+   * Model list lookup for chat-side model pickers.
+   */
+  modelList: PluginModelList;
+
+  /**
+   * Resolved profile lookup (full ResolvedProfile shape). Required
+   * before calling `orchestrator.wakeWorkspaceContainer`. Separate
+   * from `profiles.list` to keep plugins that need only listing from
+   * pulling in the wider type tree.
+   */
+  profileResolver: PluginProfileResolver;
 }
 
 /** Minimal logger contract. Backed by core's pino logger at runtime. */
