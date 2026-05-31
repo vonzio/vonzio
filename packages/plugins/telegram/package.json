@@ -1,15 +1,15 @@
 {
-  "name": "@vonzio/plugin-api",
+  "name": "@vonzio/plugin-telegram",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Plugin contract for vonzio. Defines the types + helpers a plugin author implements; defines what core-server's loader and bus implement. Stable surface: breaking changes require a major bump.",
+  "description": "Telegram integration for vonzio. POC for the plugin extraction arc -- the real telegram code is being moved here piecewise from packages/core-server and packages/dashboard.",
   "license": "AGPL-3.0-or-later",
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/vonzio/vonzio.git",
-    "directory": "packages/plugin-api"
+    "directory": "packages/plugins/telegram"
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -19,8 +19,8 @@
       "import": "./src/index.ts"
     },
     "./frontend": {
-      "types": "./src/frontend.ts",
-      "import": "./src/frontend.ts"
+      "types": "./src/frontend.tsx",
+      "import": "./src/frontend.tsx"
     }
   },
   "scripts": {
@@ -28,10 +28,14 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "@vonzio/dashboard": "*",
+    "@vonzio/plugin-api": "*",
+    "zod": "^3.24.4"
+  },
   "peerDependencies": {
     "fastify": "^5.0.0",
-    "react": "^19.0.0",
-    "zod": "^3.0.0 || ^4.0.0"
+    "react": "^19.0.0"
   },
   "peerDependenciesMeta": {
     "react": { "optional": true }

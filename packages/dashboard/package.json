@@ -24,6 +24,7 @@
     "./hooks/useHashTab": "./src/hooks/useHashTab.ts",
     "./hooks/useApi": "./src/hooks/useApi.ts",
     "./registry": "./src/registry/index.ts",
+    "./registry/api": "./src/registry/api.ts",
     "./components/McpServerEditor": "./src/components/McpServerEditor.tsx",
     "./components/ToolPillSelect": "./src/components/ToolPillSelect.tsx",
     "./components/ProfileModelSelect": "./src/components/ProfileModelSelect.tsx",
@@ -37,6 +38,7 @@
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
+    "@vonzio/plugin-telegram": "*",
     "better-auth": "^1.6.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

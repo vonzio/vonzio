@@ -9,7 +9,6 @@
 // a migration guide.
 
 import type { FastifyInstance } from "fastify";
-import type { z } from "zod";
 
 /**
  * Current plugin-api version. Plugins encode the version they were
@@ -39,12 +38,23 @@ export interface VonzioPlugin<TConfig = unknown> {
   apiVersion: string;
 
   /**
-   * Zod schema for the plugin's env-derived config. The loader parses
-   * `process.env` against this and rejects malformed values with a
+   * Zod schema for the plugin's env-derived config. The loader calls
+   * `.parse(process.env)` on it and rejects malformed values with a
    * useful error. Plugins should namespace their env vars
    * (`SLACK_CLIENT_ID`, `TELLER_API_KEY`, etc.) to avoid collisions.
+   *
+   * Typed as `ConfigSchemaLike` (a structural shape with just
+   * `.parse()`) rather than `z.ZodType<TConfig>` for two reasons:
+   *  1. The workspace can have zod v3 and v4 simultaneously (different
+   *     deps pin different majors); using zod's strong types here
+   *     would force every plugin's schema to be the same major
+   *     instance as plugin-api's.
+   *  2. ZodObject is technically a ZodType subtype, but TS variance
+   *     rules reject ZodObject<T> as a ZodType<T> in many cases.
+   * The plugin's TConfig flows from `.parse()`'s return value at the
+   * use site, so typing stays useful where it matters.
    */
-  configSchema: z.ZodType<TConfig>;
+  configSchema: ConfigSchemaLike<TConfig>;
 
   /**
    * SQL migrations owned by this plugin. The core migration runner
@@ -274,3 +284,14 @@ export interface Scheduler {
 }
 
 export { assertApiCompatible } from "./version.js";
+
+/**
+ * Structural shape the loader needs from a plugin's `configSchema`.
+ * Both zod v3 and v4 satisfy this naturally -- they both expose a
+ * `parse(input): T` method. Plugins typically use `z.object({...})`
+ * which yields a `ZodObject` whose `.parse()` returns the inferred
+ * shape; the inference flows into TConfig.
+ */
+export interface ConfigSchemaLike<TConfig> {
+  parse(input: unknown): TConfig;
+}

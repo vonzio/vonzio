@@ -96,6 +96,9 @@ services:
       # above). DOCKER_HOST takes precedence over DOCKER_SOCKET in
       # core-server's config resolver.
       - DOCKER_HOST=tcp://docker-proxy:2375
+      # Plugin loader: comma-separated list of plugin packages to mount
+      # at boot. See packages/core-server/src/plugins/loader.ts.
+      - VONZIO_PLUGINS=${VONZIO_PLUGINS:-@vonzio/plugin-telegram}
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
       - DOCKER_NETWORK=vonzio-network

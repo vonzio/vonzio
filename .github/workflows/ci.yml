@@ -26,6 +26,7 @@ jobs:
       - run: npm install
       - run: npx tsc --project packages/shared/tsconfig.json --noEmit
       - run: npx tsc --project packages/plugin-api/tsconfig.json --noEmit
+      - run: npx tsc --project packages/plugins/telegram/tsconfig.json --noEmit
       - run: npx tsc --project packages/core-server/tsconfig.json --noEmit
       - run: npx tsc --project packages/dashboard/tsconfig.json --noEmit
 
