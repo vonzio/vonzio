@@ -126,6 +126,8 @@ export interface IntegrationServiceLike {
   listByType(type: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow[]>;
   listByUserAndType(userId: string, type: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow[]>;
   findByTypeAndExternalId(type: string, externalId: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow | null>;
+  listByTypeAndExternalId(type: string, externalId: string, opts?: { decrypt?: boolean }): Promise<IntegrationRow[]>;
+  backfillExternalId(id: string): Promise<void>;
   // Signature mirrors core's IntegrationService.create (positional
   // userId/type/config + optional scopeInput).
   create(userId: string, type: string, config: Record<string, unknown>, scopeInput?: unknown): Promise<IntegrationRow>;
@@ -142,6 +144,10 @@ export interface ProfileServiceLike {
   // accept a partial implementation (e.g. test mocks that don't need
   // the heavier resolution path).
   getResolved(profileId: string): Promise<import("@vonzio/shared").ResolvedProfile | null>;
+  // Pass the full Profile type from @vonzio/shared through. Mirroring
+  // it structurally here would silently drift as fields are added
+  // (the Profile shape is wide -- mcp_servers, agent_ids, etc.).
+  get(profileId: string): Promise<import("@vonzio/shared").Profile | null>;
 }
 
 /**
@@ -240,6 +246,32 @@ export interface WorkspaceServiceLike {
     user_id: string;
     profile_id?: string | null;
   } | null;
+  list(filters: {
+    userId?: string;
+    orgId?: string;
+    status?: "active" | "resumable" | "idle" | "expired";
+    includeArchived?: boolean;
+    starredOnly?: boolean;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    workspaces: Array<import("@vonzio/shared").Workspace>;
+    total: number;
+  }>;
+  update(
+    sessionId: string,
+    fields: {
+      name?: string;
+      starred?: boolean;
+      pinned?: boolean;
+      archived?: boolean;
+      tags?: string[];
+      public_preview?: boolean;
+      model_override?: string | null;
+      last_run_model?: string | null;
+    },
+    opts?: { orgId?: string },
+  ): Promise<import("@vonzio/shared").Workspace | null>;
 }
 
 export interface TelegramPlatformBotLike {
@@ -407,6 +439,8 @@ export function buildPluginContext<TConfig>(args: {
       listByType: (type, o) => opts.integrationService.listByType(type, o),
       listByUserAndType: (userId, type, o) => opts.integrationService.listByUserAndType(userId, type, o),
       findByTypeAndExternalId: (type, ext, o) => opts.integrationService.findByTypeAndExternalId(type, ext, o),
+      listByTypeAndExternalId: (type, ext, o) => opts.integrationService.listByTypeAndExternalId(type, ext, o),
+      backfillExternalId: (id) => opts.integrationService.backfillExternalId(id),
       create: (userId, type, config, scopeInput) => opts.integrationService.create(userId, type, config, scopeInput),
       update: (id, input) => opts.integrationService.update(id, input),
       // IntegrationService.delete returns boolean (did-it-exist); the
@@ -415,9 +449,13 @@ export function buildPluginContext<TConfig>(args: {
     },
     profiles: {
       list: (userId) => opts.profileService.list(userId),
+      get: (profileId) => opts.profileService.get(profileId),
     },
     workspaces: {
       get: (sessionId) => opts.workspaceService.get(sessionId),
+      list: (filters) => opts.workspaceService.list(filters),
+      update: (sessionId, fields, updateOpts) =>
+        opts.workspaceService.update(sessionId, fields, updateOpts),
     },
     telegramPlatformBot: opts.telegramPlatformBot,
     authHook: opts.authHook,
