@@ -3,24 +3,18 @@
 // ask "is this session bound to a telegram chat?" without reading
 // the telegram tables directly.
 //
-// Until the telegram schema move (Phase 3D.1c) the reads still target
-// core-owned tables -- `telegram_sessions`, `telegram_playbook_threads`,
-// and `user_integrations`. Raw SQL is used so the plugin doesn't have
-// to duplicate core's pgTable definitions for tables that are about
-// to move anyway; once they relocate, this file switches to typed
-// drizzle queries against plugin-owned schema (same pattern as
-// notify-handler.ts).
+// Reads now go through the plugin-owned drizzle schema (db/schema.ts)
+// instead of raw SQL -- the queries are typed end-to-end and
+// refactors to the schema are caught at compile time.
 
-import { sql } from "drizzle-orm";
+import { eq, isNotNull } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type {
   PluginContext,
   SessionPresenceProvider,
 } from "@vonzio/plugin-api";
 import type { TelegramConfig } from "./types.js";
-
-interface DbHandle {
-  execute(query: ReturnType<typeof sql>): Promise<{ rows: Array<Record<string, unknown>> }>;
-}
+import { telegramSessions, telegramPlaybookThreads } from "./db/schema.js";
 
 /**
  * Build the provider bound to the plugin context. Returned for the
@@ -31,7 +25,10 @@ interface DbHandle {
  * surface verbatim so prompt-text diffs from this refactor are zero.
  */
 export function buildTelegramPresenceProvider(ctx: PluginContext): SessionPresenceProvider {
-  const db = ctx.core.db as DbHandle;
+  // PluginCore.db is typed `unknown` (the contract intentionally
+  // doesn't lock plugins to a specific drizzle dialect). Plugins
+  // cast to the dialect they actually use; we're on node-postgres.
+  const db = ctx.core.db as NodePgDatabase<Record<string, never>>;
 
   return {
     surface: "telegram",
@@ -41,12 +38,13 @@ export function buildTelegramPresenceProvider(ctx: PluginContext): SessionPresen
     },
 
     async hasSession(sessionId) {
-      // One indexed lookup on telegram_sessions.session_id (covered by
-      // telegram_sessions_chat_idx). Returns presence, not the row.
-      const result = await db.execute(sql`
-        SELECT 1 FROM telegram_sessions WHERE session_id = ${sessionId} LIMIT 1
-      `);
-      return result.rows.length > 0;
+      // Indexed lookup on telegram_sessions.session_id (the PK).
+      const rows = await db
+        .select({ id: telegramSessions.session_id })
+        .from(telegramSessions)
+        .where(eq(telegramSessions.session_id, sessionId))
+        .limit(1);
+      return rows.length > 0;
     },
 
     async hasOwnerSurface(userId) {
@@ -73,14 +71,12 @@ export function buildTelegramPresenceProvider(ctx: PluginContext): SessionPresen
       // thread (feature #18) -- claimed_at IS NOT NULL. Without these
       // staying visible, the workspace list's pb-* filter would hide
       // ongoing telegram-bound playbook conversations.
-      const result = await db.execute(sql`
-        SELECT session_id FROM telegram_playbook_threads WHERE claimed_at IS NOT NULL
-      `);
+      const rows = await db
+        .select({ session_id: telegramPlaybookThreads.session_id })
+        .from(telegramPlaybookThreads)
+        .where(isNotNull(telegramPlaybookThreads.claimed_at));
       const ids = new Set<string>();
-      for (const row of result.rows) {
-        const sid = row.session_id;
-        if (typeof sid === "string") ids.add(sid);
-      }
+      for (const row of rows) ids.add(row.session_id);
       return ids;
     },
 
@@ -89,13 +85,12 @@ export function buildTelegramPresenceProvider(ctx: PluginContext): SessionPresen
       // workspace for this session yet -- e.g. a /new from telegram
       // wrote a telegram_sessions row but the workspace registration
       // is still in flight.
-      const result = await db.execute(sql`
-        SELECT user_id FROM telegram_sessions WHERE session_id = ${sessionId} LIMIT 1
-      `);
-      const row = result.rows[0];
-      if (!row) return null;
-      const userId = row.user_id;
-      return typeof userId === "string" ? userId : null;
+      const rows = await db
+        .select({ user_id: telegramSessions.user_id })
+        .from(telegramSessions)
+        .where(eq(telegramSessions.session_id, sessionId))
+        .limit(1);
+      return rows[0]?.user_id ?? null;
     },
   };
 }

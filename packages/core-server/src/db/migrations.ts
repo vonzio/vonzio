@@ -479,6 +479,11 @@ const migrations: Migration[] = [
   },
   {
     version: 14,
+    // TODO(3D.1d): delete this migration once telegram-events.ts moves
+    // to the plugin. The plugin owns the schema as of 3D.1c and ships
+    // an idempotent CREATE TABLE IF NOT EXISTS migration; this one is
+    // kept transitionally because telegram-events.ts still references
+    // the core-side schema.ts pgTable definitions.
     description: "Add telegram_active_sessions and telegram_sessions tables for Telegram bot integration",
     up: async (handle) => {
       await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS telegram_active_sessions (
@@ -553,6 +558,8 @@ const migrations: Migration[] = [
   },
   {
     version: 19,
+    // TODO(3D.1d): delete this migration once telegram-events.ts moves
+    // to the plugin. See note on v14.
     description: "Add telegram_playbook_threads table for thread-claim routing (feature #18) — links a Telegram message_id to the playbook session that sent it",
     up: async (handle) => {
       await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS telegram_playbook_threads (
