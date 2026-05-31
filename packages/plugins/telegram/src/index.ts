@@ -26,6 +26,7 @@
 
 import { z } from "zod";
 import type { VonzioPlugin } from "@vonzio/plugin-api";
+import { buildTelegramNotifyHandler } from "./notify-handler.js";
 
 const configSchema = z.object({
   // Shared platform bot (matches the existing core env vars so the
@@ -57,17 +58,13 @@ const plugin: VonzioPlugin<TelegramConfig> = {
       hasPlatformBot: Boolean(ctx.config.PLATFORM_TELEGRAM_BOT_TOKEN),
     }));
 
-    // No-op notification handler -- prevents notify({ kind: "telegram" })
-    // calls from returning the bus's synthetic "no handler" error while
-    // the real implementation is being moved in piecewise. Replaced with
-    // the actual telegramService.sendMessage call in the next PR.
-    ctx.notificationBus.registerHandler("telegram", async (req) => {
-      ctx.log.warn(
-        { recipient: req.recipient, textPreview: req.text.slice(0, 40) },
-        "telegram notification stub -- extraction in progress, message dropped",
-      );
-      return { ok: true };
-    });
+    // Real notification handler -- resolves the integration via
+    // ctx.core.integrations.get(), formats markdown to MarkdownV2,
+    // chunks to <=4000 chars, sends through the Bot API with
+    // plain-text fallback, optionally writes a telegram_playbook_threads
+    // row for thread-claim. Moved from core-server's notification-service
+    // as part of the 3C inversion arc.
+    ctx.notificationBus.registerHandler("telegram", buildTelegramNotifyHandler(ctx));
   },
 };
 

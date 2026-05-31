@@ -5,15 +5,14 @@ import { nanoid } from "nanoid";
 import { Resend } from "resend";
 import type { SlackService } from "./slack-service.js";
 import type { TelegramService } from "./telegram-service.js";
-import { markdownToTelegram, splitTelegramMessage } from "./telegram-service.js";
-import type { IntegrationService, SlackConfig, TelegramConfig } from "./integration-service.js";
+import type { IntegrationService, SlackConfig } from "./integration-service.js";
+import type { NotificationBusImpl } from "../plugins/notification-bus.js";
 import type { DrizzleDB } from "../db/index.js";
 import * as schema from "../db/schema.js";
 import { emailLayout } from "../email/templates.js";
 import { toHtml, toPlainText, toSlackMrkdwn } from "./format-message.js";
 import type { Logger } from "../orchestrator/orchestrator.js";
 import type { Playbook, PlaybookRun } from "@vonzio/shared";
-import { encodeThreadClaim, encodeThreadDismiss } from "@vonzio/shared";
 import type { NotificationChannel } from "@vonzio/shared";
 
 const noopLogger: Logger = {
@@ -85,8 +84,22 @@ export function formatPlaybookNotification(
 
 export interface NotificationServiceDeps {
   slackService: SlackService;
+  /**
+   * Retained on deps for now -- some non-notification paths in this
+   * service still construct Telegram messages directly. The notify
+   * dispatch path (send() / notifyPlaybookRun()) goes through
+   * notificationBus.dispatch({ kind: "telegram", ... }) which routes
+   * to @vonzio/plugin-telegram's handler.
+   */
   telegramService: TelegramService;
   integrationService: IntegrationService;
+  /**
+   * The plugin notification bus. send() dispatches outbound telegram
+   * (and, in subsequent PRs, slack/gmail/etc.) traffic through here;
+   * the plugin handler resolves req.recipient -> integration row ->
+   * actual send.
+   */
+  notificationBus: NotificationBusImpl;
   db: DrizzleDB;
   dashboardUrl: string;
   log?: Logger;
@@ -129,14 +142,21 @@ export class NotificationService {
     // attach thread-claim buttons to a specific bot's message.
     if (opts.channel && opts.channel.startsWith("telegram:")) {
       const integrationId = opts.channel.slice("telegram:".length);
-      try {
-        await this.sendToTelegramIntegration(userId, integrationId, message, opts.threadClaim);
+      const result = await this.deps.notificationBus.dispatch({
+        kind: "telegram",
+        recipient: integrationId,
+        text: message,
+        metadata: {
+          userId,
+          threadClaim: opts.threadClaim,
+        },
+      });
+      if (result.ok) {
         await this.logNotification({ userId, channel: "telegram", message, urgency, source, taskId, status: "sent" });
         return { success: true, channel: opts.channel };
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        await this.logNotification({ userId, channel: "telegram", message, urgency, source, taskId, status: "failed", error: errorMsg });
-        return { success: false, channel: opts.channel, error: errorMsg };
+      } else {
+        await this.logNotification({ userId, channel: "telegram", message, urgency, source, taskId, status: "failed", error: result.error });
+        return { success: false, channel: opts.channel, error: result.error };
       }
     }
 
@@ -171,10 +191,20 @@ export class NotificationService {
           await this.sendViaWebhook(integration, message, urgency);
           result = { success: true, channel: "webhook" };
           break;
-        case "telegram":
-          await this.sendViaTelegram(integration, message);
-          result = { success: true, channel: "telegram" };
+        case "telegram": {
+          const tgResult = await this.deps.notificationBus.dispatch({
+            kind: "telegram",
+            recipient: integration.id,
+            text: message,
+            metadata: { userId },
+          });
+          if (tgResult.ok) {
+            result = { success: true, channel: "telegram" };
+          } else {
+            result = { success: false, channel: "telegram", error: tgResult.error };
+          }
           break;
+        }
         default:
           result = { success: false, channel: integration.type, error: `Unsupported channel: ${integration.type}` };
       }
@@ -223,20 +253,6 @@ export class NotificationService {
     );
   }
 
-  private async sendToTelegramIntegration(
-    userId: string,
-    integrationId: string,
-    message: string,
-    threadClaim?: { sessionId: string; label?: string },
-  ): Promise<void> {
-    const integration = await this.deps.integrationService.get(integrationId, { decrypt: true });
-    if (!integration) throw new Error(`Telegram integration ${integrationId} not found`);
-    if (integration.user_id !== userId) throw new Error(`Telegram integration ${integrationId} does not belong to user`);
-    if (integration.type !== "telegram") throw new Error(`Integration ${integrationId} is not telegram`);
-
-    await this.sendViaTelegram(integration, message, threadClaim);
-  }
-
   private async sendViaSlack(
     integration: { config: Record<string, unknown> },
     message: string,
@@ -259,85 +275,6 @@ export class NotificationService {
       channel: dmChannel,
       text: toSlackMrkdwn(message),
     });
-  }
-
-  private async sendViaTelegram(
-    integration: { config: Record<string, unknown> },
-    message: string,
-    threadClaim?: { sessionId: string; label?: string },
-  ): Promise<void> {
-    const config = integration.config as unknown as TelegramConfig;
-    if (!config.owner_tg_user_id) {
-      throw new Error("Telegram bot not linked yet. Send /link <code> in Telegram first.");
-    }
-    const formatted = markdownToTelegram(message);
-    const chunks = splitTelegramMessage(formatted, 4000);
-    // Attach the thread-claim keyboard to the LAST chunk only — earlier
-    // chunks are just continuation of the same logical message; we want
-    // one set of buttons at the bottom of the visible message.
-    const lastIdx = chunks.length - 1;
-    let lastSentMessageId: number | null = null;
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const isLast = i === lastIdx;
-      const replyMarkup = (isLast && threadClaim) ? {
-        inline_keyboard: [[
-          { text: "📎 Reply here", callback_data: encodeThreadClaim(threadClaim.sessionId) },
-          { text: "💬 Keep my chat", callback_data: encodeThreadDismiss(threadClaim.sessionId) },
-        ]],
-      } : undefined;
-      try {
-        const sent = await this.deps.telegramService.sendMessage(config.bot_token, {
-          chat_id: config.owner_tg_user_id,
-          text: chunk,
-          parse_mode: "MarkdownV2",
-          disable_web_page_preview: true,
-          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-        });
-        if (isLast) lastSentMessageId = sent.message_id;
-      } catch (mvErr) {
-        // Strip MarkdownV2 escapes and retry as plain text. Surface fallback errors.
-        try {
-          const sent = await this.deps.telegramService.sendMessage(config.bot_token, {
-            chat_id: config.owner_tg_user_id,
-            text: chunk.replace(/\\([_*[\]()~`>#+\-=|{}.!\\])/g, "$1"),
-            ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-          });
-          if (isLast) lastSentMessageId = sent.message_id;
-        } catch (plainErr) {
-          this.log.warn({ mvErr, plainErr }, "Telegram send failed (both MarkdownV2 and plain text)");
-          throw plainErr;
-        }
-      }
-    }
-    // Persist the thread-claim row tied to the last chunk's message_id
-    // so the callback_query handler (and the default-claim path in
-    // telegram-events) can resolve which session this message belongs to.
-    if (threadClaim && lastSentMessageId !== null) {
-      if (!config.bot_user_id) {
-        // Required for the PK lookup in telegram-events. Skip the row
-        // rather than writing empty-string keys that won't match
-        // anything downstream.
-        this.log.warn({ sessionId: threadClaim.sessionId }, "Skipping telegram_playbook_threads insert — bot_user_id missing in config");
-      } else {
-        try {
-          await this.deps.db.insert(schema.telegramPlaybookThreads).values({
-            bot_user_id: config.bot_user_id,
-            chat_id: String(config.owner_tg_user_id),
-            message_id: String(lastSentMessageId),
-            session_id: threadClaim.sessionId,
-            label: threadClaim.label,
-            sent_at: new Date().toISOString(),
-          });
-        } catch (err) {
-          // Insert failure isn't worth failing the whole notification —
-          // the message went out; the thread-claim row just won't exist,
-          // and replies fall back to existing telegram_active_sessions
-          // routing (same behavior as before this feature).
-          this.log.warn({ err, sessionId: threadClaim.sessionId }, "Failed to persist telegram_playbook_threads row");
-        }
-      }
-    }
   }
 
   private async sendViaEmail(

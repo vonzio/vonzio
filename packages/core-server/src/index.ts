@@ -7,10 +7,6 @@ import { DockerManager } from "./container/docker-manager.js";
 import { NoopContainerManager } from "./container/noop-manager.js";
 import { buildServer } from "./server.js";
 import type { ContainerManager } from "@vonzio/shared";
-import { NotificationBusImpl } from "./plugins/notification-bus.js";
-import { McpRegistryImpl } from "./plugins/mcp-registry.js";
-import { SchedulerImpl } from "./plugins/scheduler.js";
-import { loadPluginsFromEnv, teardownPlugins, type LoadedPlugin } from "./plugins/loader.js";
 
 // Picks dockerode connection params. DOCKER_HOST (Docker-CLI-compatible URL)
 // wins when set — that's the path used by the bundled compose stack to route
@@ -71,25 +67,12 @@ async function main() {
     console.log("Docker disabled — running in API-only mode (no task execution)");
   }
 
-  const server = await buildServer({ config, db, pool: handle.pool, containerManager });
-
-  // Plugin loader. Slots in AFTER core routes are registered (so the
-  // routing table reads core > plugins in PR-merge order) and BEFORE
-  // listen() (so we don't accept traffic for plugin routes that haven't
-  // initialized yet). Sandboxed: a failed plugin is logged and skipped;
-  // core proceeds with whichever plugins did load.
-  const notificationBus = new NotificationBusImpl();
-  const mcpRegistry = new McpRegistryImpl();
-  const scheduler = new SchedulerImpl();
-  const loadedPlugins: LoadedPlugin[] = await loadPluginsFromEnv({
-    envList: config.VONZIO_PLUGINS,
-    server,
-    handle,
-    config,
-    notificationBus,
-    mcpRegistry,
-    scheduler,
-  });
+  // Plugin lifecycle (bus, registry, scheduler, loader, teardown) all
+  // live inside buildServer now -- buildServer needs access to
+  // integrationService and the notification bus to wire NotificationService,
+  // and the teardown is registered via server.addHook("onClose") so we
+  // don't have to thread the LoadedPlugin[] back here.
+  const server = await buildServer({ config, db, pool: handle.pool, handle, containerManager });
 
   try {
     await server.listen({ port: config.PORT, host: config.HOST });
@@ -103,13 +86,7 @@ async function main() {
     if (stopping) return;
     stopping = true;
     server.log.info("Shutting down...");
-    // Plugins first so their teardown can flush state before the DB
-    // closes. scheduler.stopAll() cancels any registered intervals
-    // regardless of whether plugins remembered to clear them in their
-    // own teardown -- belt-and-suspenders for badly-behaved plugins.
-    await teardownPlugins(loadedPlugins, server.log);
-    scheduler.stopAll();
-    await server.close();
+    await server.close(); // fires onClose hooks: plugin teardown + scheduler.stopAll
     await closeDb();
     process.exit(0);
   };
