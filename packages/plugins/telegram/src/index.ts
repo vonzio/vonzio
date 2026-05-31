@@ -1,31 +1,32 @@
-// @vonzio/plugin-telegram — backend half.
+// @vonzio/plugin-telegram -- backend half.
 //
-// What this plugin does at this point in the 3C arc:
+// As of Phase 3D.1d.1 the plugin owns the full Telegram surface:
 //  - declares its env-config namespace (PLATFORM_TELEGRAM_*) plus
-//    BETTER_AUTH_URL (read out of process.env, not validated -- core
-//    already validated it and rejects on invalid)
-//  - registers a notification handler for kind "telegram" that
-//    resolves the recipient -> integration row -> Bot API send
+//    BETTER_AUTH_URL (read out of process.env; core has already
+//    validated it on boot)
+//  - registers the notification handler for kind "telegram" (kind ->
+//    recipient -> integration row -> Bot API send)
 //  - registers the /v1/integrations/telegram/* setup routes
-//    (route paths preserved verbatim via routePrefix: { kind:
-//    "absolute" } so the dashboard's API client + bookmarks don't
-//    break -- this validates the legacy-URL escape hatch on the
-//    plugin contract)
-//  - runs resyncTelegramBotCommands once at boot to refresh every
-//    paired bot's /setMyCommands menu
+//    (config, bots, status, paircode, /connect, /connect-platform, ...)
+//  - registers the /api/telegram/webhook/:botId webhook + the
+//    orchestrator -> Telegram outbound relay (5 task:* subscriptions)
+//  - constructs PlatformBotService locally and wires its init at boot
+//  - owns the telegram_*_sessions + telegram_playbook_threads schema
+//    + a single idempotent migration
 //
-// Still to land in 3C follow-ups:
-//  - telegram-events.ts (webhook + relay) -- biggest remaining piece
-//  - db schema + migrations (telegram_*_sessions, telegram_playbook_threads)
-//  - orchestrator hook (replace orchestrator's direct DB read of
-//    telegramSessions with a SessionEvents subscription)
-//  - dashboard Telegram UI (settings card actual content)
+// The plugin no longer requires PluginCore.telegramPlatformBot --
+// PlatformBotService is plugin-internal now. Core's
+// db/schema.ts telegram mirrors + v14/v19 migrations are also gone
+// after this PR.
 
 import { z } from "zod";
-import type { VonzioPlugin, PluginTelegramPlatformBot } from "@vonzio/plugin-api";
+import type { VonzioPlugin } from "@vonzio/plugin-api";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { TelegramService } from "./services/telegram-service.js";
+import { PlatformBotService } from "./services/platform-bot-service.js";
 import { buildTelegramNotifyHandler } from "./notify-handler.js";
 import { telegramSetupRoutes, resyncTelegramBotCommands } from "./routes/setup.js";
+import { telegramEventsRoutes } from "./routes/events.js";
 import { buildTelegramPresenceProvider } from "./presence-provider.js";
 import { telegramMigrations } from "./db/migrations.js";
 
@@ -41,28 +42,10 @@ const configSchema = z.object({
 
 type TelegramPluginConfig = z.infer<typeof configSchema>;
 
-/**
- * When core didn't expose its PlatformBotService (rare -- typically
- * happens in test setups), supply a disabled stub so the setup
- * routes' platform-bot connect endpoint can return a clean 503
- * instead of crashing on .getMetadata().
- */
-const disabledPlatformBot: PluginTelegramPlatformBot = {
-  getMetadata: () => null,
-  getToken: () => null,
-  getWebhookSecret: () => null,
-  isConfigured: () => false,
-};
-
 const plugin: VonzioPlugin<TelegramPluginConfig> = {
   name: "telegram",
   apiVersion: "0.1.0",
   configSchema,
-  // Plugin owns the telegram_* schema. Core's mirrored definitions in
-  // packages/core-server/src/db/schema.ts + core's v14/v19 migrations
-  // remain until telegram-events.ts moves out of core in 3D.1d --
-  // after that they get deleted. This migration is idempotent so
-  // both creation paths coexist safely during the transition.
   migrations: telegramMigrations,
   routePrefix: { kind: "absolute", prefix: "/v1/integrations/telegram" },
 
@@ -73,7 +56,15 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
     );
 
     const telegramService = new TelegramService();
-    const platformBot = ctx.core.telegramPlatformBot ?? disabledPlatformBot;
+    // PlatformBotService is now plugin-local; construct + kick off
+    // init() (fire-and-forget -- failure logs and disables the
+    // feature without blocking boot).
+    const platformBotService = new PlatformBotService(
+      ctx.config,
+      telegramService,
+      ctx.log,
+    );
+    void platformBotService.init();
 
     // Health check -- proves the route wires alongside the legacy
     // setup routes. Same /v1/integrations/telegram prefix so it sits
@@ -83,20 +74,51 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
       plugin: "telegram",
       status: "ok",
       apiVersion: "0.1.0",
-      hasPlatformBot: platformBot.isConfigured(),
+      hasPlatformBot: platformBotService.isConfigured(),
     }));
 
-    // Register all the legacy /v1/integrations/telegram/* setup routes
-    // via the moved-here fastify-plugin. Same registration shape as
-    // when this was wired in core-server's buildServer.
+    // /v1/integrations/telegram/* setup routes (auth-gated via
+    // ctx.core.authHook inside the registration).
     await ctx.server.register(telegramSetupRoutes, {
       betterAuthUrl: ctx.config.BETTER_AUTH_URL,
       integrationService: ctx.core.integrations,
       telegramService,
       profileService: ctx.core.profiles,
       workspaceService: ctx.core.workspaces,
-      platformBotService: platformBot,
+      platformBotService,
       authHook: ctx.core.authHook,
+    });
+
+    // /api/telegram/webhook/:botId + the 5 orchestrator-event
+    // subscriptions. Path is absolute (set on Telegram's side via
+    // setWebhook) -- not under the plugin's auto-prefix. Auth is
+    // per-request (the x-telegram-bot-api-secret-token header
+    // constant-time compared to the per-bot secret), so no authHook.
+    //
+    // The profileService passed here intersects PluginProfileLookup
+    // (list, get) and PluginProfileResolver (getResolved) -- the
+    // events file uses both shapes. The sessionRegistry param is
+    // PluginSessionLifecycle (register / extendExpiry / setStatus /
+    // getConnectedSessionIds).
+    await ctx.server.register(telegramEventsRoutes, {
+      config: { BETTER_AUTH_URL: ctx.config.BETTER_AUTH_URL },
+      db: ctx.core.db as NodePgDatabase<Record<string, never>>,
+      integrationService: ctx.core.integrations,
+      telegramService,
+      taskService: ctx.core.tasks,
+      profileService: {
+        ...ctx.core.profiles,
+        ...ctx.core.profileResolver,
+      },
+      sessionRegistry: ctx.core.sessionLifecycle,
+      workspaceService: ctx.core.workspaces,
+      orchestrator: ctx.core.orchestrator,
+      eventLog: ctx.core.eventLog,
+      connectionManager: ctx.core.connectionManager,
+      imageRewriterService: ctx.core.imageRewriter,
+      platformBotService,
+      modelListService: ctx.core.modelList,
+      sessionEvents: ctx.sessionEvents,
     });
 
     // Real notification handler -- resolves req.recipient (integration
@@ -105,19 +127,16 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
     ctx.notificationBus.registerHandler("telegram", buildTelegramNotifyHandler(ctx));
 
     // Chat-surface presence provider. Replaces the three places where
-    // core used to read schema.telegram* directly (orchestrator
-    // resolvePresence, ask-user fallback hasInBandSurface +
-    // resolveUserId, workspace-service claimed-thread carve-out).
+    // core used to read schema.telegram* directly.
     ctx.core.sessionPresence.register(buildTelegramPresenceProvider(ctx));
 
     // Fire-and-forget command-menu resync. Telegram caches the slash-
     // command menu client-side, so any deploy that changes BOT_COMMANDS
-    // needs to push the new list to every paired bot once. Failure
-    // logs but doesn't block startup.
+    // needs to push the new list to every paired bot once.
     void resyncTelegramBotCommands({
       integrationService: ctx.core.integrations,
       telegramService,
-      platformBotToken: platformBot.getToken(),
+      platformBotToken: platformBotService.getToken(),
       log: ctx.log,
     });
   },
