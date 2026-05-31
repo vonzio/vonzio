@@ -419,9 +419,11 @@ else
   cp .env.example .env
   ENC_KEY="$(gen_secret)"
   AUTH_KEY="$(gen_secret)"
+  PG_PASS="$(openssl rand -hex 16)"
   sed_inplace "s|^ENCRYPTION_KEY=$|ENCRYPTION_KEY=${ENC_KEY}|" .env
   sed_inplace "s|^BETTER_AUTH_SECRET=$|BETTER_AUTH_SECRET=${AUTH_KEY}|" .env
-  ok ".env created (32-char random ENCRYPTION_KEY + BETTER_AUTH_SECRET)."
+  sed_inplace "s|^POSTGRES_PASSWORD=$|POSTGRES_PASSWORD=${PG_PASS}|" .env
+  ok ".env created (random ENCRYPTION_KEY + BETTER_AUTH_SECRET + POSTGRES_PASSWORD)."
   warn "Back up .env now — losing ENCRYPTION_KEY bricks your credential vault."
 fi
 
