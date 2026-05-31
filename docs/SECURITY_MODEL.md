@@ -77,10 +77,15 @@ what's documented here.
 - **Side-channel attacks** (Spectre, Meltdown, cache timing, etc.). Out
   of scope for shared-kernel containers in general; a hardware-isolation
   backend is the only mitigation.
-- **The Docker daemon's privilege boundary.** core-server has access to
-  the Docker socket. A core-server compromise implies Docker daemon
-  compromise, which implies host root. Reduce blast radius with
-  docker-socket-proxy (see HARDENING.md).
+- **The Docker daemon's privilege boundary** (residual). core-server
+  reaches the daemon through `docker-socket-proxy` with a narrow verb
+  allowlist (CONTAINERS, EXEC, IMAGES, VOLUMES, EVENTS, PING) — a
+  core-server RCE can no longer reconfigure the daemon, build privileged
+  images, manipulate networks, or read secrets. It *can* still create
+  and exec into containers, which on a default Docker install can be
+  used to escape to the host (e.g. via privileged flags or host-path
+  binds in the image spec). HARDENING.md documents the further mitigations
+  (gVisor runtime, stricter proxy categories, AppArmor/seccomp profiles).
 - **A compromised host.** vonzio assumes the host running it is trusted
   and patched. We do not defend against an attacker with root on the
   host.
@@ -98,7 +103,7 @@ what's documented here.
 │  │  core-server          │ exec   │  Agent container      │         │
 │  │  (TRUSTED)            │───────▶│  (SEMI-TRUSTED)       │         │
 │  │                       │        │                       │         │
-│  │  - has Docker socket  │        │  - shares host kernel │         │
+│  │  - Docker via proxy   │        │  - shares host kernel │         │
 │  │  - has DB credentials │        │  - has bind-mounted   │         │
 │  │  - has all OAuth      │        │    workspace dir      │         │
 │  │    tokens (decrypted  │        │  - has API key for    │         │
@@ -116,7 +121,8 @@ what's documented here.
   Docker daemon all live here. Anyone with root on the host can read
   everything.
 - **core-server** is fully trusted. It holds the master encryption key,
-  the Docker socket, and the database credentials. A core-server RCE
+  a narrow-allowlisted Docker API client (via docker-socket-proxy),
+  and the database credentials. A core-server RCE
   is total compromise.
 - **Agent containers** are semi-trusted. They have the credentials they
   need for their own session (one LLM API key, the workspace dir), but
@@ -138,8 +144,14 @@ roadmap tracks fixes.
   with no path to root inside the container. Deployers who need
   runtime package installs should bake them into a custom agent image
   (see [HARDENING.md](./HARDENING.md)).
-- core-server has direct access to `/var/run/docker.sock`. A
-  docker-socket-proxy is on the v0.2 roadmap.
+- ~~core-server has direct access to `/var/run/docker.sock`.~~ Fixed in
+  v0.2: the reference compose stack now fronts the socket with
+  `tecnativa/docker-socket-proxy` and core-server talks to it over
+  TCP via `DOCKER_HOST=tcp://docker-proxy:2375`. A core-server RCE no
+  longer implies host root via the Docker daemon — only the verbs
+  core-server actually needs (CONTAINERS, EXEC, IMAGES, VOLUMES,
+  EVENTS, PING) are reachable, and BUILD/SYSTEM/SWARM/SECRETS/NETWORKS
+  remain default-deny.
 - The reference `docker-compose.yml` ships with fallback secret strings
   for development. The installer overwrites these; production users who
   run `docker compose up` directly without `.env` get insecure

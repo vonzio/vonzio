@@ -6,25 +6,44 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 WORKDIR /app
 
 # ── Layer 1: dependency install ──
-# Copy ONLY workspace + package manifests so this layer is cached when no
-# package.json/lock changes — even if every source file under it changed.
-# npm ci needs every workspace's package.json to set up symlinks correctly.
-COPY package.json package-lock.json tsconfig.base.json ./
+# Copy workspace + package manifests so this layer is cached when no
+# package.json changes — even if every source file under it changed.
+#
+# package-lock.json is deliberately NOT copied: the host-generated lockfile
+# pins platform-specific optional deps (most dev hosts are darwin-arm64),
+# and npm's bug https://github.com/npm/cli/issues/4828 makes `npm ci`
+# strictly honor "skipped: linux-*" entries for Rust-native packages like
+# @tailwindcss/oxide. The dashboard build then fails with
+# "Cannot find native binding." The same workaround is used in
+# Dockerfile.server.dev (see the longer note there).
+#
+# Trade-off: `npm install` resolves fresh inside the container, so it's
+# a little slower than `npm ci` and not bit-for-bit reproducible against
+# the host lockfile — acceptable for an OSS production image that needs
+# to build on any maintainer's laptop, not just the CI runner.
+COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
 COPY packages/widget/package.json packages/widget/
 COPY agent-runner/package.json agent-runner/
 
-RUN npm ci
+RUN npm install
 
 # ── Layer 2: source ──
 # Now copy the actual source. Changes here invalidate the build layers below
-# but NOT the npm ci layer above.
+# but NOT the npm install layer above.
 COPY packages/shared/ packages/shared/
 COPY packages/core-server/ packages/core-server/
 COPY packages/dashboard/ packages/dashboard/
 COPY packages/widget/ packages/widget/
+# Schema-only Better Auth config used by @better-auth/cli at startup
+# (see scripts/start-prod.sh). Without this, fresh installs crash with
+# `relation "user" does not exist` -- the dev image got away with it
+# because the host source tree was bind-mounted.
+COPY auth.ts ./
+COPY scripts/start-prod.sh ./scripts/start-prod.sh
+RUN chmod +x ./scripts/start-prod.sh
 
 # ── Layer 3: build dashboard + widget ──
 RUN cd packages/dashboard && npx vite build
@@ -35,5 +54,6 @@ ENV VONZIO_VERSION=$VONZIO_VERSION
 
 EXPOSE 3000
 
-# Run server with tsx (TypeScript execution without pre-compilation)
-CMD ["npx", "tsx", "packages/core-server/src/index.ts"]
+# start-prod.sh runs Better Auth schema migration (idempotent), then
+# execs the server. Direct `npx tsx` would crash on a fresh DB.
+CMD ["./scripts/start-prod.sh"]

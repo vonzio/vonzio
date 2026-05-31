@@ -52,42 +52,33 @@ Kata Containers (lightweight VMs) is the alternative if gVisor's
 syscall compatibility is a blocker. Higher overhead, stronger
 boundary.
 
-## Restrict Docker socket access
+## Docker socket access (default-on as of v0.2)
 
-core-server currently mounts `/var/run/docker.sock` directly. Front it
-with [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy)
-to expose only the verbs core-server actually uses.
+The reference compose stack ships with
+[docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy)
+in front of `/var/run/docker.sock`. core-server talks to the daemon
+over TCP (`DOCKER_HOST=tcp://docker-proxy:2375`) and the proxy enforces
+a narrow verb allowlist — CONTAINERS, EXEC, IMAGES, VOLUMES, EVENTS,
+PING. Everything else (NETWORKS, BUILD, SWARM, SYSTEM, SECRETS, …) is
+default-deny.
 
-Add to `docker-compose.override.yml`:
+Net effect: a core-server RCE can no longer reconfigure the daemon,
+pull-then-run arbitrary privileged images, manipulate networks, or
+read Swarm secrets. It can still create and exec into containers,
+which on a default Docker install can still be used to escape to the
+host via privileged flags or host-path binds in the image spec. To
+close that residual gap, layer gVisor (above) on top of the proxy.
 
-```yaml
-services:
-  docker-proxy:
-    image: tecnativa/docker-socket-proxy:latest
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    environment:
-      CONTAINERS: 1
-      EXEC: 1
-      IMAGES: 1
-      NETWORKS: 1
-      POST: 1
-      # Everything else stays at 0 (default deny)
-    networks: [vonzio-internal]
+**To tune the allowlist** (e.g. you write your own integration that
+needs `NETWORKS`), edit the `docker-proxy` service's environment block
+in `docker/docker-compose.yml`. Keep the changes minimal — every flag
+you flip from `0` to `1` widens the blast radius of a core-server RCE.
 
-  core-server:
-    environment:
-      DOCKER_HOST: tcp://docker-proxy:2375
-    volumes:
-      # Drop the direct socket mount
-      - /var/run/docker.sock:/var/run/docker.sock  # ← remove this line
-    depends_on: [docker-proxy]
-```
-
-This limits the blast radius of a core-server RCE to the docker verbs
-explicitly allowed; the attacker can no longer arbitrarily reconfigure
-the daemon, pull-then-run privileged images, or mount host paths.
+**To remove the proxy entirely** (not recommended): set
+`DOCKER_HOST=unix:///var/run/docker.sock` in `server.environment`, add
+the socket back to `server.volumes`, and remove the `docker-proxy`
+service. You're trading the v0.2 hardening for whatever you gain by
+running with the raw socket — usually nothing for the OSS use case.
 
 ## Restrict agent egress
 

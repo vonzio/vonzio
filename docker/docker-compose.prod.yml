@@ -64,7 +64,12 @@ services:
       - PLATFORM_TELEGRAM_BOT_TOKEN=${PLATFORM_TELEGRAM_BOT_TOKEN:-}
       - PLATFORM_TELEGRAM_WEBHOOK_SECRET=${PLATFORM_TELEGRAM_WEBHOOK_SECRET:-}
       - DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD}@postgres:5432/vonzio
-      - DOCKER_SOCKET=/var/run/docker.sock
+      # Route through docker-socket-proxy (defined in docker-compose.yml).
+      # Traefik below keeps a direct socket mount because label-based
+      # service discovery isn't exposed by docker-socket-proxy; Traefik
+      # runs at the host's edge trust scope and is a separate hardening
+      # follow-up.
+      - DOCKER_HOST=tcp://docker-proxy:2375
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
       - DOCKER_NETWORK=vonzio-network
