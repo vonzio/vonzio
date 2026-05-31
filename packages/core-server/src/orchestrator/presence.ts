@@ -3,20 +3,33 @@
  * orchestrator to tell the agent whether `AskUserQuestion` can actually
  * deliver to a human before it makes the call.
  *
- * Three signals:
+ * Two layers of signal:
  *   - dashboard: live WS subscription on this session_id RIGHT NOW
- *   - telegram:  a row in telegram_sessions binds this session to a chat
- *   - slack:     a row in slack_thread_mappings binds this session to a thread
+ *     (in-process; orchestrator checks SessionRegistry directly)
+ *   - surfaces:  one or more chat-surface providers (telegram,
+ *     slack, ...) reporting the session as bound to their channel.
+ *     Sourced from SessionPresenceRegistry; each provider supplies
+ *     its own agent-visible label.
  *
- * Dashboard is "is someone watching" — strict. Chat surfaces are "is the
- * channel still bound" — looser, since the user may not be near their
- * phone but Telegram will deliver the notification anyway.
+ * Dashboard is "is someone watching" -- strict. Chat surfaces are
+ * "is the channel still bound" -- looser, since the user may not be
+ * near their phone but Telegram/Slack will deliver the notification
+ * anyway. The `slow` metadata flag on a surface drives the "phrase
+ * as 2-4 button options" steer at the end of the section.
  */
+
+import type { PresenceSurfaceMetadata } from "@vonzio/plugin-api";
 
 export interface Presence {
   dashboard: boolean;
-  telegram: boolean;
-  slack: boolean;
+  /**
+   * Active chat-bound surfaces, in registration order (telegram,
+   * then slack today; whatever plugins register tomorrow). Each
+   * surface contributes its own labelled line in the Reachability
+   * section.
+   */
+  surfaces: PresenceSurfaceMetadata[];
+  /** True iff dashboard OR at least one surface is reachable. */
   any: boolean;
 }
 
@@ -24,12 +37,13 @@ export interface Presence {
  * Render the "Reachability" section injected into the agent's system
  * prompt. Three regimes drive different language:
  *
- *   - All three false → tell the agent NOT to call AskUserQuestion;
+ *   - All sources false → tell the agent NOT to call AskUserQuestion;
  *     this is a background task and the call would hang. Instructs
  *     a fallback strategy: assume, state, proceed.
  *   - Dashboard live → fast-reply mode. Question can be free-form.
- *   - Chat-only → still usable, but warn about latency and steer
- *     toward short button-style questions (phone-typing friction).
+ *   - Chat-only with a `slow` surface → still usable, but warn about
+ *     latency and steer toward short button-style questions
+ *     (phone-typing friction).
  *
  * Returned with a leading `## Reachability` header so it slots into the
  * system-prompt template alongside the other named sections.
@@ -47,18 +61,20 @@ export function buildPresenceSection(presence: Presence): string {
     ].join("\n");
   }
 
-  const surfaces: string[] = [];
-  if (presence.dashboard) surfaces.push("dashboard (live tab open — fastest reply)");
-  if (presence.telegram) surfaces.push("Telegram (chat bound — may take minutes if the user isn't near their phone)");
-  if (presence.slack) surfaces.push("Slack (thread bound — same latency caveat)");
+  const labelled: string[] = [];
+  if (presence.dashboard) labelled.push("dashboard (live tab open — fastest reply)");
+  for (const s of presence.surfaces) labelled.push(s.label);
 
   const lines = [
     "## Reachability",
-    `Surfaces where the user can see and reply to you: ${surfaces.join(", ")}.`,
+    `Surfaces where the user can see and reply to you: ${labelled.join(", ")}.`,
     "",
     "`AskUserQuestion` is available and will surface to the user on the surfaces above. Use it when you genuinely need a decision; don't use it to confirm things the user already implied.",
   ];
-  if (!presence.dashboard && (presence.telegram || presence.slack)) {
+  // Phone-only steer fires only when dashboard isn't live AND at least
+  // one of the bound surfaces is marked `slow` (phone-typing friction).
+  const anySlow = presence.surfaces.some((s) => s.slow);
+  if (!presence.dashboard && anySlow) {
     lines.push("");
     lines.push("The user is on a chat surface only, not the dashboard. Phrase questions as 2-4 short button options whenever possible — typing back free-form text from a phone is slow.");
   }
