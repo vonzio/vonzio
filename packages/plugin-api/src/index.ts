@@ -329,6 +329,19 @@ export interface PluginCore {
    * Other plugins should ignore this field.
    */
   telegramPlatformBot?: PluginTelegramPlatformBot;
+
+  /**
+   * Auth hook plugins can opt into. Plugins with routes that need
+   * authenticated access call
+   * `server.addHook("onRequest", ctx.core.authHook)` inside their
+   * route registration scope. v0.1 mirrors what core wires onto the
+   * /v1 fastify subscope -- a session-cookie-or-bearer check that
+   * populates request.user on success and returns 401 otherwise.
+   *
+   * Plugins whose routes are public (e.g. webhook receivers verified
+   * via a shared secret) skip this entirely.
+   */
+  authHook: import("fastify").onRequestHookHandler;
 }
 
 /** Minimal logger contract. Backed by core's pino logger at runtime. */

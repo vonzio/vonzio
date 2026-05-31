@@ -70,6 +70,8 @@ export interface TelegramSetupRoutesOptions {
    * so the platform-bot connect endpoint returns 503 cleanly.
    */
   platformBotService: PluginTelegramPlatformBot;
+  /** Auth hook from PluginCore -- mirrors what core wires on /v1. */
+  authHook: import("fastify").onRequestHookHandler;
 }
 
 /**
@@ -201,8 +203,14 @@ export async function resyncTelegramBotCommands(deps: {
  */
 export const telegramSetupRoutes = fp(
   async (server: FastifyInstance, opts: TelegramSetupRoutesOptions) => {
-    const { betterAuthUrl, integrationService, telegramService, profileService, workspaceService, platformBotService } = opts;
+    const { betterAuthUrl, integrationService, telegramService, profileService, workspaceService, platformBotService, authHook } = opts;
     const webhookBase = betterAuthUrl.replace(/\/$/, "");
+
+    // Apply core's auth hook to every route registered inside this
+    // fastify-plugin scope. Mirrors what core's v1 subscope does for
+    // its own routes -- request.user is populated on success and the
+    // request is rejected with 401 otherwise.
+    server.addHook("onRequest", authHook);
 
     /**
      * Resolve {profile_id → slug+name} so each bot summary can show

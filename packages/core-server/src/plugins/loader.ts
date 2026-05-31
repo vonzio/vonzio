@@ -178,6 +178,7 @@ export interface LoadPluginsOpts {
   integrationService: IntegrationServiceLike;
   profileService: ProfileServiceLike;
   workspaceService: WorkspaceServiceLike;
+  authHook: import("fastify").onRequestHookHandler;
   /** Optional -- only telegram plugin uses it; absent in test setups. */
   telegramPlatformBot?: TelegramPlatformBotLike;
   /**
@@ -302,6 +303,7 @@ export function buildPluginContext<TConfig>(args: {
       get: (sessionId) => opts.workspaceService.get(sessionId),
     },
     telegramPlatformBot: opts.telegramPlatformBot,
+    authHook: opts.authHook,
   };
 
   // Typed facade over the raw EventEmitter -- plugins get exhaustive

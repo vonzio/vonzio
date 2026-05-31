@@ -864,6 +864,44 @@ export async function buildServer(deps: ServerDeps) {
     });
   }
 
+  // Plugin loader. Registered as a Fastify plugin (`server.register`)
+  // so it runs in the boot phase WHERE NEW ROUTES CAN STILL BE ADDED
+  // -- the previous attempt put this inside `onReady` and crashed
+  // with "Root plugin has already booted" because by onReady the
+  // routing tree is finalized. Sandboxed: a failed plugin is logged
+  // and skipped; core proceeds without it.
+  server.register(async (scope) => {
+    loadedPlugins = await loadPluginsFromEnv({
+      envList: config.VONZIO_PLUGINS,
+      // Hand the plugin loader the SAME server instance core uses --
+      // not the inner `scope` -- so the plugin's routePrefix.absolute
+      // mounts land at the URL the dashboard expects, not under an
+      // auto-generated scope prefix.
+      server,
+      handle,
+      config,
+      notificationBus,
+      mcpRegistry,
+      scheduler,
+      integrationService,
+      profileService,
+      workspaceService,
+      // Transitional: telegram-events.ts is still in core, so the
+      // singleton PlatformBotService is constructed here and shared
+      // with the plugin's setup routes via PluginCore. Goes away when
+      // telegram-events.ts moves into the plugin.
+      telegramPlatformBot: platformBotService,
+      // Orchestrator extends node:events.EventEmitter, so it satisfies
+      // SessionEventEmitterLike directly. Plugins that subscribe via
+      // ctx.sessionEvents.on(...) get a thin typed facade over it.
+      sessionEventEmitter: orchestrator,
+      // Plugins whose routes need authenticated access opt into this
+      // hook themselves. Same hook v1 uses.
+      authHook,
+    });
+    void scope; // unused -- see comment above
+  });
+
   // Preview WebSocket proxy (intercepts 'upgrade' on the raw http.Server for preview URLs)
   server.addHook("onReady", () => {
     setupPreviewWebSocketProxy(
@@ -921,36 +959,10 @@ export async function buildServer(deps: ServerDeps) {
     // disables the feature without taking the server down.
     await platformBotService.init();
     // resyncTelegramBotCommands moved to @vonzio/plugin-telegram --
-    // the plugin's init() fires it on boot. Kept the comment trail
-    // because the platform-bot's webhook still resolves through
-    // platformBotService.init() above (telegram-events.ts is still
-    // in core), so the boot ORDER still matters: platformBot.init()
-    // BEFORE the plugin's loader runs.
-
-    // Plugin loader runs AFTER core routes + services are wired so
-    // plugin init() sees a fully-built server. Sandboxed: a failed
-    // plugin is logged and skipped; core proceeds without it.
-    loadedPlugins = await loadPluginsFromEnv({
-      envList: config.VONZIO_PLUGINS,
-      server,
-      handle,
-      config,
-      notificationBus,
-      mcpRegistry,
-      scheduler,
-      integrationService,
-      profileService,
-      workspaceService,
-      // Transitional: telegram-events.ts is still in core, so the
-      // singleton PlatformBotService is constructed here and shared
-      // with the plugin's setup routes via PluginCore. Goes away when
-      // telegram-events.ts moves into the plugin.
-      telegramPlatformBot: platformBotService,
-      // Orchestrator extends node:events.EventEmitter, so it satisfies
-      // SessionEventEmitterLike directly. Plugins that subscribe via
-      // ctx.sessionEvents.on(...) get a thin typed facade over it.
-      sessionEventEmitter: orchestrator,
-    });
+    // the plugin's init() fires it on boot. platformBot.init() above
+    // is async and runs in onReady; the plugin's setup routes already
+    // hold a reference to platformBotService and only deref its
+    // metadata at request time, by which point init() has completed.
 
     server.log.info("Vonzio server ready");
   });
