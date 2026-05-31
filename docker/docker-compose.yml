@@ -16,12 +16,59 @@ services:
       timeout: 3s
       retries: 5
 
+  # Fronts /var/run/docker.sock with an HTTP allowlist proxy. Core-server
+  # talks to it over TCP (DOCKER_HOST=tcp://docker-proxy:2375) instead of
+  # mounting the raw socket — so a core-server RCE no longer implies host
+  # root via the Docker daemon. The allowlist below mirrors the verbs
+  # core-server actually uses (audited via grep of dockerode calls).
+  # Pinned to 0.3.0 deliberately — a "latest" image inside a hardening
+  # service would defeat the point. See docs/SECURITY_MODEL.md and
+  # docs/HARDENING.md for the threat model context.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    # NOTE: `read_only: true` was tried and removed -- the image's
+    # entrypoint regenerates /usr/local/etc/haproxy/haproxy.cfg from a
+    # baked-in template at startup, and any tmpfs overlay there masks
+    # the template. The real security control here is the verb allowlist
+    # (env vars below) -- a writable rootfs inside this isolated,
+    # single-purpose container adds little risk on top.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # POST must be enabled in addition to category toggles for any
+      # mutating verb (create/start/stop/remove/exec). Default-deny on
+      # everything else (NETWORKS, AUTH, BUILD, CONFIGS, SECRETS, SWARM,
+      # SYSTEM, SERVICES, TASKS, etc.).
+      CONTAINERS: 1
+      EXEC: 1
+      IMAGES: 1
+      VOLUMES: 1
+      EVENTS: 1
+      PING: 1
+      POST: 1
+    networks:
+      - vonzio
+    # Deliberately no host port — TCP is reachable only from peers on
+    # the vonzio internal network (i.e. server).
+    healthcheck:
+      # wget is in the BusyBox base. /_ping is always allowed by the
+      # proxy when PING=1 and is the canonical Docker daemon liveness
+      # probe — same endpoint dockerode's docker.ping() hits.
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:2375/_ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   server:
     build:
       context: ..
       dockerfile: docker/Dockerfile.server
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # docker.sock is intentionally NOT mounted here — core-server talks
+      # to the daemon through docker-proxy below. Restoring the raw mount
+      # would undo the Phase 2B hardening; do not add it back.
       - vonzio-data:/app/data
       - ../tools:/app/tools
       - ../config:/app/config
@@ -37,7 +84,10 @@ services:
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
       - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-false}
       - DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:-vonzio_dev}@postgres:5432/vonzio
-      - DOCKER_SOCKET=/var/run/docker.sock
+      # Route Docker API through the socket-proxy (see docker-proxy service
+      # above). DOCKER_HOST takes precedence over DOCKER_SOCKET in
+      # core-server's config resolver.
+      - DOCKER_HOST=tcp://docker-proxy:2375
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
       - DOCKER_NETWORK=vonzio-network
@@ -57,6 +107,8 @@ services:
       agent:
         condition: service_completed_successfully
       postgres:
+        condition: service_healthy
+      docker-proxy:
         condition: service_healthy
     restart: unless-stopped
     networks:
