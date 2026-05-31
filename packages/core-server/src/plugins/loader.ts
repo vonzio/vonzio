@@ -138,6 +138,100 @@ export interface IntegrationServiceLike {
 
 export interface ProfileServiceLike {
   list(userId: string): Promise<Array<{ id: string; slug: string | null; name: string }>>;
+  // getResolved is on ProfileService; structural type lets the loader
+  // accept a partial implementation (e.g. test mocks that don't need
+  // the heavier resolution path).
+  getResolved(profileId: string): Promise<import("@vonzio/shared").ResolvedProfile | null>;
+}
+
+/**
+ * Structural shape for TaskService.submit. Matches the real method's
+ * signature -- input.profile_id is optional (auto-resolves from
+ * callerProfileIds when caller has exactly one).
+ */
+export interface TaskServiceLike {
+  submit(
+    input: {
+      mode?: "session" | "batch" | "pooled" | "single";
+      prompt: string;
+      profile_id?: string;
+      session_id?: string;
+      allowed_tools?: string[];
+      egress_domains?: string[];
+      max_turns?: number;
+      max_budget_usd?: number;
+      model?: string;
+      effort?: string;
+      timeout_seconds?: number;
+    },
+    callerProfileIds: string[],
+  ): Promise<{ task_id: string; status: string; created_at: string }>;
+}
+
+/**
+ * Structural shape of the SessionRegistry methods plugins use. Wraps
+ * register / extendExpiry / setStatus / getConnectedSessionIds; the
+ * full SessionRegistry class has more (reassignContainer, setVolumeId,
+ * listByUser, ...) that plugins shouldn't need.
+ */
+export interface SessionRegistryLike {
+  register(
+    sessionId: string,
+    containerId: string | null,
+    userId: string,
+    profileId: string,
+    persistent?: boolean,
+    orgId?: string | null,
+  ): Promise<{ session_id: string; user_id: string; profile_id: string }>;
+  extendExpiry(sessionId: string, expiresAt: string): Promise<void>;
+  setStatus(sessionId: string, status: "active" | "resumable" | "idle" | "expired"): Promise<void>;
+  getConnectedSessionIds(): Set<string>;
+}
+
+/**
+ * Structural shape of Orchestrator's plugin-facing surface. Just
+ * wakeWorkspaceContainer for now -- the events surface goes through
+ * sessionEventEmitter (see SessionEventEmitterLike).
+ */
+export interface OrchestratorLike {
+  wakeWorkspaceContainer(
+    sessionId: string,
+    profile: import("@vonzio/shared").ResolvedProfile,
+  ): Promise<string | null>;
+}
+
+export interface EventLogLike {
+  append(sessionId: string, type: string, data: Record<string, unknown>): void;
+  read(
+    sessionId: string,
+    afterSeq?: number,
+  ): Array<{ seq: number; type: string; data: Record<string, unknown>; ts: number }>;
+}
+
+export interface ConnectionManagerLike {
+  sendToSession(sessionId: string, message: Record<string, unknown>): void;
+}
+
+export interface ImageRewriterServiceLike {
+  forSession(
+    sessionId: string,
+    text: string,
+  ): Promise<{
+    textWithUrls: string;
+    textWithoutImages: string;
+    images: Array<{ url: string; alt: string; originalUrl: string }>;
+  } | null>;
+}
+
+export interface ModelListServiceLike {
+  listForProfile(profileId: string): Promise<
+    | {
+        ok: true;
+        models: Array<{ id: string; display_name: string | null; provider: "anthropic" | "ollama" }>;
+        profileDefault: string | null;
+      }
+    | { ok: false; status: number; error: string }
+  >;
 }
 
 export interface WorkspaceServiceLike {
@@ -179,6 +273,20 @@ export interface LoadPluginsOpts {
   integrationService: IntegrationServiceLike;
   profileService: ProfileServiceLike;
   workspaceService: WorkspaceServiceLike;
+  /**
+   * The surfaces below back the new PluginCore fields added in
+   * Phase 3D.1b -- everything telegram-events.ts will need once it
+   * moves into the plugin. Server.ts already constructs each
+   * service; passing them through here just exposes them through the
+   * plugin contract.
+   */
+  taskService: TaskServiceLike;
+  sessionRegistry: SessionRegistryLike;
+  orchestrator: OrchestratorLike;
+  eventLog: EventLogLike;
+  connectionManager: ConnectionManagerLike;
+  imageRewriterService: ImageRewriterServiceLike;
+  modelListService: ModelListServiceLike;
   authHook: import("fastify").onRequestHookHandler;
   /**
    * Chat-surface presence registry. Plugins receive the register-side
@@ -314,6 +422,53 @@ export function buildPluginContext<TConfig>(args: {
     telegramPlatformBot: opts.telegramPlatformBot,
     authHook: opts.authHook,
     sessionPresence: opts.sessionPresence,
+    // Forwarders -- each one is a thin pass-through to the matching
+    // structural input. Concrete classes match the *Like signatures
+    // 1:1 so this is method aliasing, not adapter logic.
+    tasks: {
+      submit: (input, callerProfileIds) =>
+        opts.taskService.submit(input, callerProfileIds),
+    },
+    sessionLifecycle: {
+      register: (sessionId, userId, profileId, regOpts) =>
+        opts.sessionRegistry.register(
+          sessionId,
+          null,
+          userId,
+          profileId,
+          regOpts?.persistent,
+          regOpts?.orgId,
+        ),
+      extendExpiry: (sessionId, expiresAtIso) =>
+        opts.sessionRegistry.extendExpiry(sessionId, expiresAtIso),
+      setStatus: (sessionId, status) =>
+        opts.sessionRegistry.setStatus(sessionId, status),
+      getConnectedSessionIds: () => opts.sessionRegistry.getConnectedSessionIds(),
+    },
+    orchestrator: {
+      wakeWorkspaceContainer: (sessionId, profile) =>
+        opts.orchestrator.wakeWorkspaceContainer(sessionId, profile),
+    },
+    eventLog: {
+      append: (sessionId, type, data) =>
+        opts.eventLog.append(sessionId, type, data),
+      read: (sessionId, afterSeq) => opts.eventLog.read(sessionId, afterSeq),
+    },
+    connectionManager: {
+      sendToSession: (sessionId, message) =>
+        opts.connectionManager.sendToSession(sessionId, message),
+    },
+    imageRewriter: {
+      forSession: (sessionId, text) =>
+        opts.imageRewriterService.forSession(sessionId, text),
+    },
+    modelList: {
+      listForProfile: (profileId) =>
+        opts.modelListService.listForProfile(profileId),
+    },
+    profileResolver: {
+      getResolved: (profileId) => opts.profileService.getResolved(profileId),
+    },
   };
 
   // Typed facade over the raw EventEmitter -- plugins get exhaustive

@@ -895,6 +895,18 @@ export async function buildServer(deps: ServerDeps) {
       integrationService,
       profileService,
       workspaceService,
+      // Services exposed in 3D.1b for telegram-events.ts's upcoming
+      // move into the plugin -- the plugin needs taskService.submit,
+      // sessionRegistry mutations, orchestrator.wakeWorkspaceContainer,
+      // event-log appends/reads, dashboard WS push, image rewriter,
+      // and the model-list lookup.
+      taskService,
+      sessionRegistry,
+      orchestrator,
+      eventLog,
+      connectionManager,
+      imageRewriterService,
+      modelListService,
       // Transitional: telegram-events.ts is still in core, so the
       // singleton PlatformBotService is constructed here and shared
       // with the plugin's setup routes via PluginCore. Goes away when

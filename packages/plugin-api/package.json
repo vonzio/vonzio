@@ -28,6 +28,9 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "@vonzio/shared": "*"
+  },
   "peerDependencies": {
     "fastify": "^5.0.0",
     "react": "^19.0.0",
