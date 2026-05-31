@@ -28,7 +28,12 @@ defaults:
       - test
       - typecheck
       - install.sh shellcheck
-      - agent-base build
+      # Matrix job names from ci.yml -- the `image-build-and-scan`
+      # matrix expands to one check per image. Renaming a matrix leg
+      # requires updating these strings AND running `gh-setup apply`.
+      - image build+scan (agent-base)
+      - image build+scan (server)
+      - secret scan
     require_up_to_date: true
     # Admins (i.e. the owner) still go through PR + CI. Direct pushes
     # to main are blocked — the only way in is a green PR.

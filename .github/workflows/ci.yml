@@ -82,25 +82,109 @@ jobs:
             packages/core-server/src/services/format-message.test.ts \
             packages/core-server/src/services/scope.test.ts
 
-  agent-base-build:
-    # Smoke-builds the agent base image so we catch Dockerfile breakage at PR
-    # time, not at end-user-install time. Doesn't push anywhere.
-    name: agent-base build
+  image-build-and-scan:
+    # Builds the agent-base + server images on every PR and scans both
+    # with Trivy. Unified via matrix so the build/scan recipe lives in
+    # one place; cache scopes are explicit per-image to keep the GHA
+    # cache namespaces clean. Catches three classes of regression:
+    # 1. Dockerfile breakage before it hits end-user installs (PR #66
+    #    npm-ci lockfile bug would have surfaced here).
+    # 2. CVEs in OS layer or bundled CLIs (git, gh, jq, chromium, etc.).
+    # 3. CVEs introduced by new app dependencies.
+    name: image build+scan (${{ matrix.image.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      # Run both even if one fails -- we want to see all findings.
+      fail-fast: false
+      matrix:
+        image:
+          - name: agent-base
+            file: docker/Dockerfile.agent.base
+            tag: ghcr.io/vonzio/vonzio/agent-base:ci
+          - name: server
+            file: docker/Dockerfile.server
+            tag: vonzio-server:ci
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build agent-base
+      - name: Build ${{ matrix.image.name }}
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/Dockerfile.agent.base
+          file: ${{ matrix.image.file }}
           push: false
           load: true
-          tags: ghcr.io/vonzio/vonzio/agent-base:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ matrix.image.tag }}
+          # Per-image cache scope: prevents cross-image cache thrash
+          # and keeps any future buildx job (release, etc.) from
+          # clobbering either entry by accident.
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+      - name: Scan ${{ matrix.image.name }} with Trivy
+        # Non-blocking for v0.1 -- the scanner is operational on every
+        # PR (findings visible in the job log) but does not gate
+        # merges yet. Promoting to blocking requires triaging the
+        # current upstream backlog (debian base CVEs in gnutls, npm
+        # transitive deps, and a Go-stdlib finding inside a bundled
+        # binary). Tracked as a Phase 2D follow-up. Until then, use
+        # the table output for situational awareness.
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ matrix.image.tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          # exit-code intentionally 0 -- we want the table printed
+          # without failing the job. continue-on-error above is
+          # belt-and-suspenders for any future trivy-action version
+          # whose default exit-code drifts.
+          exit-code: "0"
+          ignore-unfixed: true
+          vuln-type: os,library
+          # cache: true reuses the trivy vuln DB across the two
+          # matrix legs and across runs -- saves ~700 MB download per leg.
+          cache: true
+
+  secret-scan:
+    # Scan PR diffs for accidentally-committed secrets (API keys,
+    # private keys, tokens). Catches the foot-gun of pasting a working
+    # secret into a comment, test fixture, or example .env.
+    #
+    # Using TruffleHog instead of gitleaks-action -- gitleaks-action@v2
+    # requires a paid license for GitHub orgs (vonzio is an org).
+    # TruffleHog stays Apache-2.0 and free for any account type, and
+    # verifies credentials against the source provider where possible
+    # to cut false positives.
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Pull requests only -- a push-to-main scan would just confirm
+    # what we already merged. Branch protection prevents direct pushes
+    # to main, so any secret has to flow through a PR scanned here.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@v3.81.10
+        with:
+          # Scan only the PR diff (base..head) -- a full-history scan
+          # on every PR would be wasteful and produce repeated noise
+          # for any pre-existing match.
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          # `verified,unknown` rather than `--only-verified`:
+          # - verified  = credential the provider confirmed live
+          # - unknown   = credential TruffleHog matched a high-confidence
+          #               pattern for but has no verifier endpoint
+          #               (SSH/PGP private keys, generic JWTs, custom
+          #               service tokens, .env API keys for self-hosted
+          #               services). This is the class --only-verified
+          #               would silently miss -- exactly the foot-gun
+          #               the SECURITY_MODEL.md bullet promises to catch.
+          # Drops `unverified` (long-tail high-entropy false positives).
+          extra_args: --results=verified,unknown
 
   install-script-shellcheck:
     # Lint install.sh so we catch shell footguns before community users hit
