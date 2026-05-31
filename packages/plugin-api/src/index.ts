@@ -198,6 +198,20 @@ export interface PluginIntegrationLookup {
   listByType(type: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration[]>;
   listByUserAndType(userId: string, type: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration[]>;
   findByTypeAndExternalId(type: string, externalId: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration | null>;
+  /**
+   * Multi-result variant for the case where a single external id maps
+   * to multiple integrations -- e.g. the platform Telegram bot has
+   * one bot_user_id but many user-integration rows (one per paired
+   * user). The relay routes by `(user_id, external_id)` to disambiguate.
+   */
+  listByTypeAndExternalId(type: string, externalId: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration[]>;
+  /**
+   * Lazy backfill of the indexed `external_id` column for legacy rows
+   * that pre-date the column. The plugin calls this on first read of
+   * a row that's missing the index -- avoids a one-time migration
+   * that would need decryption inside the migration runner.
+   */
+  backfillExternalId(id: string): Promise<void>;
   create(userId: string, type: string, config: Record<string, unknown>, scopeInput?: unknown): Promise<PluginIntegration>;
   update(id: string, input: Partial<{ config: Record<string, unknown>; enabled: boolean; scope: string; profile_ids: string[] }>): Promise<PluginIntegration | null>;
   delete(id: string): Promise<void>;
@@ -207,15 +221,30 @@ export interface PluginIntegrationLookup {
  * Narrow read-only profile lookup. Plugins use this when validating
  * that a user-supplied profile_id (e.g. for binding a Telegram bot to
  * a specific agent profile) actually belongs to the caller.
+ *
+ * Use `profileResolver.getResolved` (separate field on PluginCore) for
+ * the full ResolvedProfile shape with credentials, tools, claude_md,
+ * etc. This narrow surface keeps plugins that only need slug/name
+ * from pulling in that wider type tree.
  */
 export interface PluginProfileLookup {
   list(userId: string): Promise<Array<{ id: string; slug: string | null; name: string }>>;
+  /**
+   * Single-row fetch by id. Returns the full Profile type from
+   * @vonzio/shared; use `profileResolver.getResolved` when you need
+   * the resolved variant (credentials, env, setup_commands, ...).
+   */
+  get(profileId: string): Promise<import("@vonzio/shared").Profile | null>;
 }
 
 /**
- * Narrow read-only workspace lookup. Plugins use this when surfacing
- * workspace-bound resources (e.g. Telegram deep-links into a
- * workspace).
+ * Workspace lookup + lightweight mutations. Plugins use this for:
+ *  - ownership checks before exposing a workspace-bound resource
+ *    (`get`)
+ *  - chat-side `/list` commands that show the user their recent
+ *    workspaces (`list`)
+ *  - chat-side `/model` overrides and "set workspace title from first
+ *    line of chat" updates (`update`)
  */
 export interface PluginWorkspaceLookup {
   get(sessionId: string): {
@@ -223,6 +252,32 @@ export interface PluginWorkspaceLookup {
     user_id: string;
     profile_id?: string | null;
   } | null;
+  list(filters: {
+    userId?: string;
+    orgId?: string;
+    status?: "active" | "resumable" | "idle" | "expired";
+    includeArchived?: boolean;
+    starredOnly?: boolean;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    workspaces: Array<import("@vonzio/shared").Workspace>;
+    total: number;
+  }>;
+  update(
+    sessionId: string,
+    fields: {
+      name?: string;
+      starred?: boolean;
+      pinned?: boolean;
+      archived?: boolean;
+      tags?: string[];
+      public_preview?: boolean;
+      model_override?: string | null;
+      last_run_model?: string | null;
+    },
+    opts?: { orgId?: string },
+  ): Promise<import("@vonzio/shared").Workspace | null>;
 }
 
 /**
