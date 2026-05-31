@@ -80,16 +80,27 @@ import { tellerMcpPlugin } from "./mcp/teller-mcp.js";
 import { TellerClient } from "./services/teller-client.js";
 import { platformMcpPlugin } from "./mcp/platform-mcp.js";
 import { ErrorCodes, errorResponse } from "./errors.js";
+import { NotificationBusImpl } from "./plugins/notification-bus.js";
+import { McpRegistryImpl } from "./plugins/mcp-registry.js";
+import { SchedulerImpl } from "./plugins/scheduler.js";
+import { loadPluginsFromEnv, teardownPlugins, type LoadedPlugin } from "./plugins/loader.js";
 
 export interface ServerDeps {
   config: Config;
   db: DrizzleDB;
   pool: pg.Pool;
+  /**
+   * DB handle (db + close + pool together). buildServer needs `handle`
+   * to pass to the plugin loader's migration runner; everything else
+   * uses `db` directly. Same db inside both -- handle is just the
+   * wrapper.
+   */
+  handle: import("./db/index.js").DB;
   containerManager: ContainerManager;
 }
 
 export async function buildServer(deps: ServerDeps) {
-  const { config, db, pool: pgPool, containerManager } = deps;
+  const { config, db, handle, pool: pgPool, containerManager } = deps;
 
   const server = Fastify({
     logger: { level: config.LOG_LEVEL },
@@ -198,6 +209,19 @@ export async function buildServer(deps: ServerDeps) {
   const subagentService = new SubagentService(db);
   const gitProviderService = new GitProviderService(db, config.ENCRYPTION_KEY);
   const integrationService = new IntegrationService(db, config.ENCRYPTION_KEY);
+  // Plugin runtime infrastructure. Created here so NotificationService
+  // can take a reference (it dispatches outbound notifications via
+  // `notificationBus.dispatch(...)` for any kind a plugin has claimed).
+  // The actual plugin load happens further down, after the rest of the
+  // server is wired -- plugin routes register AFTER core's so the
+  // routing table reads core > plugins.
+  const notificationBus = new NotificationBusImpl();
+  const mcpRegistry = new McpRegistryImpl();
+  const scheduler = new SchedulerImpl();
+  // loadedPlugins is filled in inside the onReady hook below. The
+  // onClose hook (way below) reads it; both hooks close over this
+  // shared binding.
+  let loadedPlugins: LoadedPlugin[] = [];
   const memoryService = new MemoryService(db);
   const secretVaultService = new SecretVaultService(db, config.ENCRYPTION_KEY);
   const slackService = new SlackService();
@@ -271,6 +295,7 @@ export async function buildServer(deps: ServerDeps) {
     slackService,
     telegramService,
     integrationService,
+    notificationBus,
     db,
     dashboardUrl: config.BETTER_AUTH_URL,
     log: server.log,
@@ -898,10 +923,31 @@ export async function buildServer(deps: ServerDeps) {
       platformBotToken: platformBotService.getToken(),
       log: server.log,
     });
+
+    // Plugin loader runs AFTER core routes + services are wired so
+    // plugin init() sees a fully-built server. Sandboxed: a failed
+    // plugin is logged and skipped; core proceeds without it.
+    loadedPlugins = await loadPluginsFromEnv({
+      envList: config.VONZIO_PLUGINS,
+      server,
+      handle,
+      config,
+      notificationBus,
+      mcpRegistry,
+      scheduler,
+      integrationService,
+    });
+
     server.log.info("Vonzio server ready");
   });
 
   server.addHook("onClose", async () => {
+    // Plugins teardown FIRST so their handlers (telegramService etc.)
+    // can flush state before the DB closes. scheduler.stopAll() is
+    // belt-and-suspenders for any plugin that didn't clear its own
+    // intervals in teardown().
+    await teardownPlugins(loadedPlugins, server.log);
+    scheduler.stopAll();
     await orchestrator.stop();
     await containerPool.shutdown();
     playbookScheduler.stop();

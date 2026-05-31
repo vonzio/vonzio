@@ -104,6 +104,23 @@ function assertPluginShape(
   }
 }
 
+/**
+ * Subset of IntegrationService the loader uses to build the
+ * `PluginCore.integrations` adapter. Typed structurally (not by
+ * importing IntegrationService directly) so the loader stays
+ * decoupled from the service module's internal types -- swapping out
+ * the implementation behind this interface doesn't ripple here.
+ */
+export interface IntegrationServiceLike {
+  get(id: string, opts?: { decrypt?: boolean }): Promise<{
+    id: string;
+    user_id: string;
+    type: string;
+    config: Record<string, unknown>;
+    enabled: boolean;
+  } | null>;
+}
+
 export interface LoadPluginsOpts {
   envList: string | undefined;
   server: FastifyInstance;
@@ -112,6 +129,7 @@ export interface LoadPluginsOpts {
   notificationBus: NotificationBusImpl;
   mcpRegistry: McpRegistryImpl;
   scheduler: SchedulerImpl;
+  integrationService: IntegrationServiceLike;
 }
 
 /**
@@ -204,6 +222,12 @@ export function buildPluginContext<TConfig>(args: {
     encryption: {
       encrypt: (plaintext) => encrypt(plaintext, opts.config.ENCRYPTION_KEY),
       decrypt: (ciphertext) => decrypt(ciphertext, opts.config.ENCRYPTION_KEY),
+    },
+    integrations: {
+      // Thin wrapper -- the structural IntegrationServiceLike type
+      // matches the real service's signature exactly so this is just
+      // method forwarding.
+      get: (id, getOpts) => opts.integrationService.get(id, getOpts),
     },
   };
 

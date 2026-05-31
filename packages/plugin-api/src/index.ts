@@ -158,6 +158,35 @@ export interface PluginContext<TConfig = unknown> {
 }
 
 /**
+ * One user's integration row, as seen by a plugin. Used by
+ * notification handlers to resolve `req.recipient` (an integration
+ * id) into the bot token / channel / chat id / etc. needed to send a
+ * message.
+ *
+ * `config` is type-erased on this contract -- the actual shape is
+ * provider-specific (Telegram: bot_token + owner_tg_user_id;
+ * Slack: bot_token + authed_user_id; etc.) and is the plugin's
+ * responsibility to assert. With `opts.decrypt: true` the loader
+ * runs the standard decrypt pass against config before returning.
+ */
+export interface PluginIntegration {
+  id: string;
+  user_id: string;
+  type: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+}
+
+/**
+ * Narrow adapter around core's IntegrationService. Plugins use this
+ * in their notification handlers to look up the user-integration row
+ * corresponding to the `req.recipient` they were dispatched.
+ */
+export interface PluginIntegrationLookup {
+  get(id: string, opts?: { decrypt?: boolean }): Promise<PluginIntegration | null>;
+}
+
+/**
  * Core services exposed to plugins. Add fields here only with strong
  * justification -- the surface is a stability commitment.
  */
@@ -181,6 +210,13 @@ export interface PluginCore {
     encrypt(plaintext: string): string;
     decrypt(ciphertext: string): string;
   };
+
+  /**
+   * Integration lookup. Plugins resolve `req.recipient` against this
+   * to get the credentials + config for the user's connected
+   * provider (Slack workspace, Telegram bot, etc.).
+   */
+  integrations: PluginIntegrationLookup;
 }
 
 /** Minimal logger contract. Backed by core's pino logger at runtime. */
