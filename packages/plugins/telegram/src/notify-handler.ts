@@ -11,16 +11,15 @@
 //    telegram_playbook_threads row so callback queries can resolve
 //    message_id -> sessionId
 //
-// `telegramPlaybookThreads` is still in core's schema for now (the
-// schema-move PR is later in the 3C arc). The plugin uses raw SQL
-// against the table for that one write; once schema moves into the
-// plugin, this turns into a normal drizzle insert against plugin-
-// owned tables.
+// Persists the thread-claim row through the plugin-owned drizzle
+// schema (`telegram_playbook_threads`). Same physical table core's
+// `telegram-events.ts` reads on the callback_query side -- both
+// pgTable definitions point at it during the 3D.1c-to-3D.1d window.
 //
 // The handler contract is `NotificationHandler` from @vonzio/plugin-api:
 //   (NotificationRequest) -> Promise<NotificationResult>.
 
-import { sql } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { encodeThreadClaim, encodeThreadDismiss } from "@vonzio/shared";
 import type { NotificationHandler, PluginContext } from "@vonzio/plugin-api";
 import type { TelegramConfig } from "./types.js";
@@ -29,15 +28,11 @@ import {
   markdownToTelegram,
   splitTelegramMessage,
 } from "./services/telegram-service.js";
+import { telegramPlaybookThreads } from "./db/schema.js";
 
 interface TelegramNotifyMetadata {
   userId?: string;
   threadClaim?: { sessionId: string; label?: string };
-}
-
-/** Drizzle handle interface narrowed to what this handler uses. */
-interface DbHandle {
-  execute(query: ReturnType<typeof sql>): Promise<unknown>;
 }
 
 /**
@@ -160,23 +155,15 @@ export function buildTelegramNotifyHandler(ctx: PluginContext): NotificationHand
         );
       } else {
         try {
-          // Raw SQL because telegram_playbook_threads is still in core's
-          // schema for this PR. Becomes a typed drizzle insert against
-          // plugin-owned tables once the schema-move PR lands.
-          const db = ctx.core.db as DbHandle;
-          const label = threadClaim.label ?? null;
-          await db.execute(sql`
-            INSERT INTO telegram_playbook_threads
-              (bot_user_id, chat_id, message_id, session_id, label, sent_at)
-            VALUES (
-              ${config.bot_user_id},
-              ${String(config.owner_tg_user_id)},
-              ${String(lastSentMessageId)},
-              ${threadClaim.sessionId},
-              ${label},
-              ${new Date().toISOString()}
-            )
-          `);
+          const db = ctx.core.db as NodePgDatabase<Record<string, never>>;
+          await db.insert(telegramPlaybookThreads).values({
+            bot_user_id: config.bot_user_id,
+            chat_id: String(config.owner_tg_user_id),
+            message_id: String(lastSentMessageId),
+            session_id: threadClaim.sessionId,
+            label: threadClaim.label ?? null,
+            sent_at: new Date().toISOString(),
+          });
         } catch (err) {
           // The message itself went out; the thread-claim row not
           // existing just means replies fall back to existing

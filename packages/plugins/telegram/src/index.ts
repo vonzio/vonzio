@@ -27,6 +27,7 @@ import { TelegramService } from "./services/telegram-service.js";
 import { buildTelegramNotifyHandler } from "./notify-handler.js";
 import { telegramSetupRoutes, resyncTelegramBotCommands } from "./routes/setup.js";
 import { buildTelegramPresenceProvider } from "./presence-provider.js";
+import { telegramMigrations } from "./db/migrations.js";
 
 const configSchema = z.object({
   PLATFORM_TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -57,6 +58,12 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
   name: "telegram",
   apiVersion: "0.1.0",
   configSchema,
+  // Plugin owns the telegram_* schema. Core's mirrored definitions in
+  // packages/core-server/src/db/schema.ts + core's v14/v19 migrations
+  // remain until telegram-events.ts moves out of core in 3D.1d --
+  // after that they get deleted. This migration is idempotent so
+  // both creation paths coexist safely during the transition.
+  migrations: telegramMigrations,
   routePrefix: { kind: "absolute", prefix: "/v1/integrations/telegram" },
 
   async init(ctx) {

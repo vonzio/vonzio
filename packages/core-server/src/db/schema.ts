@@ -305,6 +305,12 @@ export const slackThreadMappings = pgTable(
   ],
 );
 
+// TODO(3D.1d): delete the three telegram_* pgTable definitions below
+// once telegram-events.ts moves to the plugin. The plugin owns the
+// authoritative schema in packages/plugins/telegram/src/db/schema.ts
+// as of 3D.1c; these mirrors stay only because telegram-events.ts is
+// still in core and imports from this file.
+
 export const telegramActiveSessions = pgTable(
   "telegram_active_sessions",
   {
