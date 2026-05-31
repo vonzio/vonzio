@@ -61,12 +61,15 @@ provide. Bugs in any of these are in-scope for security reports.
   diff and fails on verified credentials plus high-confidence
   unverifiable patterns (SSH/PGP private keys, JWTs, custom service
   tokens). Catches leaked credentials before merge.
-- **Vulnerability scanning in CI** (visibility, not yet a gate).
-  Every PR runs Trivy against the agent-base and server images and
-  prints HIGH/CRITICAL fixable CVEs in OS + library layers to the
-  job log. v0.1 keeps these scans non-blocking while we triage the
-  upstream-CVE backlog; v0.2 promotes them to merge gates once the
-  baseline is clean.
+- **Vulnerability scanning in CI.** Every PR builds the agent-base
+  and server images and runs Trivy against both. Fails on any
+  HIGH/CRITICAL fixable CVE in OS or library layers. Baseline is
+  kept clean by:
+  - `apt-get upgrade` on every rebuild (debian-security patches)
+  - `npm install -g npm@latest` to keep npm's bundled deps current
+  - `npm prune --omit=dev` + surgical delete of orphaned esbuild
+    binaries in the server image
+  - Bumping affected npm deps when a new transitive CVE lands
 
 ## What we do NOT protect against
 

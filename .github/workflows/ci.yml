@@ -122,24 +122,27 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
       - name: Scan ${{ matrix.image.name }} with Trivy
-        # Non-blocking for v0.1 -- the scanner is operational on every
-        # PR (findings visible in the job log) but does not gate
-        # merges yet. Promoting to blocking requires triaging the
-        # current upstream backlog (debian base CVEs in gnutls, npm
-        # transitive deps, and a Go-stdlib finding inside a bundled
-        # binary). Tracked as a Phase 2D follow-up. Until then, use
-        # the table output for situational awareness.
-        continue-on-error: true
+        # Blocking gate as of v0.2: fails the job on any HIGH/CRITICAL
+        # fixable CVE in OS or library layers. The Dockerfiles run
+        # apt-get upgrade + npm install -g npm@latest on every rebuild
+        # and the server image prunes devDeps (+ surgical delete of
+        # extraneous esbuild orphans) to keep the baseline clean.
+        # When a new HIGH/CRITICAL surfaces:
+        #  - apt-side: usually clears on the next rebuild (apt-get
+        #    upgrade pulls the latest debian-security patch)
+        #  - npm-side: bump the offending dep's range in package.json
+        #    until npm install resolves to a patched version
+        #  - binary inside an npm package (esbuild, etc.): inspect with
+        #    `npm explain`, decide whether to delete post-prune or
+        #    bump the package that ships it
+        # ignore-unfixed avoids failing on CVEs with no patch available
+        # -- we can't act on those at PR time.
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ${{ matrix.image.tag }}
           format: table
           severity: CRITICAL,HIGH
-          # exit-code intentionally 0 -- we want the table printed
-          # without failing the job. continue-on-error above is
-          # belt-and-suspenders for any future trivy-action version
-          # whose default exit-code drifts.
-          exit-code: "0"
+          exit-code: "1"
           ignore-unfixed: true
           vuln-type: os,library
           # cache: true reuses the trivy vuln DB across the two
