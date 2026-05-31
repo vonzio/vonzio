@@ -155,6 +155,13 @@ export interface PluginContext<TConfig = unknown> {
 
   /** Where the plugin schedules background work. */
   scheduler: Scheduler;
+
+  /**
+   * Subscribe to session-lifecycle events emitted by the orchestrator.
+   * Used by integrations that relay task progress to external
+   * surfaces (e.g. Telegram chat, Slack thread).
+   */
+  sessionEvents: SessionEvents;
 }
 
 /**
@@ -235,6 +242,42 @@ export interface PluginTelegramPlatformBot {
   getWebhookSecret(): string | null;
   isConfigured(): boolean;
 }
+
+/**
+ * Session-lifecycle events emitted by the orchestrator. Plugins
+ * subscribe via `ctx.sessionEvents.on(event, handler)` to react to
+ * task progress without core having to know they exist -- e.g. the
+ * telegram plugin's relay echoes `task:token` to the user's Telegram
+ * chat, and `task:done` posts the final result.
+ *
+ * The signatures mirror orchestrator's existing `emit("task:*", ...)`
+ * calls exactly so the typed facade is a zero-overhead pass-through.
+ * sessionId may be `undefined` for tasks not bound to a session
+ * (one-off API calls); plugins typically early-return in that case.
+ *
+ * Handlers are NOT async-awaited by core -- they fire in parallel.
+ * Plugins that need ordering must coordinate via their own queues.
+ */
+export interface SessionEvents {
+  on(event: "task:token", handler: (taskId: string, sessionId: string | undefined, text: string) => void): void;
+  on(event: "task:tool_use", handler: (taskId: string, sessionId: string | undefined, tool: string, input?: unknown) => void): void;
+  on(event: "task:ask_user", handler: (taskId: string, sessionId: string | undefined, input: unknown) => void | Promise<void>): void;
+  on(event: "task:done", handler: (taskId: string, sessionId: string | undefined, result?: { text?: string }) => void | Promise<void>): void;
+  on(event: "task:failed", handler: (taskId: string, sessionId: string | undefined, error?: string) => void | Promise<void>): void;
+  /**
+   * Bulk unsubscribe -- called by core during plugin teardown so a
+   * reloaded plugin doesn't double up subscriptions. Plugins normally
+   * don't call this themselves.
+   */
+  off(event: SessionEventName, handler: (...args: never[]) => void): void;
+}
+
+export type SessionEventName =
+  | "task:token"
+  | "task:tool_use"
+  | "task:ask_user"
+  | "task:done"
+  | "task:failed";
 
 /**
  * Core services exposed to plugins. Add fields here only with strong

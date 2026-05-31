@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parsePluginEnvList } from "./loader.js";
+import { EventEmitter } from "node:events";
+import { parsePluginEnvList, buildSessionEventsFacade } from "./loader.js";
 import { NotificationBusImpl } from "./notification-bus.js";
 import { McpRegistryImpl } from "./mcp-registry.js";
 import { SchedulerImpl } from "./scheduler.js";
@@ -158,5 +159,72 @@ describe("SchedulerImpl", () => {
     await new Promise((r) => setTimeout(r, 50));
     sched.stopAll();
     expect(ok).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("buildSessionEventsFacade", () => {
+  it("forwards on() to the underlying emitter and delivers events", () => {
+    const emitter = new EventEmitter();
+    const facade = buildSessionEventsFacade(emitter);
+    const received: Array<[string, string | undefined, string]> = [];
+    facade.on("task:token", (taskId, sessionId, text) => {
+      received.push([taskId, sessionId, text]);
+    });
+    emitter.emit("task:token", "t1", "s1", "hello");
+    emitter.emit("task:token", "t2", undefined, "world");
+    expect(received).toEqual([
+      ["t1", "s1", "hello"],
+      ["t2", undefined, "world"],
+    ]);
+  });
+
+  it("off() unsubscribes a previously registered handler", () => {
+    const emitter = new EventEmitter();
+    const facade = buildSessionEventsFacade(emitter);
+    let count = 0;
+    const handler = () => {
+      count += 1;
+    };
+    facade.on("task:done", handler);
+    emitter.emit("task:done", "t1", "s1", { text: "ok" });
+    expect(count).toBe(1);
+    facade.off("task:done", handler);
+    emitter.emit("task:done", "t2", "s2", { text: "ok again" });
+    expect(count).toBe(1);
+  });
+
+  it("is a silent no-op when no emitter is provided", () => {
+    const facade = buildSessionEventsFacade(undefined);
+    // Subscribing + unsubscribing should not throw; events from nowhere
+    // simply don't reach the handler.
+    let fired = false;
+    facade.on("task:failed", () => {
+      fired = true;
+    });
+    facade.off("task:failed", () => {});
+    expect(fired).toBe(false);
+  });
+
+  it("supports independent multi-event subscription on the same emitter", () => {
+    const emitter = new EventEmitter();
+    const facade = buildSessionEventsFacade(emitter);
+    const events: string[] = [];
+    // Wrap each handler so its body returns `void` (events.push() returns
+    // the array length, which the typed overloads of `on()` reject because
+    // `task:done` / `task:failed` are async-capable signatures that demand
+    // `void | Promise<void>`, not `number`).
+    facade.on("task:token", () => {
+      events.push("token");
+    });
+    facade.on("task:done", () => {
+      events.push("done");
+    });
+    facade.on("task:failed", () => {
+      events.push("failed");
+    });
+    emitter.emit("task:token", "t", "s", "x");
+    emitter.emit("task:done", "t", "s", { text: "ok" });
+    emitter.emit("task:failed", "t", "s", "boom");
+    expect(events).toEqual(["token", "done", "failed"]);
   });
 });

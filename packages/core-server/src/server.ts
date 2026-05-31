@@ -946,6 +946,10 @@ export async function buildServer(deps: ServerDeps) {
       // with the plugin's setup routes via PluginCore. Goes away when
       // telegram-events.ts moves into the plugin.
       telegramPlatformBot: platformBotService,
+      // Orchestrator extends node:events.EventEmitter, so it satisfies
+      // SessionEventEmitterLike directly. Plugins that subscribe via
+      // ctx.sessionEvents.on(...) get a thin typed facade over it.
+      sessionEventEmitter: orchestrator,
     });
 
     server.log.info("Vonzio server ready");

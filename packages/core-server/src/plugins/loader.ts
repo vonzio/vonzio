@@ -154,6 +154,19 @@ export interface TelegramPlatformBotLike {
   isConfigured(): boolean;
 }
 
+/**
+ * Narrow EventEmitter-shaped contract used to back the typed
+ * `sessionEvents` facade. Orchestrator's class satisfies this
+ * naturally (it extends node:events.EventEmitter); other backends
+ * could too (mock in tests, fan-in proxy for sharded setups).
+ */
+export interface SessionEventEmitterLike {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  on(event: string, listener: (...args: any[]) => void): unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  off(event: string, listener: (...args: any[]) => void): unknown;
+}
+
 export interface LoadPluginsOpts {
   envList: string | undefined;
   server: FastifyInstance;
@@ -167,6 +180,13 @@ export interface LoadPluginsOpts {
   workspaceService: WorkspaceServiceLike;
   /** Optional -- only telegram plugin uses it; absent in test setups. */
   telegramPlatformBot?: TelegramPlatformBotLike;
+  /**
+   * Backs `ctx.sessionEvents`. Orchestrator satisfies this directly
+   * (it extends EventEmitter). When absent (test setups), plugins
+   * that subscribe just receive no events -- their handlers register
+   * fine, they just never fire.
+   */
+  sessionEventEmitter?: SessionEventEmitterLike;
 }
 
 /**
@@ -284,6 +304,13 @@ export function buildPluginContext<TConfig>(args: {
     telegramPlatformBot: opts.telegramPlatformBot,
   };
 
+  // Typed facade over the raw EventEmitter -- plugins get exhaustive
+  // narrowing on event names + payloads while the backing dispatch
+  // stays a generic EventEmitter we don't have to specialize per event.
+  // Missing emitter = silent no-op (test setups, plugins that subscribe
+  // to events for a feature that's been disabled).
+  const sessionEvents = buildSessionEventsFacade(opts.sessionEventEmitter);
+
   return {
     server: scopedServer,
     config: parsedConfig,
@@ -292,12 +319,38 @@ export function buildPluginContext<TConfig>(args: {
     notificationBus: opts.notificationBus,
     mcpRegistry: opts.mcpRegistry,
     scheduler: opts.scheduler,
+    sessionEvents,
     // routePrefix isn't on PluginContext per the API contract; plugins
     // use ctx.server with their own knowledge of routePrefix. (We pass
     // it via env at register-time if needed.)
   } satisfies PluginContext<TConfig> & Record<string, unknown>;
   // The `as` is for the prefix shadowing -- the prefix is consumed by
   // the loader to wire the route scope, not surfaced on the context.
+}
+
+/**
+ * Wrap the raw EventEmitter in a typed shape that matches the
+ * SessionEvents contract from plugin-api. When no emitter is
+ * provided (test setups), build a no-op facade so subscribers don't
+ * have to defensive-check.
+ */
+export function buildSessionEventsFacade(emitter: SessionEventEmitterLike | undefined): import("@vonzio/plugin-api").SessionEvents {
+  if (!emitter) {
+    return {
+      on: () => {},
+      off: () => {},
+    };
+  }
+  return {
+    on: (event, handler) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      emitter.on(event, handler as (...args: any[]) => void);
+    },
+    off: (event, handler) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      emitter.off(event, handler as (...args: any[]) => void);
+    },
+  };
 }
 
 /**
