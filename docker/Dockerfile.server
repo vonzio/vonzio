@@ -33,6 +33,12 @@ WORKDIR /app
 COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/plugin-api/package.json packages/plugin-api/
+# Plugins ship as full workspaces under packages/plugins/<name>/. For
+# v0.1 we copy the whole plugin tree (manifests + source) into this
+# layer -- cache will invalidate on any plugin source change, which
+# is acceptable while we have one plugin. When the catalog grows, swap
+# to a manifests-only copy here + a separate Layer 2 source copy.
+COPY packages/plugins/ packages/plugins/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
 COPY packages/widget/package.json packages/widget/

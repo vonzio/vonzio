@@ -22,6 +22,9 @@ WORKDIR /app
 COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/plugin-api/package.json packages/plugin-api/
+# Plugin manifests only -- dev image bind-mounts the source tree at
+# runtime so we just need the workspace symlinks resolved at install.
+COPY packages/plugins/ packages/plugins/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
 COPY packages/widget/package.json packages/widget/
