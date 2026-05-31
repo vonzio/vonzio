@@ -25,6 +25,7 @@ jobs:
           cache: npm
       - run: npm install
       - run: npx tsc --project packages/shared/tsconfig.json --noEmit
+      - run: npx tsc --project packages/plugin-api/tsconfig.json --noEmit
       - run: npx tsc --project packages/core-server/tsconfig.json --noEmit
       - run: npx tsc --project packages/dashboard/tsconfig.json --noEmit
 
@@ -77,6 +78,7 @@ jobs:
         run: |
           npx vitest run \
             packages/shared \
+            packages/plugin-api \
             packages/core-server/src/orchestrator/retry.test.ts \
             packages/core-server/src/queue/queue.test.ts \
             packages/core-server/src/services/format-message.test.ts \
