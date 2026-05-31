@@ -88,6 +88,7 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
       profileService: ctx.core.profiles,
       workspaceService: ctx.core.workspaces,
       platformBotService: platformBot,
+      authHook: ctx.core.authHook,
     });
 
     // Real notification handler -- resolves req.recipient (integration

@@ -14,6 +14,8 @@ services:
       - vonzio-data:/app/data
       # Mount source code for hot reload
       - ../packages/shared/src:/app/packages/shared/src
+      - ../packages/plugin-api/src:/app/packages/plugin-api/src
+      - ../packages/plugins/telegram/src:/app/packages/plugins/telegram/src
       - ../packages/core-server/src:/app/packages/core-server/src
       - ../packages/dashboard/src:/app/packages/dashboard/src
       - ../packages/dashboard/public:/app/packages/dashboard/public
