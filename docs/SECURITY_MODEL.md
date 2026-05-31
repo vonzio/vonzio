@@ -57,6 +57,16 @@ provide. Bugs in any of these are in-scope for security reports.
   default username or password ships in the image.
 - **CSRF protection** on cookie-authenticated routes.
 - **Signed widget tokens** for embedded chat sessions, scoped per profile.
+- **Secret scanning in CI.** Every PR runs TruffleHog against the
+  diff and fails on verified credentials plus high-confidence
+  unverifiable patterns (SSH/PGP private keys, JWTs, custom service
+  tokens). Catches leaked credentials before merge.
+- **Vulnerability scanning in CI** (visibility, not yet a gate).
+  Every PR runs Trivy against the agent-base and server images and
+  prints HIGH/CRITICAL fixable CVEs in OS + library layers to the
+  job log. v0.1 keeps these scans non-blocking while we triage the
+  upstream-CVE backlog; v0.2 promotes them to merge gates once the
+  baseline is clean.
 
 ## What we do NOT protect against
 
