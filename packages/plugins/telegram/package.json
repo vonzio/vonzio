@@ -21,6 +21,10 @@
     "./frontend": {
       "types": "./src/frontend.tsx",
       "import": "./src/frontend.tsx"
+    },
+    "./service": {
+      "types": "./src/services/telegram-service.ts",
+      "import": "./src/services/telegram-service.ts"
     }
   },
   "scripts": {
