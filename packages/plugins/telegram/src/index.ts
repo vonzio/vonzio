@@ -26,6 +26,7 @@ import type { VonzioPlugin, PluginTelegramPlatformBot } from "@vonzio/plugin-api
 import { TelegramService } from "./services/telegram-service.js";
 import { buildTelegramNotifyHandler } from "./notify-handler.js";
 import { telegramSetupRoutes, resyncTelegramBotCommands } from "./routes/setup.js";
+import { buildTelegramPresenceProvider } from "./presence-provider.js";
 
 const configSchema = z.object({
   PLATFORM_TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -95,6 +96,12 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
     // id) -> bot_token + chat -> chunked MarkdownV2 send with
     // plain-text fallback -> thread-claim row persistence.
     ctx.notificationBus.registerHandler("telegram", buildTelegramNotifyHandler(ctx));
+
+    // Chat-surface presence provider. Replaces the three places where
+    // core used to read schema.telegram* directly (orchestrator
+    // resolvePresence, ask-user fallback hasInBandSurface +
+    // resolveUserId, workspace-service claimed-thread carve-out).
+    ctx.core.sessionPresence.register(buildTelegramPresenceProvider(ctx));
 
     // Fire-and-forget command-menu resync. Telegram caches the slash-
     // command menu client-side, so any deploy that changes BOT_COMMANDS

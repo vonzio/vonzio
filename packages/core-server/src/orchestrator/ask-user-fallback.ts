@@ -3,47 +3,49 @@
  *
  * Problem: the agent calls `AskUserQuestion`, but the user is no longer
  * watching the dashboard tab AND the session isn't bound to a chat
- * surface (no telegram_sessions row, no slack_thread_mappings row).
- * The in-band relays (WS, Telegram, Slack) silently no-op; the agent
- * hangs until task timeout.
+ * surface (no telegram chat, no slack thread). The in-band relays
+ * silently no-op; the agent hangs until task timeout.
  *
  * This module listens to `task:ask_user` and, when no in-band surface
  * delivered the question, falls back to the user's account-level
  * notification channels (Telegram DM via their bot, Slack DM, email)
  * with the question text + a dashboard URL so they can answer the
- * agent. The answer still flows through the normal channels — this
+ * agent. The answer still flows through the normal channels -- this
  * is a "tap on the shoulder," not an alternative answer pipeline.
  *
  * Dedupe: each ask_user emit is uniquely identified by `(session_id,
  * task_id, question_hash)` and we suppress repeat notifications inside
  * a short TTL so a misbehaving agent that re-asks every turn doesn't
- * spam the user. The in-process Map is fine here — pending questions
+ * spam the user. The in-process Map is fine here -- pending questions
  * are in-flight; server restart kills the task anyway.
  *
- * Per-user opt-out lives on the IntegrationService default channel —
+ * Per-user opt-out lives on the IntegrationService default channel --
  * users who haven't configured any notification channel never get a
  * fallback; the agent's prompt (presence section) already steers it
  * away from AskUserQuestion in that case.
+ *
+ * Chat-surface presence (and the "user has an account-wide bot DM"
+ * suppression check that used to read `user_integrations` for
+ * `type = telegram`) both go through the SessionPresenceRegistry --
+ * the fallback has no direct knowledge of which surfaces exist.
  */
 
-import type { DrizzleDB } from "../db/index.js";
-import { schema } from "../db/index.js";
-import { eq } from "drizzle-orm";
 import type { NotificationService } from "../services/notification-service.js";
 import type { SessionRegistry } from "../container/session-registry.js";
-import type { IntegrationService, TelegramConfig } from "../services/integration-service.js";
+import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import type { Logger } from "./orchestrator.js";
 
 export interface AskUserFallbackDeps {
-  db: DrizzleDB;
   sessionRegistry: SessionRegistry;
   notificationService: NotificationService;
-  // Needed to detect when the user has a LINKED Telegram bot, even if
-  // the session itself isn't bound to a Telegram chat. The Telegram
-  // ask_user relay extends to those cases (sends inline keyboard via
-  // the user's bot), so the fallback must suppress its plain-text
-  // notification to avoid double-pinging.
-  integrationService: IntegrationService;
+  /**
+   * Walks chat-surface providers to decide whether an in-band relay
+   * will already deliver the question. Replaces the direct
+   * telegram_sessions / slack_thread_mappings reads + the
+   * `integrationService.listByUserAndType("telegram")` linked-bot
+   * check that used to live here.
+   */
+  sessionPresence: SessionPresenceRegistry;
   dashboardUrl: string;
   log?: Logger;
 }
@@ -59,7 +61,7 @@ const NOTIFICATION_DEDUPE_TTL_MS = 60 * 1000;
 
 /**
  * Sketch the question down to one line for the notification body. The
- * full question is in the dashboard — the notification just hints what
+ * full question is in the dashboard -- the notification just hints what
  * the agent wants so the user can decide if it's worth opening.
  */
 function summarizeQuestion(input: unknown): string {
@@ -84,71 +86,43 @@ export function createAskUserFallback(deps: AskUserFallbackDeps) {
 
   /**
    * Tells us whether at least one in-band surface will render this
-   * question. The Telegram `task:ask_user` relay now widens beyond
-   * sessions with a `telegram_sessions` row to include any
-   * dashboard-origin session whose owner has a linked Telegram bot —
-   * so the suppression check has to match that wider reach, otherwise
-   * the user gets BOTH the inline-keyboard question AND a plain-text
-   * "tap on the shoulder" for the same ask.
-   *
-   * The three signals checked:
+   * question. Three signals checked:
    *   - Dashboard WS subscription live for this session
-   *   - telegram_sessions row binds the session to a chat
-   *   - slack_thread_mappings row binds the session to a thread
-   *   - workspace owner has at least one LINKED Telegram bot (means
-   *     the in-band Telegram relay will deliver via the owner's DM)
+   *   - A registered chat-surface provider reports the session as bound
+   *   - The session owner has an account-wide channel on a registered
+   *     provider (e.g. telegram with a linked bot DM that will receive
+   *     the inline-keyboard question)
+   *
+   * The last check matches the wider reach of the in-band Telegram
+   * `task:ask_user` relay (which fires for any dashboard-origin session
+   * whose owner has a linked bot) -- without it, the fallback would
+   * double-notify those users.
    */
   async function hasInBandSurface(sessionId: string): Promise<boolean> {
     if (deps.sessionRegistry.getConnectedSessionIds().has(sessionId)) return true;
-    const [tg, sl] = await Promise.all([
-      deps.db.select({ id: schema.telegramSessions.session_id })
-        .from(schema.telegramSessions)
-        .where(eq(schema.telegramSessions.session_id, sessionId))
-        .limit(1)
-        .catch(() => []),
-      deps.db.select({ id: schema.slackThreadMappings.session_id })
-        .from(schema.slackThreadMappings)
-        .where(eq(schema.slackThreadMappings.session_id, sessionId))
-        .limit(1)
-        .catch(() => []),
-    ]);
-    if (tg.length > 0 || sl.length > 0) return true;
+    const surfaces = await deps.sessionPresence.surfacesFor(sessionId);
+    if (surfaces.length > 0) return true;
 
-    // No chat surface bound to this session. But the Telegram relay
-    // also reaches dashboard-origin sessions whose owner has a linked
-    // Telegram bot — check that path so we don't double-notify.
+    // No session-bound surface. Check whether any registered provider
+    // delivers to the owner's account-wide channel (telegram with a
+    // linked bot, slack with a linked workspace DM, etc.).
     const workspace = deps.sessionRegistry.get(sessionId);
     if (!workspace) return false;
-    try {
-      const bots = await deps.integrationService.listByUserAndType(workspace.user_id, "telegram");
-      const anyLinked = bots.some((b) => {
-        const cfg = b.config as unknown as TelegramConfig;
-        return !!cfg.owner_tg_user_id;
-      });
-      return anyLinked;
-    } catch {
-      // If the integration lookup fails, fall through to "no surface"
-      // — better to over-notify than under-notify on an ask.
-      return false;
-    }
+    return deps.sessionPresence.anyHasOwnerSurface(workspace.user_id);
   }
 
   async function resolveUserId(sessionId: string): Promise<string | null> {
     const workspace = deps.sessionRegistry.get(sessionId);
     if (workspace?.user_id) return workspace.user_id;
-    // Fallback: the session might have been written to telegram_sessions
-    // by a /new before the workspace was registered. Read the binding.
-    const rows = await deps.db.select({ user_id: schema.telegramSessions.user_id })
-      .from(schema.telegramSessions)
-      .where(eq(schema.telegramSessions.session_id, sessionId))
-      .limit(1)
-      .catch(() => [] as Array<{ user_id: string }>);
-    return rows[0]?.user_id ?? null;
+    // Fallback: the session might have been written to a chat-surface
+    // binding by an inbound chat message before the workspace was
+    // registered. Walk registered providers for a binding-side lookup.
+    return deps.sessionPresence.resolveUserIdBySession(sessionId);
   }
 
   /**
    * Called from the orchestrator's task:ask_user listener (or wherever
-   * the relay is wired up). Fire-and-forget — never blocks the agent.
+   * the relay is wired up). Fire-and-forget -- never blocks the agent.
    */
   return async function onAskUser(taskId: string, sessionId: string | undefined, input: unknown): Promise<void> {
     if (!sessionId) return; // one-shot tasks: no surface, presence section already warned the agent
@@ -166,7 +140,7 @@ export function createAskUserFallback(deps: AskUserFallbackDeps) {
       const last = dedupe.get(dedupeKey);
       if (last && now - last < NOTIFICATION_DEDUPE_TTL_MS) return;
       dedupe.set(dedupeKey, now);
-      // Cheap GC — sweep stale entries on each call so the map doesn't
+      // Cheap GC -- sweep stale entries on each call so the map doesn't
       // grow unbounded across a long-running server.
       for (const [k, ts] of dedupe) {
         if (now - ts > NOTIFICATION_DEDUPE_TTL_MS) dedupe.delete(k);
@@ -179,7 +153,7 @@ export function createAskUserFallback(deps: AskUserFallbackDeps) {
       }
 
       const dashboardLink = `${dashboardRoot}/w/${sessionId}`;
-      // Plain-text notification body — NotificationService picks the
+      // Plain-text notification body -- NotificationService picks the
       // right channel per user (Telegram bot DM, Slack, email) and
       // handles channel-specific formatting. We deliberately don't
       // try to render Telegram inline keyboards here; the notification
@@ -209,4 +183,3 @@ export function createAskUserFallback(deps: AskUserFallbackDeps) {
     }
   };
 }
-

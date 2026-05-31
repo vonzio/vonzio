@@ -7,6 +7,7 @@ import { ConcurrencyLimiter } from "../rate-limit/concurrency-limiter.js";
 import { ContainerPool } from "../container/pool.js";
 import { SessionRegistry } from "../container/session-registry.js";
 import { Orchestrator, type OrchestratorDeps } from "./orchestrator.js";
+import { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { ProfileService } from "../services/profile-service.js";
 import { ApiKeyService } from "../services/api-key-service.js";
@@ -216,6 +217,7 @@ describe("Orchestrator", () => {
       skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills"),
       subagentService: new SubagentService(handle.db),
       gitProviderService: new GitProviderService(handle.db, ENCRYPTION_KEY),
+      sessionPresence: new SessionPresenceRegistry(),
       db: handle.db,
       config: {
         taskTimeoutSeconds: 300,
@@ -413,6 +415,7 @@ describe("Orchestrator", () => {
       skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills"),
       subagentService: new SubagentService(handle.db),
       gitProviderService: new GitProviderService(handle.db, ENCRYPTION_KEY),
+      sessionPresence: new SessionPresenceRegistry(),
       db: handle.db,
       config: orchestrator["deps"].config,
     });

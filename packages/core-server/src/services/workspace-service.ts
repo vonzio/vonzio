@@ -1,9 +1,10 @@
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
 import { SessionRegistry } from "../container/session-registry.js";
 import type { ContainerManager } from "@vonzio/shared";
 import type { Workspace, WorkspaceStatus } from "@vonzio/shared";
+import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 
 export interface WorkspaceFilters {
   userId?: string;
@@ -27,6 +28,7 @@ export class WorkspaceService {
     private db: DrizzleDB,
     private registry: SessionRegistry,
     private containerManager: ContainerManager,
+    private sessionPresence: SessionPresenceRegistry,
   ) {}
 
   get(sessionId: string): Workspace | null {
@@ -69,19 +71,13 @@ export class WorkspaceService {
     }
 
     // Exclude playbook-execution workspaces (session_id starts with "pb-")
-    // from the chat list UNLESS the user has actively engaged with them.
-    // "Engaged" = there's a telegram_playbook_threads row with
-    // claimed_at IS NOT NULL pointing at this session — meaning the user
-    // tapped "Reply here" or auto-claimed by typing a reply (feature #18).
-    // Without this carve-out, claimed playbook conversations would still
-    // be invisible to the user even though they actively continue them
-    // via Telegram.
-    const claimedPbSessions = new Set<string>(
-      (await this.db.select({ s: schema.telegramPlaybookThreads.session_id })
-        .from(schema.telegramPlaybookThreads)
-        .where(isNotNull(schema.telegramPlaybookThreads.claimed_at)))
-        .map((r) => r.s),
-    );
+    // from the chat list UNLESS the user has actively engaged with them
+    // on a chat surface (telegram claim via inline keyboard, slack
+    // reply in thread, etc.). The SessionPresenceRegistry aggregates
+    // engagement across every registered provider so claimed playbook
+    // conversations stay visible even when the standard pb-* filter
+    // would drop them.
+    const claimedPbSessions = await this.sessionPresence.listEngagedSessionIds();
     all = all.filter((w) => !w.session_id.startsWith("pb-") || claimedPbSessions.has(w.session_id));
 
     // Optional flag-based filters (default behavior unchanged: archived included, all stars).

@@ -11,6 +11,7 @@ import { ContainerPool } from "../container/pool.js";
 import { SessionRegistry } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { Orchestrator } from "../orchestrator/orchestrator.js";
+import { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { TaskService } from "../services/task-service.js";
 import { WorkspaceService } from "../services/workspace-service.js";
 import { ProfileService } from "../services/profile-service.js";
@@ -143,6 +144,7 @@ describe("REST API Routes", () => {
 
     const profileService = new ProfileService(handle.db, ENCRYPTION_KEY, apiKeyService);
 
+    const sessionPresence = new SessionPresenceRegistry();
     orchestrator = new Orchestrator({
       queue,
       containerManager: manager,
@@ -155,6 +157,7 @@ describe("REST API Routes", () => {
       skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills"),
       subagentService: new SubagentService(handle.db),
       gitProviderService: new GitProviderService(handle.db, ENCRYPTION_KEY),
+      sessionPresence,
       db: handle.db,
       config: {
         taskTimeoutSeconds: 300,
@@ -170,7 +173,7 @@ describe("REST API Routes", () => {
     orchestrator.start();
 
     const taskService = new TaskService(handle.db, queue, orchestrator);
-    const workspaceService = new WorkspaceService(handle.db, sessionRegistry, manager);
+    const workspaceService = new WorkspaceService(handle.db, sessionRegistry, manager, sessionPresence);
 
     const memoryService = new MemoryService(handle.db);
     const modelListService = new ModelListService(profileService, apiKeyService);

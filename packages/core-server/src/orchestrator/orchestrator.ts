@@ -11,6 +11,7 @@ import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
 import { buildPresenceSection, type Presence } from "./presence.js";
+import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
 import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../container/session-registry.js";
@@ -58,6 +59,12 @@ export interface OrchestratorDeps {
   memoryService?: MemoryService;
   secretVaultService?: SecretVaultService;
   integrationService?: IntegrationService;
+  /**
+   * Registered chat-surface providers (telegram, slack, ...).
+   * Iterated by resolvePresence to build the Reachability section
+   * without core having to read plugin-owned tables directly.
+   */
+  sessionPresence: SessionPresenceRegistry;
   eventLog?: EventLog;
   /**
    * Read at request time, not construction time — cp-server mutates
@@ -1396,28 +1403,16 @@ export class Orchestrator extends EventEmitter {
    */
   private async resolvePresence(sessionId: string | undefined): Promise<Presence> {
     if (!sessionId) {
-      return { dashboard: false, telegram: false, slack: false, any: false };
+      return { dashboard: false, surfaces: [], any: false };
     }
     const dashboard = this.deps.sessionRegistry.getConnectedSessionIds().has(sessionId);
-
-    // DB checks parallelized — the table-existence checks are cheap
-    // indexed lookups, but doing them sequentially adds two RTTs per
-    // task start.
-    const [telegramRows, slackRows] = await Promise.all([
-      this.deps.db.select({ id: schema.telegramSessions.session_id })
-        .from(schema.telegramSessions)
-        .where(eq(schema.telegramSessions.session_id, sessionId))
-        .limit(1)
-        .catch(() => [] as Array<{ id: string }>),
-      this.deps.db.select({ id: schema.slackThreadMappings.session_id })
-        .from(schema.slackThreadMappings)
-        .where(eq(schema.slackThreadMappings.session_id, sessionId))
-        .limit(1)
-        .catch(() => [] as Array<{ id: string }>),
-    ]);
-    const telegram = telegramRows.length > 0;
-    const slack = slackRows.length > 0;
-    return { dashboard, telegram, slack, any: dashboard || telegram || slack };
+    // Each registered chat-surface provider does its own table read
+    // (telegram via the plugin, slack via the still-in-core builtin).
+    // resolvePresence used to read these tables directly -- the
+    // SessionPresenceRegistry inverts that so the schemas can move
+    // out of core without orchestrator changes.
+    const surfaces = await this.deps.sessionPresence.surfacesFor(sessionId);
+    return { dashboard, surfaces, any: dashboard || surfaces.length > 0 };
   }
 
   private buildSystemPrompt(

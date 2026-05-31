@@ -90,6 +90,8 @@ import { NotificationBusImpl } from "./plugins/notification-bus.js";
 import { McpRegistryImpl } from "./plugins/mcp-registry.js";
 import { SchedulerImpl } from "./plugins/scheduler.js";
 import { loadPluginsFromEnv, teardownPlugins, type LoadedPlugin } from "./plugins/loader.js";
+import { SessionPresenceRegistry } from "./lib/session-presence.js";
+import { buildSlackPresenceProvider } from "./lib/builtin-presence-providers.js";
 
 export interface ServerDeps {
   config: Config;
@@ -253,6 +255,13 @@ export async function buildServer(deps: ServerDeps) {
     registrationEnabled: config.REGISTRATION_ENABLED,
   });
 
+  // Chat-surface presence registry: orchestrator + ask-user fallback +
+  // workspace-service all walk this instead of reading chat-plugin
+  // tables directly. Telegram registers its provider during plugin
+  // load; slack lives as a builtin until it's extracted (Phase 3E).
+  const sessionPresence = new SessionPresenceRegistry();
+  sessionPresence.register(buildSlackPresenceProvider(db));
+
   const orchestrator = new Orchestrator({
     queue,
     containerManager,
@@ -268,6 +277,7 @@ export async function buildServer(deps: ServerDeps) {
     memoryService,
     secretVaultService,
     integrationService,
+    sessionPresence,
     eventLog,
     vpnTunnelProvider: () => coreDeps.vpnTunnelProvider,
     // Late-bind: cp-server's registerCpServer mutates
@@ -295,7 +305,7 @@ export async function buildServer(deps: ServerDeps) {
 
   // Services
   const taskService = new TaskService(db, queue, orchestrator, profileService);
-  const workspaceService = new WorkspaceService(db, sessionRegistry, containerManager);
+  const workspaceService = new WorkspaceService(db, sessionRegistry, containerManager, sessionPresence);
   const playbookService = new PlaybookService(db, integrationService);
   const notificationService = new NotificationService({
     slackService,
@@ -311,10 +321,9 @@ export async function buildServer(deps: ServerDeps) {
   // can deliver, push a notification through the user's account-level
   // channels with a link back to the dashboard.
   const askUserFallback = createAskUserFallback({
-    db,
     sessionRegistry,
     notificationService,
-    integrationService,
+    sessionPresence,
     dashboardUrl: config.BETTER_AUTH_URL,
     log: server.log,
   });
@@ -898,6 +907,11 @@ export async function buildServer(deps: ServerDeps) {
       // Plugins whose routes need authenticated access opt into this
       // hook themselves. Same hook v1 uses.
       authHook,
+      // Plugins contribute chat-surface presence providers (telegram,
+      // slack-when-extracted, ...) so core's orchestrator + fallback
+      // logic can ask "is this session reachable?" without reading
+      // plugin-owned tables.
+      sessionPresence,
     });
     void scope; // unused -- see comment above
   });

@@ -5,6 +5,7 @@ import {
   type PluginContext,
   type PluginCore,
   type PluginLogger,
+  type PluginSessionPresenceRegistry,
   type VonzioPlugin,
 } from "@vonzio/plugin-api";
 import type { DB } from "../db/index.js";
@@ -179,6 +180,14 @@ export interface LoadPluginsOpts {
   profileService: ProfileServiceLike;
   workspaceService: WorkspaceServiceLike;
   authHook: import("fastify").onRequestHookHandler;
+  /**
+   * Chat-surface presence registry. Plugins receive the register-side
+   * of this via `ctx.core.sessionPresence` and add a provider in their
+   * init(); core's orchestrator + ask-user-fallback + workspace-
+   * service walk the same registry to ask "is this session
+   * reachable?" without coupling to plugin-owned tables.
+   */
+  sessionPresence: PluginSessionPresenceRegistry;
   /** Optional -- only telegram plugin uses it; absent in test setups. */
   telegramPlatformBot?: TelegramPlatformBotLike;
   /**
@@ -304,6 +313,7 @@ export function buildPluginContext<TConfig>(args: {
     },
     telegramPlatformBot: opts.telegramPlatformBot,
     authHook: opts.authHook,
+    sessionPresence: opts.sessionPresence,
   };
 
   // Typed facade over the raw EventEmitter -- plugins get exhaustive

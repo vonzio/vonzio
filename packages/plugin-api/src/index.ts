@@ -280,6 +280,83 @@ export type SessionEventName =
   | "task:failed";
 
 /**
+ * Agent-facing description of one chat surface. Surfaced verbatim in
+ * the system-prompt Reachability section that tells the agent where a
+ * `AskUserQuestion` call will be delivered. `label` is the human
+ * sentence shown to the agent ("Telegram (chat bound — may take
+ * minutes if the user isn't near their phone)"); `slow` is true for
+ * surfaces with phone-typing latency, which triggers the
+ * "phrase as 2-4 button options" steer.
+ */
+export interface PresenceSurfaceMetadata {
+  label: string;
+  slow?: boolean;
+}
+
+/**
+ * One chat-surface provider that core's presence/fallback logic walks
+ * to decide whether a session is reachable. Plugins register one of
+ * these for each surface they own (e.g. the telegram plugin
+ * registers `{ surface: "telegram", ... }`). Implementations may
+ * leave optional methods undefined when they don't apply -- the
+ * registry tolerates partial providers.
+ *
+ * The provider replaces the direct `db.select().from(schema.<plugin-
+ * table>)` calls that core used to do for each surface, breaking the
+ * reverse-coupling that blocks plugin schema moves.
+ */
+export interface SessionPresenceProvider {
+  /**
+   * Stable surface key. Used for dedup (registering two providers
+   * for the same key throws at boot) and for logging. Conventionally
+   * matches the plugin name.
+   */
+  surface: string;
+  /** Agent-visible description; rendered verbatim. */
+  metadata: PresenceSurfaceMetadata;
+  /**
+   * "Is this session bound to a chat on my surface?" Used by the
+   * orchestrator's Reachability section and by ask-user fallback's
+   * in-band-suppression check. Errors are swallowed by the registry
+   * (treated as "no surface") so a flaky provider can't block a task.
+   */
+  hasSession(sessionId: string): Promise<boolean>;
+  /**
+   * "Will my surface deliver to this user's account-wide channel,
+   * regardless of session binding?" Telegram returns true if the user
+   * has a linked bot DM; Slack returns true if the user has a linked
+   * workspace DM. Used only by ask-user fallback to suppress its
+   * plain-text notification when the in-band relay will fire.
+   */
+  hasOwnerSurface?(userId: string): Promise<boolean>;
+  /**
+   * Session ids the user has actively engaged with via this surface
+   * (e.g. claimed a playbook thread). Used by the workspace list to
+   * keep these visible even when the standard "hide playbook
+   * executions" filter would drop them.
+   */
+  listEngagedSessionIds?(): Promise<Set<string>>;
+  /**
+   * Fallback user_id lookup when the session isn't in the in-process
+   * registry (e.g. a brand-new chat-initiated session hasn't reached
+   * the workspace registry yet). Walked by ask-user fallback in
+   * registry order; first non-null wins.
+   */
+  resolveUserIdBySession?(sessionId: string): Promise<string | null>;
+}
+
+/**
+ * Registration-side surface plugins program against. Plugins receive
+ * this via `PluginCore.sessionPresence` and call `register(provider)`
+ * at init() to contribute their surface. The query-side (used by
+ * core's orchestrator + fallback + workspace-service) is internal --
+ * plugins never iterate the registry themselves.
+ */
+export interface PluginSessionPresenceRegistry {
+  register(provider: SessionPresenceProvider): void;
+}
+
+/**
  * Core services exposed to plugins. Add fields here only with strong
  * justification -- the surface is a stability commitment.
  */
@@ -342,6 +419,15 @@ export interface PluginCore {
    * via a shared secret) skip this entirely.
    */
   authHook: import("fastify").onRequestHookHandler;
+
+  /**
+   * Where plugins contribute a chat-surface presence provider. Lets
+   * core's orchestrator + ask-user-fallback + workspace-service ask
+   * "is this session reachable on a chat surface?" without reading
+   * plugin-owned tables directly. The plugin's provider does the
+   * actual DB read.
+   */
+  sessionPresence: PluginSessionPresenceRegistry;
 }
 
 /** Minimal logger contract. Backed by core's pino logger at runtime. */
