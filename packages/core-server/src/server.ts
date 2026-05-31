@@ -55,18 +55,11 @@ import { tellerConnectRoutes } from "./routes/teller-connect.js";
 import { slackEventsRoutes } from "./routes/slack-events.js";
 // telegramSetupRoutes + resyncTelegramBotCommands now live in
 // @vonzio/plugin-telegram. The plugin's init() registers the same
-// /v1/integrations/telegram/* routes (via routePrefix:
-// { kind: "absolute" }) and fires resyncTelegramBotCommands at boot.
-// Nothing references this module in core anymore -- left in place
-// only because telegram-events.ts is still here and PlatformBotService
-// init still happens in this file.
-import { telegramEventsRoutes } from "./routes/telegram-events.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { IntegrationService } from "./services/integration-service.js";
 import { MemoryService } from "./services/memory-service.js";
 import { SlackService } from "./services/slack-service.js";
 import { TelegramService } from "./services/telegram-service.js";
-import { PlatformBotService } from "./services/platform-bot-service.js";
 import { SecretVaultService } from "./services/secret-vault-service.js";
 import { PlaybookService } from "./services/playbook-service.js";
 import { PlaybookScheduler } from "./services/playbook-scheduler.js";
@@ -233,9 +226,11 @@ export async function buildServer(deps: ServerDeps) {
   const memoryService = new MemoryService(db);
   const secretVaultService = new SecretVaultService(db, config.ENCRYPTION_KEY);
   const slackService = new SlackService();
+  // TelegramService kept in core only as a vestigial NotificationService
+  // dep -- never called there. Will be removed when notification-service.ts
+  // drops its now-unused telegramService field.
   const telegramService = new TelegramService();
   const tellerClient = new TellerClient(config);
-  const platformBotService = new PlatformBotService(config, telegramService, server.log);
 
   containerPool.setSessionRegistry(sessionRegistry, (containerId) => {
     server.log.info({ containerId }, "Orphan container removed");
@@ -757,15 +752,9 @@ export async function buildServer(deps: ServerDeps) {
     modelListService,
   });
 
-  // Telegram webhook (no auth — verified via per-bot secret_token header)
-  server.register(telegramEventsRoutes, {
-    config, db, integrationService, telegramService,
-    taskService, profileService, sessionRegistry, workspaceService, orchestrator, eventLog,
-    connectionManager,
-    imageRewriterService,
-    platformBotService,
-    modelListService,
-  });
+  // Telegram webhook + outbound relay now live in
+  // @vonzio/plugin-telegram (Phase 3D.1d.1). PlatformBotService is
+  // constructed inside the plugin's init() instead of here.
 
   // /admin/* routes — admin role auth scoped here only
   server.register(adminRoutes, { auth, db, tokenValidator: coreDeps.tokenValidator, profileService, apiKeyService, toolFileService, skillService, subagentService, gitProviderService, containerManager });
@@ -907,11 +896,6 @@ export async function buildServer(deps: ServerDeps) {
       connectionManager,
       imageRewriterService,
       modelListService,
-      // Transitional: telegram-events.ts is still in core, so the
-      // singleton PlatformBotService is constructed here and shared
-      // with the plugin's setup routes via PluginCore. Goes away when
-      // telegram-events.ts moves into the plugin.
-      telegramPlatformBot: platformBotService,
       // Orchestrator extends node:events.EventEmitter, so it satisfies
       // SessionEventEmitterLike directly. Plugins that subscribe via
       // ctx.sessionEvents.on(...) get a thin typed facade over it.
@@ -980,15 +964,9 @@ export async function buildServer(deps: ServerDeps) {
     connectionManager.start();
     playbookScheduler.start();
     metrics.startPeriodicFlush(config.METRICS_FLUSH_INTERVAL_SECS * 1000);
-    // Best-effort: registers the platform Telegram bot's webhook if the
-    // env vars are set. Silent no-op otherwise. Never throws — failure
-    // disables the feature without taking the server down.
-    await platformBotService.init();
-    // resyncTelegramBotCommands moved to @vonzio/plugin-telegram --
-    // the plugin's init() fires it on boot. platformBot.init() above
-    // is async and runs in onReady; the plugin's setup routes already
-    // hold a reference to platformBotService and only deref its
-    // metadata at request time, by which point init() has completed.
+    // PlatformBotService now lives in @vonzio/plugin-telegram and is
+    // init-fired from the plugin's init(). resyncTelegramBotCommands
+    // too.
 
     server.log.info("Vonzio server ready");
   });

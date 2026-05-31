@@ -182,6 +182,11 @@ export interface PluginIntegration {
   type: string;
   config: Record<string, unknown>;
   enabled: boolean;
+  /**
+   * Last-modified timestamp (ISO-8601). Plugins use this for
+   * optimistic-locking writes -- see `update({...}, { expectUpdatedAt })`.
+   */
+  updated_at: string;
 }
 
 /**
@@ -213,7 +218,17 @@ export interface PluginIntegrationLookup {
    */
   backfillExternalId(id: string): Promise<void>;
   create(userId: string, type: string, config: Record<string, unknown>, scopeInput?: unknown): Promise<PluginIntegration>;
-  update(id: string, input: Partial<{ config: Record<string, unknown>; enabled: boolean; scope: string; profile_ids: string[] }>): Promise<PluginIntegration | null>;
+  /**
+   * Update an integration row. `opts.expectUpdatedAt` gates the write
+   * on the matching `updated_at` value -- used by the chat-surface
+   * pairing flow to make /link claims race-safe (the loser sees a
+   * null return and refuses without echoing "Linked.").
+   */
+  update(
+    id: string,
+    input: Partial<{ config: Record<string, unknown>; enabled: boolean; scope: string; profile_ids: string[] }>,
+    opts?: { expectUpdatedAt?: string },
+  ): Promise<PluginIntegration | null>;
   delete(id: string): Promise<void>;
 }
 
@@ -228,11 +243,17 @@ export interface PluginIntegrationLookup {
  * from pulling in that wider type tree.
  */
 export interface PluginProfileLookup {
-  list(userId: string): Promise<Array<{ id: string; slug: string | null; name: string }>>;
   /**
-   * Single-row fetch by id. Returns the full Profile type from
-   * @vonzio/shared; use `profileResolver.getResolved` when you need
-   * the resolved variant (credentials, env, setup_commands, ...).
+   * Returns the full Profile shape (slug, name, model, default_tools,
+   * persistent_sessions, bound_profile_id, ...). Chat-surface pickers
+   * need most of these fields; mirroring a narrow subset structurally
+   * would silently drift as features land.
+   */
+  list(userId: string): Promise<Array<import("@vonzio/shared").Profile>>;
+  /**
+   * Single-row fetch by id. Same full Profile shape as `list`. Use
+   * `profileResolver.getResolved` when you need the resolved variant
+   * (credentials, env, setup_commands, ...).
    */
   get(profileId: string): Promise<import("@vonzio/shared").Profile | null>;
 }
@@ -247,11 +268,13 @@ export interface PluginProfileLookup {
  *    line of chat" updates (`update`)
  */
 export interface PluginWorkspaceLookup {
-  get(sessionId: string): {
-    session_id: string;
-    user_id: string;
-    profile_id?: string | null;
-  } | null;
+  /**
+   * Returns the full Workspace shape from @vonzio/shared (session_id,
+   * user_id, profile_id, container_id, name, status, model_override,
+   * tags, ...). Chat surfaces use most of these for cross-resume,
+   * model display, and title updates.
+   */
+  get(sessionId: string): import("@vonzio/shared").Workspace | null;
   list(filters: {
     userId?: string;
     orgId?: string;
@@ -281,15 +304,15 @@ export interface PluginWorkspaceLookup {
 }
 
 /**
- * Telegram-specific platform-bot surface. Transitional -- exposed on
- * PluginCore until telegram-events.ts moves into the plugin, at
- * which point PlatformBotService instantiation moves with it and
- * this field disappears from PluginCore. Until then, the telegram
- * plugin's setup routes need a reference to the in-core singleton
- * that telegram-events also holds, so we expose it here.
+ * Telegram platform-bot surface. As of Phase 3D.1d.1 the concrete
+ * class is plugin-internal (@vonzio/plugin-telegram/services/
+ * platform-bot-service.ts); this interface is the structural shape
+ * the plugin's own setup routes accept so they don't reach into the
+ * service module directly.
  *
- * Structural typing -- the concrete class lives in core-server's
- * services/. Other plugins ignore this field.
+ * No longer exposed on PluginCore -- other plugins should ignore it.
+ * Kept exported so the telegram plugin's setup-routes signature can
+ * reference the contract type instead of the concrete class.
  */
 export interface PluginTelegramPlatformBot {
   getMetadata(): { botUserId: string; botUsername: string } | null;
@@ -429,6 +452,12 @@ export interface PluginTaskInput {
   model?: string;
   effort?: string;
   timeout_seconds?: number;
+  /**
+   * Inline file attachments (images, PDFs, text docs) the chat
+   * surface received with this message. Forwarded to the agent
+   * verbatim; the orchestrator handles MIME-typed presentation.
+   */
+  attachments?: Array<import("@vonzio/shared").TaskAttachment>;
 }
 
 /**
@@ -604,13 +633,6 @@ export interface PluginCore {
    * checks on workspace-bound resources.
    */
   workspaces: PluginWorkspaceLookup;
-
-  /**
-   * Telegram-specific transitional bridge. See PluginTelegramPlatformBot
-   * for why this lives on PluginCore until telegram-events.ts moves.
-   * Other plugins should ignore this field.
-   */
-  telegramPlatformBot?: PluginTelegramPlatformBot;
 
   /**
    * Auth hook plugins can opt into. Plugins with routes that need

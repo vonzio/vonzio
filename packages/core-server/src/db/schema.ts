@@ -305,68 +305,12 @@ export const slackThreadMappings = pgTable(
   ],
 );
 
-// TODO(3D.1d): delete the three telegram_* pgTable definitions below
-// once telegram-events.ts moves to the plugin. The plugin owns the
-// authoritative schema in packages/plugins/telegram/src/db/schema.ts
-// as of 3D.1c; these mirrors stay only because telegram-events.ts is
-// still in core and imports from this file.
-
-export const telegramActiveSessions = pgTable(
-  "telegram_active_sessions",
-  {
-    bot_user_id: text("bot_user_id").notNull(),
-    chat_id: text("chat_id").notNull(),
-    tg_user_id: text("tg_user_id").notNull(),
-    session_id: text("session_id").notNull(),
-    profile_id: text("profile_id").notNull(),
-    user_id: text("user_id").notNull(),
-    last_used_at: text("last_used_at").notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.bot_user_id, table.chat_id, table.tg_user_id] }),
-    index("telegram_active_session_idx").on(table.session_id),
-  ],
-);
-
-export const telegramPlaybookThreads = pgTable(
-  "telegram_playbook_threads",
-  {
-    bot_user_id: text("bot_user_id").notNull(),
-    chat_id: text("chat_id").notNull(),
-    // BIGINT-shaped Telegram message_id stored as text — JSON numbers
-    // lose precision above 2^53 and Drizzle's bigint binding is awkward.
-    // Comparisons are exact-string anyway.
-    message_id: text("message_id").notNull(),
-    session_id: text("session_id").notNull(),
-    label: text("label"),
-    sent_at: text("sent_at").notNull(),
-    claimed_at: text("claimed_at"),
-    dismissed_at: text("dismissed_at"),
-  },
-  (table) => [
-    primaryKey({ columns: [table.bot_user_id, table.chat_id, table.message_id] }),
-    index("telegram_playbook_threads_chat_sent_idx").on(table.bot_user_id, table.chat_id, table.sent_at),
-    index("telegram_playbook_threads_session_idx").on(table.session_id),
-  ],
-);
-
-export const telegramSessions = pgTable(
-  "telegram_sessions",
-  {
-    session_id: text("session_id").primaryKey(),
-    bot_user_id: text("bot_user_id").notNull(),
-    chat_id: text("chat_id").notNull(),
-    tg_user_id: text("tg_user_id").notNull(),
-    user_id: text("user_id").notNull(),
-    profile_id: text("profile_id").notNull(),
-    title: text("title"),
-    started_at: text("started_at").notNull(),
-    ended_at: text("ended_at"),
-  },
-  (table) => [
-    index("telegram_sessions_chat_idx").on(table.bot_user_id, table.chat_id, table.started_at),
-  ],
-);
+// The three telegram_* table definitions moved to
+// packages/plugins/telegram/src/db/schema.ts in Phase 3D.1c and
+// telegram-events.ts itself moved in 3D.1d.1, so core no longer
+// references the tables. Their CREATE TABLE migrations (formerly
+// v14 + v19) also got deleted from migrations.ts -- the plugin's
+// idempotent 0001 migration creates them on first boot now.
 
 export const metrics = pgTable(
   "metrics",

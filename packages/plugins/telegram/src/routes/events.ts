@@ -1,56 +1,116 @@
+// Telegram inbound webhook + outbound (orchestrator -> chat) relay.
+// Moved here from packages/core-server/src/routes/telegram-events.ts in
+// Phase 3D.1d.1. The full surface (incoming /message + /callback_query
+// routing, the 5 task:* event handlers) is unchanged; the only diffs
+// from the in-core version are:
+//
+//   - imports rewired to plugin-owned modules + @vonzio/plugin-api
+//     contracts instead of relative ../services/* paths
+//   - schema imports point at the plugin-owned drizzle definitions
+//     (see ../db/schema.ts) rather than core's mirrors
+//   - the 5 orchestrator event subscriptions go through
+//     opts.sessionEvents (the typed facade from Phase 3D.1a/#76)
+//     instead of orchestrator.on(...)
+//   - sessionRegistry.register call adjusted for the narrower 4-arg
+//     PluginSessionLifecycle.register signature
+//   - PlatformBotService is the plugin-local class
+
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
 import { eq, and, desc, gte, isNull } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   parseThreadCallback,
   switchedThreadDisclaimer,
   THREAD_CLAIM_WINDOW_MS,
 } from "@vonzio/shared";
-import type { Config } from "../config.js";
-import type { DrizzleDB } from "../db/index.js";
-import { schema } from "../db/index.js";
-import type { IntegrationService, TelegramConfig } from "../services/integration-service.js";
+import type { TaskAttachment, Workspace } from "@vonzio/shared";
+import type {
+  PluginIntegrationLookup,
+  PluginTaskSubmitter,
+  PluginProfileLookup,
+  PluginProfileResolver,
+  PluginSessionLifecycle,
+  PluginWorkspaceLookup,
+  PluginOrchestrator,
+  PluginEventLog,
+  PluginConnectionManager,
+  PluginImageRewriter,
+  PluginModelList,
+  SessionEvents,
+} from "@vonzio/plugin-api";
 import type { TelegramService } from "../services/telegram-service.js";
 import { markdownToTelegram, splitTelegramMessage } from "../services/telegram-service.js";
-import type { TaskService } from "../services/task-service.js";
-import type { TaskAttachment } from "@vonzio/shared";
-import type { ProfileService } from "../services/profile-service.js";
-import type { SessionRegistry } from "../container/session-registry.js";
-import type { WorkspaceService } from "../services/workspace-service.js";
-import type { Orchestrator } from "../orchestrator/orchestrator.js";
-import type { EventLog } from "../events/event-log.js";
-import type { ConnectionManager } from "../ws/connection.js";
-import type { ImageRewriterService } from "../services/image-rewriter-service.js";
-import type { PlatformBotService } from "../services/platform-bot-service.js";
-import type { ModelListService } from "../services/model-list-service.js";
-import { resolveWorkspaceModel } from "../lib/model-resolution.js";
+import { PlatformBotService } from "../services/platform-bot-service.js";
+import type { TelegramConfig } from "../types.js";
+import {
+  telegramSessions,
+  telegramActiveSessions,
+  telegramPlaybookThreads,
+} from "../db/schema.js";
+
+/**
+ * Inline schema namespace so the original
+ * `schema.telegramSessions` / `schema.telegramActiveSessions` /
+ * `schema.telegramPlaybookThreads` call sites move verbatim with no
+ * destructuring. Keeps the file diff small.
+ */
+const schema = {
+  telegramSessions,
+  telegramActiveSessions,
+  telegramPlaybookThreads,
+};
+
+/**
+ * Single source of truth for "which model would the next agent turn
+ * use" at picker time (no task in flight). Inlined from core's
+ * `lib/model-resolution.ts` -- it was a 3-line ternary not worth a
+ * cross-package import.
+ */
+function resolveWorkspaceModel(
+  workspace: Pick<Workspace, "model_override"> | null | undefined,
+  profile: { model?: string | null } | null | undefined,
+): string | null {
+  return workspace?.model_override ?? profile?.model ?? null;
+}
+
+/**
+ * Drizzle handle the file uses for db.select / db.insert / db.update.
+ * Plugin-api types `PluginCore.db` as `unknown`; we cast once at the
+ * registration boundary and the rest of the file stays drizzle-typed.
+ */
+type DrizzleDB = NodePgDatabase<Record<string, never>>;
 
 export interface TelegramEventsRoutesOptions {
-  config: Config;
+  config: { BETTER_AUTH_URL: string };
   db: DrizzleDB;
-  integrationService: IntegrationService;
+  integrationService: PluginIntegrationLookup;
   telegramService: TelegramService;
-  taskService: TaskService;
-  profileService: ProfileService;
-  sessionRegistry: SessionRegistry;
-  workspaceService: WorkspaceService;
-  orchestrator: Orchestrator;
-  eventLog: EventLog;
+  taskService: PluginTaskSubmitter;
+  profileService: PluginProfileLookup & PluginProfileResolver;
+  sessionRegistry: PluginSessionLifecycle;
+  workspaceService: PluginWorkspaceLookup;
+  orchestrator: PluginOrchestrator;
+  eventLog: PluginEventLog;
   // Used to push user_message events to any dashboard WS clients
   // watching this session so Telegram chat appears live in the workspace
   // view instead of only after a refresh.
-  connectionManager: ConnectionManager;
+  connectionManager: PluginConnectionManager;
   // Wraps the agent-output-rewriter + container-name cache + token signing.
   // Used to extract inline images for sendPhoto follow-ups.
-  imageRewriterService: ImageRewriterService;
+  imageRewriterService: PluginImageRewriter;
   // Source of truth for the platform bot's token + metadata. Used to
   // resolve runtime bot_token for is_platform_owned rows and to dispatch
   // incoming webhooks to the right user-integration (the platform bot's
   // bot_user_id maps to many rows — one per paired user).
   platformBotService: PlatformBotService;
   // Shared cached provider lookup for the /model picker.
-  modelListService: ModelListService;
+  modelListService: PluginModelList;
+  // Typed facade over orchestrator's EventEmitter. Backs the 5
+  // task:* subscriptions inside setupTelegramRelay; replaces the
+  // direct orchestrator.on(...) calls the file used to do.
+  sessionEvents: SessionEvents;
 }
 
 
@@ -891,7 +951,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
 
       // Ownership defense: a leaked callback payload can't be used to
       // mutate someone else's workspace.
-      const workspace = sessionRegistry.get(slot.sessionId);
+      const workspace = workspaceService.get(slot.sessionId);
       if (!workspace || workspace.user_id !== integration.user_id) {
         await telegramService.answerCallbackQuery(cfg.bot_token, cq.id, { text: "Not authorized." });
         return;
@@ -984,7 +1044,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
       if (mapping) {
         profileId = mapping.profile_id;
       } else {
-        const workspace = sessionRegistry.get(sessionId);
+        const workspace = workspaceService.get(sessionId);
         if (!workspace) return; // session evaporated; drop answer
         // Ownership defense: the button taps come from the bot's owner
         // (callback_query.from.id already gated above), but make sure
@@ -1103,7 +1163,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
       return;
     }
 
-    const workspace = sessionRegistry.get(active.session_id);
+    const workspace = workspaceService.get(active.session_id);
     if (!workspace || workspace.user_id !== integration.user_id) {
       await telegramService.sendMessage(cfg.bot_token, {
         chat_id: chatId,
@@ -1429,7 +1489,10 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
       ? (prompt.length > 50 ? prompt.slice(0, 47) + "..." : prompt)
       : "New session...";
 
-    await sessionRegistry.register(sessionId, null, integration.user_id, profile.id, persistent);
+    // PluginSessionLifecycle.register drops the legacy containerId
+    // param -- chat-initiated sessions never have one at registration
+    // time (the container is provisioned later by wakeWorkspaceContainer).
+    await sessionRegistry.register(sessionId, integration.user_id, profile.id, { persistent });
     await workspaceService.update(sessionId, { name: title });
 
     await db.insert(schema.telegramSessions).values({
@@ -1525,7 +1588,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
     const profileId = active.profile_id;
 
     // Wake the container if it's resumable.
-    const session = sessionRegistry.get(sessionId);
+    const session = workspaceService.get(sessionId);
     if (session && session.status === "resumable") {
       sessionRegistry.extendExpiry(sessionId, new Date(Date.now() + 86400 * 1000).toISOString());
       sessionRegistry.setStatus(sessionId, "active");
@@ -1655,7 +1718,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
 
 // ---- Orchestrator → Telegram relay ----
 function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyInstance) {
-  const { orchestrator, db, integrationService, telegramService, profileService, workspaceService, eventLog, imageRewriterService, platformBotService } = opts;
+  const { orchestrator, db, integrationService, telegramService, profileService, workspaceService, eventLog, imageRewriterService, platformBotService, sessionEvents } = opts;
 
   async function getTelegramContext(sessionId: string) {
     const rows = await db.select().from(schema.telegramSessions)
@@ -1749,7 +1812,7 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     return opts.sessionRegistry.getConnectedSessionIds().has(sessionId);
   }
 
-  orchestrator.on("task:token", (_taskId: string, sessionId: string | undefined, text: string) => {
+  sessionEvents.on("task:token", (_taskId: string, sessionId: string | undefined, text: string) => {
     if (!sessionId) return;
     if (dashboardIsLive(sessionId)) return; // user is reading on the dashboard, don't echo to Telegram
     const buffer = sessionBuffers.get(sessionId);
@@ -1830,14 +1893,14 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     ).catch(() => {});
   }
 
-  orchestrator.on("task:tool_use", (_taskId: string, sessionId: string | undefined, tool: string) => {
+  sessionEvents.on("task:tool_use", (_taskId: string, sessionId: string | undefined, tool: string) => {
     if (!sessionId) return;
     if (dashboardIsLive(sessionId)) return;
     const buffer = sessionBuffers.get(sessionId);
     if (buffer) buffer.toolCalls.push(tool);
   });
 
-  orchestrator.on("task:ask_user", async (_taskId: string, sessionId: string | undefined, input: unknown) => {
+  sessionEvents.on("task:ask_user", async (_taskId: string, sessionId: string | undefined, input: unknown) => {
     if (!sessionId) return;
     if (dashboardIsLive(sessionId)) return; // dashboard renders its own QuestionPicker
     // findAskUserTelegramContext widens beyond getTelegramContext: it
@@ -1880,7 +1943,7 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     }
   });
 
-  orchestrator.on("task:done", async (_taskId: string, sessionId: string | undefined, result?: { text: string }) => {
+  sessionEvents.on("task:done", async (_taskId: string, sessionId: string | undefined, result?: { text?: string }) => {
     if (!sessionId) return;
     stopTypingRefresh(sessionId);
     if (dashboardIsLive(sessionId)) {
@@ -2039,7 +2102,7 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     }
   });
 
-  orchestrator.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: string) => {
+  sessionEvents.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: string) => {
     if (!sessionId) return;
     stopTypingRefresh(sessionId);
     clearStreamingState(sessionId);
@@ -2131,8 +2194,8 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
  * row platform integrations have always had external_id set.
  */
 async function findIntegrationByBotId(
-  db: DrizzleDB,
-  integrationService: IntegrationService,
+  _db: DrizzleDB,
+  integrationService: PluginIntegrationLookup,
   botId: string,
   fromId: string | undefined,
   messageText: string | undefined,
@@ -2161,16 +2224,16 @@ async function findIntegrationByBotId(
     return null;
   }
 
-  // Slow path: a row created before migration 15 may have a NULL external_id.
-  // Scan, decrypt, match on cfg.bot_user_id, and backfill the column so the
-  // next hit takes the fast path. This costs one decrypt per legacy row,
-  // amortized across all future webhooks. Single-row legacy only — platform
-  // rows always have external_id populated.
-  const rows = await db.select().from(schema.userIntegrations)
-    .where(and(eq(schema.userIntegrations.type, "telegram"), isNull(schema.userIntegrations.external_id)));
-  for (const row of rows) {
-    const integration = await integrationService.get(row.id, { decrypt: true });
-    if (!integration) continue;
+  // Slow path: a row created before migration 15 may have a NULL
+  // external_id. Walk every telegram integration, match on
+  // cfg.bot_user_id, and backfill the column so the next hit takes
+  // the fast path. After 3D.1d.1 the plugin can't read
+  // user_integrations directly (it's a core-owned table) so we use
+  // listByType + filter -- a touch wider than the legacy
+  // `WHERE external_id IS NULL` scan, but listByType already does the
+  // decrypt pass and the cost amortizes across all future webhooks.
+  const all = await integrationService.listByType("telegram", { decrypt: true });
+  for (const integration of all) {
     const cfg = integration.config as unknown as TelegramConfig;
     if (cfg.bot_user_id === botId) {
       await integrationService.backfillExternalId(integration.id);

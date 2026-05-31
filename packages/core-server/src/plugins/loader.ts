@@ -118,6 +118,7 @@ type IntegrationRow = {
   type: string;
   config: Record<string, unknown>;
   enabled: boolean;
+  updated_at: string;
 };
 
 export interface IntegrationServiceLike {
@@ -131,7 +132,11 @@ export interface IntegrationServiceLike {
   // Signature mirrors core's IntegrationService.create (positional
   // userId/type/config + optional scopeInput).
   create(userId: string, type: string, config: Record<string, unknown>, scopeInput?: unknown): Promise<IntegrationRow>;
-  update(id: string, input: Partial<{ config: Record<string, unknown>; enabled: boolean; scope: string; profile_ids: string[] }>): Promise<IntegrationRow | null>;
+  update(
+    id: string,
+    input: Partial<{ config: Record<string, unknown>; enabled: boolean; scope: string; profile_ids: string[] }>,
+    opts?: { expectUpdatedAt?: string },
+  ): Promise<IntegrationRow | null>;
   // IntegrationService.delete actually returns boolean (did-it-exist).
   // The loader adapter narrows that to void in the plugin-facing
   // contract, but this structural type captures the real signature.
@@ -139,7 +144,7 @@ export interface IntegrationServiceLike {
 }
 
 export interface ProfileServiceLike {
-  list(userId: string): Promise<Array<{ id: string; slug: string | null; name: string }>>;
+  list(userId: string): Promise<Array<import("@vonzio/shared").Profile>>;
   // getResolved is on ProfileService; structural type lets the loader
   // accept a partial implementation (e.g. test mocks that don't need
   // the heavier resolution path).
@@ -169,6 +174,7 @@ export interface TaskServiceLike {
       model?: string;
       effort?: string;
       timeout_seconds?: number;
+      attachments?: Array<import("@vonzio/shared").TaskAttachment>;
     },
     callerProfileIds: string[],
   ): Promise<{ task_id: string; status: string; created_at: string }>;
@@ -241,11 +247,7 @@ export interface ModelListServiceLike {
 }
 
 export interface WorkspaceServiceLike {
-  get(sessionId: string): {
-    session_id: string;
-    user_id: string;
-    profile_id?: string | null;
-  } | null;
+  get(sessionId: string): import("@vonzio/shared").Workspace | null;
   list(filters: {
     userId?: string;
     orgId?: string;
@@ -272,13 +274,6 @@ export interface WorkspaceServiceLike {
     },
     opts?: { orgId?: string },
   ): Promise<import("@vonzio/shared").Workspace | null>;
-}
-
-export interface TelegramPlatformBotLike {
-  getMetadata(): { botUserId: string; botUsername: string } | null;
-  getToken(): string | null;
-  getWebhookSecret(): string | null;
-  isConfigured(): boolean;
 }
 
 /**
@@ -328,8 +323,6 @@ export interface LoadPluginsOpts {
    * reachable?" without coupling to plugin-owned tables.
    */
   sessionPresence: PluginSessionPresenceRegistry;
-  /** Optional -- only telegram plugin uses it; absent in test setups. */
-  telegramPlatformBot?: TelegramPlatformBotLike;
   /**
    * Backs `ctx.sessionEvents`. Orchestrator satisfies this directly
    * (it extends EventEmitter). When absent (test setups), plugins
@@ -442,7 +435,7 @@ export function buildPluginContext<TConfig>(args: {
       listByTypeAndExternalId: (type, ext, o) => opts.integrationService.listByTypeAndExternalId(type, ext, o),
       backfillExternalId: (id) => opts.integrationService.backfillExternalId(id),
       create: (userId, type, config, scopeInput) => opts.integrationService.create(userId, type, config, scopeInput),
-      update: (id, input) => opts.integrationService.update(id, input),
+      update: (id, input, updateOpts) => opts.integrationService.update(id, input, updateOpts),
       // IntegrationService.delete returns boolean (did-it-exist); the
       // plugin contract is fire-and-forget so we drop the return.
       delete: async (id) => { await opts.integrationService.delete(id); },
@@ -457,7 +450,6 @@ export function buildPluginContext<TConfig>(args: {
       update: (sessionId, fields, updateOpts) =>
         opts.workspaceService.update(sessionId, fields, updateOpts),
     },
-    telegramPlatformBot: opts.telegramPlatformBot,
     authHook: opts.authHook,
     sessionPresence: opts.sessionPresence,
     // Forwarders -- each one is a thin pass-through to the matching

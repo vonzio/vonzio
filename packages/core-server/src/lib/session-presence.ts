@@ -3,15 +3,14 @@
 // exposes aggregate queries to the orchestrator, ask-user fallback,
 // and workspace service.
 //
-// Why this exists: before this module, core read from
-// `schema.telegramSessions` / `schema.telegramPlaybookThreads`
-// directly in three places (orchestrator.resolvePresence,
+// Why this exists: before this module, core read from telegram
+// tables directly in three places (orchestrator.resolvePresence,
 // ask-user-fallback.hasInBandSurface/resolveUserId,
 // workspace-service.list). That coupling blocked the telegram schema
-// move -- you can't relocate a table whose columns core grep-reads.
-// Inverting through a provider registry lets the plugin keep the
-// reads on its side of the boundary; core just iterates registered
-// providers.
+// move (Phase 3D.1c) and the telegram-events.ts move (Phase 3D.1d.1).
+// Inverting through a provider registry lets each surface owner
+// (plugin or builtin) keep the reads on its side of the boundary;
+// core just iterates registered providers.
 //
 // Slack ALSO had direct reads in the same places. Until slack is
 // extracted, server.ts registers a builtin slack provider so the
