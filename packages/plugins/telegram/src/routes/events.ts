@@ -212,6 +212,29 @@ function rememberModelPicker(messageId: number, entry: { sessionId: string; mode
 // Sessions awaiting a button click — same pattern as Slack: swallow the fallback text turn.
 const pendingAskSessions = new Set<string>();
 
+// Process-local dedup of recently-seen Telegram update_ids. Telegram
+// retries the same webhook payload every ~60s when we don't 200 ACK,
+// AND even with a fast ACK any process restart or 5xx blip between
+// HTTP receive and final response causes Telegram to re-deliver the
+// same update. Without dedup that produces a duplicate response per
+// retry -- exactly what surfaced in the Phase 3D.1d.1 smoke test when
+// 15 401-responses (auth-leak bug, fixed separately) all drained into
+// 5 duplicate "Hi!" replies once the auth fix landed.
+//
+// Telegram guarantees update_ids are monotonically increasing + unique
+// per bot, so an in-process Set keyed by update_id is sufficient. ACK
+// still goes out for deduped updates so Telegram doesn't keep retrying
+// the same one. Set is bounded by TTL: at Telegram's documented 30-
+// updates/sec/bot limit, the steady-state size is at most ~9000
+// entries — trivial.
+const seenUpdateIds = new Set<number>();
+const UPDATE_DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes — well past
+// Telegram's per-update retry window.
+function rememberUpdateId(updateId: number) {
+  seenUpdateIds.add(updateId);
+  setTimeout(() => seenUpdateIds.delete(updateId), UPDATE_DEDUP_TTL_MS).unref?.();
+}
+
 // Repeated typing-indicator timers per session. Telegram's typing action
 // decays after ~5s, so we re-emit it every 4s while a task is in flight.
 // Cleared on task:done / task:failed / task:ask_user.
@@ -502,6 +525,20 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
 
       const update = request.body as TelegramUpdate | undefined;
       if (!update) return;
+
+      // Skip retries of updates we've already processed. Telegram's
+      // at-least-once delivery semantics mean any crash or 5xx between
+      // HTTP receive and the message send below produces a duplicate
+      // response per retry. The check is post-ACK so deduped retries
+      // still close out the Telegram retry queue with a 200.
+      if (seenUpdateIds.has(update.update_id)) {
+        request.log.info(
+          { updateId: update.update_id, botId },
+          "Telegram webhook: skipping duplicate update_id",
+        );
+        return;
+      }
+      rememberUpdateId(update.update_id);
 
       // Resolve the specific user-integration row this update targets.
       // For per-user bots we already have it. For the platform bot we
