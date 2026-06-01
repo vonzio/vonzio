@@ -79,14 +79,26 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
 
     // /v1/integrations/telegram/* setup routes (auth-gated via
     // ctx.core.authHook inside the registration).
-    await ctx.server.register(telegramSetupRoutes, {
-      betterAuthUrl: ctx.config.BETTER_AUTH_URL,
-      integrationService: ctx.core.integrations,
-      telegramService,
-      profileService: ctx.core.profiles,
-      workspaceService: ctx.core.workspaces,
-      platformBotService,
-      authHook: ctx.core.authHook,
+    //
+    // We wrap the registration in an explicit child scope so that
+    // setup.ts's `server.addHook("onRequest", authHook)` only applies
+    // to setup routes. setup.ts is a fastify-plugin (fp()) which
+    // normally un-encapsulates back to the parent -- without this
+    // child boundary, the auth hook would lift all the way to
+    // ctx.server (root) and gate every route registered after,
+    // including the public /api/telegram/webhook/:botId below.
+    // fp() lifts to its IMMEDIATE parent; the explicit scope is the
+    // parent.
+    await ctx.server.register(async (setupScope) => {
+      await setupScope.register(telegramSetupRoutes, {
+        betterAuthUrl: ctx.config.BETTER_AUTH_URL,
+        integrationService: ctx.core.integrations,
+        telegramService,
+        profileService: ctx.core.profiles,
+        workspaceService: ctx.core.workspaces,
+        platformBotService,
+        authHook: ctx.core.authHook,
+      });
     });
 
     // /api/telegram/webhook/:botId + the 5 orchestrator-event

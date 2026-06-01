@@ -67,6 +67,12 @@ services:
       - EMAIL_FROM=${EMAIL_FROM:-Vonzio <noreply@vonz.io>}
       - PLATFORM_TELEGRAM_BOT_TOKEN=${PLATFORM_TELEGRAM_BOT_TOKEN:-}
       - PLATFORM_TELEGRAM_WEBHOOK_SECRET=${PLATFORM_TELEGRAM_WEBHOOK_SECRET:-}
+      # Telegram features live in @vonzio/plugin-telegram as of Phase 3D --
+      # without this the plugin loader skips it and the dashboard's
+      # "Telegram" surfaces silently no-op (no webhook handler registered,
+      # no notify dispatcher, no presence provider). Mirrors the prod
+      # docker-compose.yml default.
+      - VONZIO_PLUGINS=${VONZIO_PLUGINS:-@vonzio/plugin-telegram}
       - "DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:?required — set in .env}@postgres:5432/vonzio"
       - DOCKER_SOCKET=/var/run/docker.sock
       - AGENT_IMAGE=vonzio-agent:latest
