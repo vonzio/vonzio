@@ -37,6 +37,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Redis, SQLite). Each is small (~5-15 MB).
     postgresql-client default-mysql-client redis-tools sqlite3 \
     procps file \
+    # Re-run `apt-get upgrade` AFTER chromium installs so any chromium
+    # patch published between the line-18 upgrade and now lands too.
+    # Chromium ships HIGH/CRITICAL CVEs frequently (see CVE-2026-9872+
+    # batch on 2026-05-31 that gated PR #83/#84); without this step a
+    # rebuild only picks up new chromium when the chromium line itself
+    # gets re-cached. This step is cheap on weekly-cron rebuilds and
+    # invalidates correctly on real CVE drift.
+    && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/* \
     # Symlink fd (Debian names it fdfind).
     && ln -sf /usr/bin/fdfind /usr/bin/fd
