@@ -38,7 +38,7 @@
     "@vonzio/shared": "*",
     "drizzle-orm": "^0.45.1",
     "slackify-markdown": "^5.0.0",
-    "zod": "^3.24.4"
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "fastify": "^5.0.0",

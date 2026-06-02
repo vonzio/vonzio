@@ -41,7 +41,7 @@
     "@vonzio/plugin-api": "*",
     "drizzle-orm": "^0.45.1",
     "qrcode.react": "^4.2.0",
-    "zod": "^3.24.4"
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "fastify": "^5.0.0",
