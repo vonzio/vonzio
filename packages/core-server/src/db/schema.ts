@@ -287,23 +287,12 @@ export const userIntegrations = pgTable(
   ],
 );
 
-export const slackThreadMappings = pgTable(
-  "slack_thread_mappings",
-  {
-    id: serial("id").primaryKey(),
-    slack_team_id: text("slack_team_id").notNull(),
-    slack_channel_id: text("slack_channel_id").notNull(),
-    slack_thread_ts: text("slack_thread_ts").notNull(),
-    session_id: text("session_id").notNull(),
-    user_id: text("user_id").notNull(),
-    profile_id: text("profile_id").notNull(),
-    created_at: text("created_at").notNull(),
-  },
-  (table) => [
-    index("slack_thread_lookup_idx").on(table.slack_team_id, table.slack_channel_id, table.slack_thread_ts),
-    index("slack_thread_session_idx").on(table.session_id),
-  ],
-);
+// slack_thread_mappings pgTable moved to
+// @vonzio/plugin-slack/db/schema in Phase 3E.2. Migration v1's body
+// still creates the table for backward-compat with installs that
+// don't load the slack plugin; the plugin's idempotent
+// CREATE TABLE IF NOT EXISTS migration is a no-op on existing
+// installs and the sole creator on plugin-enabled fresh installs.
 
 // The three telegram_* table definitions moved to
 // packages/plugins/telegram/src/db/schema.ts in Phase 3D.1c and
