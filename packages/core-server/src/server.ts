@@ -84,7 +84,6 @@ import { McpRegistryImpl } from "./plugins/mcp-registry.js";
 import { SchedulerImpl } from "./plugins/scheduler.js";
 import { loadPluginsFromEnv, teardownPlugins, type LoadedPlugin } from "./plugins/loader.js";
 import { SessionPresenceRegistry } from "./lib/session-presence.js";
-import { buildSlackPresenceProvider } from "./lib/builtin-presence-providers.js";
 
 export interface ServerDeps {
   config: Config;
@@ -252,10 +251,9 @@ export async function buildServer(deps: ServerDeps) {
 
   // Chat-surface presence registry: orchestrator + ask-user fallback +
   // workspace-service all walk this instead of reading chat-plugin
-  // tables directly. Telegram registers its provider during plugin
-  // load; slack lives as a builtin until it's extracted (Phase 3E).
+  // tables directly. Telegram + slack both register their providers
+  // during their respective plugin loads (3D.1a, 3E.1).
   const sessionPresence = new SessionPresenceRegistry();
-  sessionPresence.register(buildSlackPresenceProvider(db));
 
   const orchestrator = new Orchestrator({
     queue,

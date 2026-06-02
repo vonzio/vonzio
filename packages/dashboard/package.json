@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
+    "@vonzio/plugin-slack": "*",
     "@vonzio/plugin-telegram": "*",
     "better-auth": "^1.6.10",
     "class-variance-authority": "^0.7.1",
