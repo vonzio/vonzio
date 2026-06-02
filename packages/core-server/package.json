@@ -61,7 +61,7 @@
     "tsx": "^4.19.4",
     "undici": "^8.3.0",
     "ws": "^8.18.2",
-    "zod": "^3.24.4"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
