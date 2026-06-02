@@ -3,8 +3,22 @@ import fp from "fastify-plugin";
 import type { PlaybookService, CreatePlaybookInput } from "../services/playbook-service.js";
 import type { TaskService, SubmitTaskInput } from "../services/task-service.js";
 import type { ChainRunner } from "../orchestrator/chain-runner.js";
-import type { IntegrationService, SlackConfig } from "../services/integration-service.js";
-import type { SlackService } from "../services/slack-service.js";
+import type { IntegrationService } from "../services/integration-service.js";
+
+// SlackConfig was previously exported from integration-service.js
+// alongside the now-moved SlackService. The shape that lives on
+// user_integrations.config rows for type = "slack". Kept inline here
+// because @vonzio/plugin-slack/types isn't reachable from core
+// without a reverse dep (plugin -> core direction only). Same 6
+// fields the plugin's copy declares.
+interface SlackConfig {
+  team_id: string;
+  team_name: string;
+  bot_token: string;
+  bot_user_id: string;
+  authed_user_id: string;
+  channel_id?: string;
+}
 import type { WorkspaceService } from "../services/workspace-service.js";
 import type { ProfileService } from "../services/profile-service.js";
 import type { EventLog } from "../events/event-log.js";
@@ -26,7 +40,6 @@ export interface PlatformMcpOptions {
   taskService: TaskService;
   chainRunner: ChainRunner;
   integrationService: IntegrationService;
-  slackService: SlackService;
   workspaceService: WorkspaceService;
   profileService: ProfileService;
   eventLog: EventLog;
@@ -351,7 +364,6 @@ async function handleToolCall(
   taskService: TaskService,
   chainRunner: ChainRunner,
   integrationService: IntegrationService,
-  slackService: SlackService,
   workspaceService: WorkspaceService,
   profileService: ProfileService,
   eventLog: EventLog,
@@ -787,8 +799,13 @@ async function handleToolCall(
         const found = channels.find((c) => c.name === channelName);
         if (!found) return toolResult(`Channel #${channelName} not found. The bot may not have access to it.`, true);
         channelId = found.id;
-        // Join the channel in case the bot isn't a member
-        await slackService.joinChannel(slackConfig.bot_token, channelId);
+        // Join the channel in case the bot isn't a member. Inlined
+        // fetch (was SlackService.joinChannel until 3E.2's move).
+        await fetch("https://slack.com/api/conversations.join", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${slackConfig.bot_token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: channelId }),
+        });
       } else if (target.startsWith("@") || target.startsWith("U")) {
         // DM a user — open a conversation
         const slackUserId = target.startsWith("@") ? await resolveSlackUser(slackConfig.bot_token, target.slice(1)) : target;
@@ -806,13 +823,21 @@ async function handleToolCall(
         channelId = target;
       }
 
-      const result = await slackService.sendMessage(slackConfig.bot_token, {
-        channel: channelId,
-        text,
-        thread_ts: args.thread_ts as string | undefined,
+      // Inlined fetch (was SlackService.sendMessage until 3E.2).
+      const sendRes = await fetch("https://slack.com/api/chat.postMessage", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${slackConfig.bot_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channel: channelId,
+          text,
+          thread_ts: args.thread_ts as string | undefined,
+        }),
       });
-
-      return toolResult(`Message posted successfully. Timestamp: ${result.ts}`);
+      const sendData = await sendRes.json() as Record<string, unknown>;
+      if (!sendData.ok) {
+        return toolResult(`Slack send failed: ${sendData.error}`, true);
+      }
+      return toolResult(`Message posted successfully. Timestamp: ${sendData.ts}`);
     }
 
     case "slack_list_channels": {
@@ -841,7 +866,7 @@ async function handleToolCall(
 
 export const platformMcpPlugin = fp(
   async (server: FastifyInstance, opts: PlatformMcpOptions) => {
-    const { playbookService, taskService, chainRunner, integrationService, slackService, workspaceService, profileService, eventLog, resolveSession } = opts;
+    const { playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, eventLog, resolveSession } = opts;
 
     server.post("/mcp/platform", async (request, reply) => {
       const body = request.body as JsonRpcRequest;
@@ -886,7 +911,7 @@ export const platformMcpPlugin = fp(
           }
 
           try {
-            const result = await handleToolCall(playbookService, taskService, chainRunner, integrationService, slackService, workspaceService, profileService, eventLog, session, params.name, params.arguments ?? {});
+            const result = await handleToolCall(playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, eventLog, session, params.name, params.arguments ?? {});
             return reply.send(rpcResult(id, result));
           } catch (err) {
             const message = err instanceof Error ? err.message : "Unknown error";

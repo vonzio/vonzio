@@ -49,16 +49,13 @@ import { poolRoutes } from "./routes/pool.js";
 import { adminRoutes } from "./routes/admin.js";
 import { previewRoutes, setupHostnamePreviewProxy, setupPreviewWebSocketProxy } from "./routes/preview.js";
 import { gitOAuthRoutes, gitOAuthCallbackRoute } from "./routes/git-oauth.js";
-import { slackOAuthRoutes, slackOAuthCallbackRoute } from "./routes/slack-oauth.js";
 import { gmailOAuthRoutes, gmailOAuthCallbackRoute } from "./routes/gmail-oauth.js";
 import { tellerConnectRoutes } from "./routes/teller-connect.js";
-import { slackEventsRoutes } from "./routes/slack-events.js";
 // telegramSetupRoutes + resyncTelegramBotCommands now live in
 // @vonzio/plugin-telegram. The plugin's init() registers the same
 import { integrationRoutes } from "./routes/integrations.js";
 import { IntegrationService } from "./services/integration-service.js";
 import { MemoryService } from "./services/memory-service.js";
-import { SlackService } from "./services/slack-service.js";
 import { TelegramService } from "./services/telegram-service.js";
 import { SecretVaultService } from "./services/secret-vault-service.js";
 import { PlaybookService } from "./services/playbook-service.js";
@@ -224,7 +221,6 @@ export async function buildServer(deps: ServerDeps) {
   let loadedPlugins: LoadedPlugin[] = [];
   const memoryService = new MemoryService(db);
   const secretVaultService = new SecretVaultService(db, config.ENCRYPTION_KEY);
-  const slackService = new SlackService();
   // TelegramService kept in core only as a vestigial NotificationService
   // dep -- never called there. Will be removed when notification-service.ts
   // drops its now-unused telegramService field.
@@ -301,7 +297,6 @@ export async function buildServer(deps: ServerDeps) {
   const workspaceService = new WorkspaceService(db, sessionRegistry, containerManager, sessionPresence);
   const playbookService = new PlaybookService(db, integrationService);
   const notificationService = new NotificationService({
-    slackService,
     telegramService,
     integrationService,
     notificationBus,
@@ -639,9 +634,8 @@ export async function buildServer(deps: ServerDeps) {
       return containerManager.listImages(request.query.filter ?? "vonzio");
     });
     v1.register(gitOAuthRoutes, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
-    v1.register(slackOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
-    // /v1/integrations/telegram/* routes moved to
-    // @vonzio/plugin-telegram (registered via the plugin's init()).
+    // /v1/integrations/slack/* + /v1/integrations/telegram/* routes
+    // moved to their respective plugins (registered via init()).
     v1.register(gmailOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(tellerConnectRoutes, { config, integrationService });
     v1.register(integrationRoutes, { integrationService, notificationService, profileService });
@@ -678,7 +672,7 @@ export async function buildServer(deps: ServerDeps) {
 
   // OAuth callbacks (no auth — browser redirect from provider)
   server.register(gitOAuthCallbackRoute, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
-  server.register(slackOAuthCallbackRoute, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
+  // Slack OAuth callback moved to @vonzio/plugin-slack.
   server.register(gmailOAuthCallbackRoute, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
 
   // Playbook webhook trigger (no auth — token-based)
@@ -730,7 +724,6 @@ export async function buildServer(deps: ServerDeps) {
     taskService,
     chainRunner,
     integrationService,
-    slackService,
     workspaceService,
     profileService,
     eventLog,
@@ -742,13 +735,9 @@ export async function buildServer(deps: ServerDeps) {
     },
   });
 
-  // Slack events + interactions (no auth — verified via signing secret)
-  server.register(slackEventsRoutes, {
-    config, db, integrationService, slackService,
-    taskService, profileService, sessionRegistry, workspaceService, orchestrator, eventLog,
-    imageRewriterService,
-    modelListService,
-  });
+  // Slack events + Telegram webhook both moved to their respective
+  // plugins (3D.1d.1, 3E.2). Each plugin's init() registers its own
+  // routes via ctx.server; no slack/telegram code in server.ts.
 
   // Telegram webhook + outbound relay now live in
   // @vonzio/plugin-telegram (Phase 3D.1d.1). PlatformBotService is

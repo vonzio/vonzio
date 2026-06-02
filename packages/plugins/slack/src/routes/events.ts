@@ -1,38 +1,104 @@
+// Slack inbound events + outbound (orchestrator -> chat) relay.
+// Moved here from packages/core-server/src/routes/slack-events.ts in
+// Phase 3E.2. The full surface (incoming events + the 5 task:*
+// event handlers) is unchanged; the diffs from the in-core version
+// mirror what 3D.1d.1 did for telegram:
+//
+//   - imports rewired to plugin-owned modules + @vonzio/plugin-api
+//     contracts instead of relative ../services/* paths
+//   - schema imports point at the plugin-owned drizzle definition
+//     (../db/schema.ts) rather than core's mirror
+//   - the 5 orchestrator event subscriptions go through
+//     opts.sessionEvents (the typed facade from Phase 3D.1a/#76)
+//     instead of orchestrator.on(...)
+//   - sessionRegistry.register call adjusted for the narrower 4-arg
+//     PluginSessionLifecycle.register signature
+
 import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fp from "fastify-plugin";
 import { eq, and } from "drizzle-orm";
-import type { Config } from "../config.js";
-import type { DrizzleDB } from "../db/index.js";
-import { schema } from "../db/index.js";
-import type { IntegrationService, SlackConfig } from "../services/integration-service.js";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { Workspace } from "@vonzio/shared";
+import type {
+  PluginIntegrationLookup,
+  PluginTaskSubmitter,
+  PluginProfileLookup,
+  PluginProfileResolver,
+  PluginSessionLifecycle,
+  PluginWorkspaceLookup,
+  PluginOrchestrator,
+  PluginEventLog,
+  PluginImageRewriter,
+  PluginModelList,
+  SessionEvents,
+} from "@vonzio/plugin-api";
 import type { SlackService } from "../services/slack-service.js";
-import type { TaskService } from "../services/task-service.js";
-import type { ProfileService } from "../services/profile-service.js";
-import type { SessionRegistry } from "../container/session-registry.js";
-import type { WorkspaceService } from "../services/workspace-service.js";
-import type { Orchestrator } from "../orchestrator/orchestrator.js";
-import type { EventLog } from "../events/event-log.js";
-import type { ImageRewriterService } from "../services/image-rewriter-service.js";
-import type { ModelListService } from "../services/model-list-service.js";
-import { resolveWorkspaceModel } from "../lib/model-resolution.js";
+import type { SlackConfig } from "../types.js";
+import { slackThreadMappings } from "../db/schema.js";
+
+/**
+ * Inline schema namespace so `schema.slackThreadMappings` call sites
+ * move verbatim with no destructuring.
+ */
+const schema = { slackThreadMappings };
+
+/**
+ * Single source of truth for "which model would the next agent turn
+ * use" at picker time (no task in flight). Inlined from core's
+ * `lib/model-resolution.ts` -- 3-line ternary not worth a
+ * cross-package import.
+ */
+function resolveWorkspaceModel(
+  workspace: Pick<Workspace, "model_override"> | null | undefined,
+  profile: { model?: string | null } | null | undefined,
+): string | null {
+  return workspace?.model_override ?? profile?.model ?? null;
+}
+
+type DrizzleDB = NodePgDatabase<Record<string, never>>;
+
+/**
+ * Walk the user's slack integrations and find the one matching
+ * (team_id, authed_user_id). Replaces the pre-3E.2
+ * `integrationService.getBySlackTeamAndUser` direct-SQL lookup --
+ * after the move, the plugin can't read user_integrations directly,
+ * so it uses listByType + filter. Cost: at most N integrations
+ * decrypted instead of just 1, but N is tiny (one slack row per
+ * (user, workspace) pair).
+ */
+async function findSlackIntegration(
+  integrationService: PluginIntegrationLookup,
+  teamId: string,
+  slackUserId: string,
+): Promise<{ id: string; user_id: string; config: Record<string, unknown> } | null> {
+  const all = await integrationService.listByType("slack", { decrypt: true });
+  for (const integration of all) {
+    const cfg = integration.config as unknown as SlackConfig;
+    if (cfg.team_id === teamId && cfg.authed_user_id === slackUserId) {
+      return integration;
+    }
+  }
+  return null;
+}
 
 export interface SlackEventsRoutesOptions {
-  config: Config;
+  config: { SLACK_SIGNING_SECRET?: string; BETTER_AUTH_URL: string };
   db: DrizzleDB;
-  integrationService: IntegrationService;
+  integrationService: PluginIntegrationLookup;
   slackService: SlackService;
-  taskService: TaskService;
-  profileService: ProfileService;
-  sessionRegistry: SessionRegistry;
-  workspaceService: WorkspaceService;
-  orchestrator: Orchestrator;
-  eventLog: EventLog;
-  // Wraps the agent-output-rewriter + container-name cache + token signing.
-  // Used to extract inline images for Slack image_url blocks.
-  imageRewriterService: ImageRewriterService;
-  // Shared cached provider lookup for the `@vonzio model` picker.
-  modelListService: ModelListService;
+  taskService: PluginTaskSubmitter;
+  profileService: PluginProfileLookup & PluginProfileResolver;
+  sessionRegistry: PluginSessionLifecycle;
+  workspaceService: PluginWorkspaceLookup;
+  orchestrator: PluginOrchestrator;
+  eventLog: PluginEventLog;
+  imageRewriterService: PluginImageRewriter;
+  modelListService: PluginModelList;
+  // Typed facade over orchestrator's EventEmitter (Phase 3D.1a/#76).
+  // Replaces the direct orchestrator.on(...) calls the file used to
+  // do; same 5 task:* event names.
+  sessionEvents: SessionEvents;
 }
 
 // Track active sessions to buffer tokens and send complete responses
@@ -157,7 +223,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
       }
 
       // Find the Vonzio user
-      const integration = await integrationService.getBySlackTeamAndUser(teamId, slackUserId);
+      const integration = await findSlackIntegration(integrationService, teamId, slackUserId);
       if (!integration) {
         const baseUrl = config.BETTER_AUTH_URL.replace(/\/$/, "");
         return reply.code(200).send({
@@ -218,7 +284,10 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
           // Create session
           const sessionId = randomUUID();
           const persistent = profile.persistent_sessions ?? false;
-          await sessionRegistry.register(sessionId, null, integration.user_id, profile.id, persistent);
+          // PluginSessionLifecycle.register drops the legacy
+          // containerId param -- chat-initiated sessions never have one
+          // at registration time.
+          await sessionRegistry.register(sessionId, integration.user_id, profile.id, { persistent });
 
           // Set workspace name from the prompt
           const wsName = prompt.length > 50 ? prompt.slice(0, 47) + "..." : prompt;
@@ -291,7 +360,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
           // the action runs as the same Vonzio user the thread belongs
           // to. A separate integration row per Slack workspace user means
           // we can't fall back to the bot owner here.
-          const integration = await integrationService.getBySlackTeamAndUser(teamId, slackUserId);
+          const integration = await findSlackIntegration(integrationService, teamId, slackUserId);
           if (!integration) return reply.code(200).send();
           const botToken = (integration.config as unknown as SlackConfig).bot_token;
           if (!botToken) return reply.code(200).send();
@@ -323,7 +392,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
 
           // Ownership defense — a tampered msgTs / slot lookup can't
           // be used to mutate another user's workspace.
-          const workspace = sessionRegistry.get(sessionId);
+          const workspace = workspaceService.get(sessionId);
           if (!workspace || workspace.user_id !== integration.user_id) {
             return reply.code(200).send();
           }
@@ -408,7 +477,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
       if (!text || !channel || !slackUserId) return;
 
       // Find the Vonzio user from Slack identity
-      const integration = await integrationService.getBySlackTeamAndUser(teamId, slackUserId);
+      const integration = await findSlackIntegration(integrationService, teamId, slackUserId);
       if (!integration) {
         const allIntegrations = await findAnyTeamIntegration(teamId);
         if (allIntegrations) {
@@ -458,7 +527,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
         profileId = existingMapping.profile_id;
 
         // Wake the session if needed
-        const session = sessionRegistry.get(sessionId);
+        const session = workspaceService.get(sessionId);
         if (session && session.status === "resumable") {
           sessionRegistry.extendExpiry(sessionId, new Date(Date.now() + 86400 * 1000).toISOString());
           sessionRegistry.setStatus(sessionId, "active");
@@ -505,7 +574,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
 
         // Register the session
         const persistent = profile.persistent_sessions ?? false;
-        await sessionRegistry.register(sessionId, null, userId, profileId, persistent);
+        await sessionRegistry.register(sessionId, userId, profileId, { persistent });
 
         // Set workspace name from the prompt
         const wsName = parsedPrompt.length > 50 ? parsedPrompt.slice(0, 47) + "..." : parsedPrompt;
@@ -575,7 +644,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
       // Ownership defense — the integration row routes the message,
       // but the workspace's user_id is what should govern who can
       // modify model_override. Guard against stale mappings.
-      const workspace = sessionRegistry.get(sessionId);
+      const workspace = workspaceService.get(sessionId);
       if (!workspace || workspace.user_id !== userId) {
         await slackService.sendMessage(botToken, {
           channel, thread_ts: threadTs,
@@ -645,11 +714,11 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
     }
 
     async function findAnyTeamIntegration(teamId: string) {
-      const rows = await db.select().from(schema.userIntegrations)
-        .where(eq(schema.userIntegrations.type, "slack"));
-      for (const row of rows) {
-        const integration = await integrationService.get(row.id, { decrypt: true });
-        if (integration && (integration.config as unknown as SlackConfig).team_id === teamId) {
+      // listByType replaces the pre-3E.2 direct SQL scan against
+      // user_integrations -- the plugin can't read core's table.
+      const all = await integrationService.listByType("slack", { decrypt: true });
+      for (const integration of all) {
+        if ((integration.config as unknown as SlackConfig).team_id === teamId) {
           return integration;
         }
       }
@@ -663,7 +732,7 @@ function setupSlackRelay(
   opts: SlackEventsRoutesOptions,
   server: FastifyInstance,
 ) {
-  const { orchestrator, db, integrationService, slackService, profileService, workspaceService, eventLog, imageRewriterService } = opts;
+  const { orchestrator, db, integrationService, slackService, profileService, workspaceService, eventLog, imageRewriterService, sessionEvents } = opts;
 
   // Helper: get Slack context for a session
   async function getSlackContext(sessionId: string) {
@@ -684,21 +753,21 @@ function setupSlackRelay(
   }
 
   // Buffer tokens for complete messages
-  orchestrator.on("task:token", (_taskId: string, sessionId: string | undefined, text: string) => {
+  sessionEvents.on("task:token", (_taskId: string, sessionId: string | undefined, text: string) => {
     if (!sessionId) return;
     const buffer = sessionBuffers.get(sessionId);
     if (buffer) buffer.tokens.push(text);
   });
 
   // Track tool calls
-  orchestrator.on("task:tool_use", (_taskId: string, sessionId: string | undefined, tool: string) => {
+  sessionEvents.on("task:tool_use", (_taskId: string, sessionId: string | undefined, tool: string) => {
     if (!sessionId) return;
     const buffer = sessionBuffers.get(sessionId);
     if (buffer) buffer.toolCalls.push(tool);
   });
 
   // Send AskUserQuestion as interactive message
-  orchestrator.on("task:ask_user", async (_taskId: string, sessionId: string | undefined, input: unknown) => {
+  sessionEvents.on("task:ask_user", async (_taskId: string, sessionId: string | undefined, input: unknown) => {
     if (!sessionId) return;
     const ctx = await getSlackContext(sessionId);
     if (!ctx) return;
@@ -744,7 +813,7 @@ function setupSlackRelay(
   });
 
   // Send complete response when turn finishes
-  orchestrator.on("task:done", async (_taskId: string, sessionId: string | undefined, result?: { text: string }) => {
+  sessionEvents.on("task:done", async (_taskId: string, sessionId: string | undefined, result?: { text?: string }) => {
     if (!sessionId) return;
     const ctx = await getSlackContext(sessionId);
     if (!ctx) return;
@@ -867,7 +936,7 @@ function setupSlackRelay(
   }
 
   // Send errors to Slack
-  orchestrator.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: string) => {
+  sessionEvents.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: string) => {
     if (!sessionId) return;
     const ctx = await getSlackContext(sessionId);
     if (!ctx) return;

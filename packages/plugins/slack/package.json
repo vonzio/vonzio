@@ -21,6 +21,10 @@
     "./frontend": {
       "types": "./src/frontend.tsx",
       "import": "./src/frontend.tsx"
+    },
+    "./dashboard/api": {
+      "types": "./src/dashboard/api.ts",
+      "import": "./src/dashboard/api.ts"
     }
   },
   "scripts": {
@@ -30,7 +34,9 @@
   },
   "dependencies": {
     "@vonzio/plugin-api": "*",
+    "@vonzio/shared": "*",
     "drizzle-orm": "^0.45.1",
+    "slackify-markdown": "^5.0.0",
     "zod": "^3.24.4"
   },
   "peerDependencies": {
