@@ -46,7 +46,7 @@
     "bcrypt": "^6.0.0",
     "better-auth": "^1.6.10",
     "cron-parser": "^5.5.0",
-    "dockerode": "^4.0.7",
+    "dockerode": "^5.0.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.1",
     "fastify": "^5.8.5",
