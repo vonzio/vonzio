@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { safeWebhookFetch } from "../lib/safe-webhook-fetch.js";
 import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { Resend } from "resend";
@@ -381,8 +382,16 @@ export class NotificationService {
       headers["X-Signature-256"] = `sha256=${sig}`;
     }
 
-    const res = await fetch(config.url, { method: "POST", headers, body });
-    if (!res.ok) {
+    // Use the SSRF-resistant client. Without this, an authenticated
+    // user could register a webhook integration pointing at loopback,
+    // RFC 1918, link-local (cloud metadata!), reserved ranges, or
+    // Docker-internal DNS, then trigger a delivery via
+    // POST /v1/integrations/:id/test or any notify path -- blind
+    // probing the server's network. See
+    // packages/core-server/src/lib/safe-webhook-fetch.ts for the
+    // full enforcement list.
+    const res = await safeWebhookFetch(config.url, { method: "POST", headers, body });
+    if (res.status < 200 || res.status >= 300) {
       throw new Error(`Webhook returned ${res.status}`);
     }
   }
