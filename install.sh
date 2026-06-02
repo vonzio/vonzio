@@ -9,8 +9,10 @@
 #   1. Detects your OS (macOS, Linux distro, or WSL).
 #   2. Checks for Docker, Docker Compose v2, Node 22+, git, make, openssl.
 #      For each missing dep, asks before installing it.
-#   3. If piped from curl with no local clone: prompts for an install
-#      directory and git-clones vonzio/vonzio there.
+#   3. If piped from curl with no local clone: resolves a target release
+#      tag (latest by default, or whatever `--tag` / `VONZIO_VERSION`
+#      specifies), prompts for an install directory, and git-clones
+#      vonzio/vonzio there at that tag.
 #   4. Generates a fresh .env with secure random secrets (or keeps existing).
 #   5. Starts a postgres container, runs Better Auth's schema migrations.
 #   6. Brings the stack up via `make docker-dev-oss`.
@@ -19,6 +21,9 @@
 # Flags:
 #   --help, -h          Show this header and exit.
 #   --version           Print the installer version.
+#   --tag <tag>         Vonzio release to install (default: latest v* tag).
+#                       Also reads VONZIO_VERSION from the environment.
+#                       Example: --tag v0.1.3  or  VONZIO_VERSION=v0.1.3
 #   --uninstall         Stop containers + ask whether to remove volumes.
 #   --dir <path>        Install location for the curl-piped case (default: ~/vonzio).
 #   --yes, -y           Auto-confirm all "install missing dep?" prompts.
@@ -26,13 +31,14 @@
 
 set -euo pipefail
 
-readonly INSTALLER_VERSION="0.1.0"
+readonly INSTALLER_VERSION="0.1.1"
 readonly REPO_URL="https://github.com/vonzio/vonzio.git"
 readonly DEFAULT_INSTALL_DIR="${HOME}/vonzio"
 readonly NODE_MIN_MAJOR=22
 
 # ─── Args ──────────────────────────────────────────────────────────────
 INSTALL_DIR=""
+TARGET_TAG="${VONZIO_VERSION:-}"
 ASSUME_YES=false
 NO_START=false
 ACTION="install"
@@ -44,6 +50,8 @@ while [[ $# -gt 0 ]]; do
     --uninstall) ACTION="uninstall"; shift ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --dir=*) INSTALL_DIR="${1#*=}"; shift ;;
+    --tag) TARGET_TAG="$2"; shift 2 ;;
+    --tag=*) TARGET_TAG="${1#*=}"; shift ;;
     --yes|-y) ASSUME_YES=true; shift ;;
     --no-start) NO_START=true; shift ;;
     *) echo "Unknown arg: $1 (try --help)" >&2; exit 2 ;;
@@ -81,6 +89,22 @@ confirm() {
     "")    [[ "$default" == "default-yes" ]] ;;
     *)     [[ "$default" == "default-yes" ]] ;;
   esac
+}
+
+# Resolve the release tag we should install at. Precedence:
+#   1. --tag flag (already captured in $TARGET_TAG)
+#   2. VONZIO_VERSION env var (also captured in $TARGET_TAG at startup)
+#   3. Latest v* tag advertised by the remote (git ls-remote, semver desc)
+# Empty result means "couldn't resolve" — caller falls back to main HEAD
+# with a warning rather than silently breaking the install.
+resolve_target_tag() {
+  if [[ -n "$TARGET_TAG" ]]; then
+    printf '%s' "$TARGET_TAG"; return
+  fi
+  local latest
+  latest="$(git ls-remote --tags --refs --sort=-v:refname "$REPO_URL" 'v*' 2>/dev/null \
+            | awk 'NR==1{sub(/.*refs\/tags\//,"",$2); print $2}')"
+  printf '%s' "$latest"
 }
 
 # ─── --help / --version ────────────────────────────────────────────────
@@ -332,17 +356,48 @@ if ! $IN_CLONE; then
       INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
     fi
   fi
+
+  # Resolve target release tag. Default = latest v* on the remote. Falls
+  # back to main HEAD only if the remote has no tags — fresh empty repo
+  # case during early bootstrap. Otherwise we pin so every install is
+  # reproducible: a curl-piped run at 2026-07-01 lands on the same code
+  # as the same command on 2026-09-01 until a newer tag exists.
+  TARGET_REF="$(resolve_target_tag)"
+  if [[ -z "$TARGET_REF" ]]; then
+    warn "Couldn't resolve a release tag from $REPO_URL — falling back to main HEAD."
+    TARGET_REF="main"
+  fi
+  info "Target version: ${TARGET_REF}"
+
   if [[ -d "$INSTALL_DIR/.git" ]]; then
-    info "Existing checkout at $INSTALL_DIR — pulling latest."
-    (cd "$INSTALL_DIR" && git pull --ff-only) || warn "git pull --ff-only failed; continuing with current commit."
+    info "Existing checkout at $INSTALL_DIR — fetching and switching to ${TARGET_REF}."
+    if ! (cd "$INSTALL_DIR" && git fetch --tags --quiet origin && git checkout --quiet "$TARGET_REF"); then
+      err "Failed to switch $INSTALL_DIR to ${TARGET_REF}."
+      err "  If you have local commits or uncommitted changes there, stash or move them and re-run."
+      exit 1
+    fi
   else
-    info "Cloning vonzio/vonzio → $INSTALL_DIR"
-    git clone "$REPO_URL" "$INSTALL_DIR"
+    info "Cloning vonzio/vonzio @ ${TARGET_REF} → $INSTALL_DIR"
+    git clone --quiet --branch "$TARGET_REF" --depth 1 "$REPO_URL" "$INSTALL_DIR"
   fi
   cd "$INSTALL_DIR"
 else
   cd "$INSTALL_DIR"
   ok "Using existing checkout at $INSTALL_DIR"
+  # In-clone mode: never touch the user's tree. If they're on a non-tag
+  # commit (e.g. main, a feature branch) and a newer release exists,
+  # print a hint so they know reproducible installs are available.
+  if [[ -n "$TARGET_TAG" ]]; then
+    warn "--tag / VONZIO_VERSION is ignored when running from an existing checkout."
+    warn "  To install a specific tag here, run: git fetch --tags && git checkout ${TARGET_TAG}"
+  else
+    LATEST_TAG="$(resolve_target_tag || true)"
+    CURRENT_REF="$(git -C "$INSTALL_DIR" describe --tags --exact-match 2>/dev/null || true)"
+    if [[ -n "$LATEST_TAG" && "$CURRENT_REF" != "$LATEST_TAG" ]]; then
+      info "Latest release: ${LATEST_TAG} (you're on $(git -C "$INSTALL_DIR" describe --always --dirty 2>/dev/null || echo unknown))."
+      info "  Curl-piped installs default to the latest release — re-run via curl or 'git checkout ${LATEST_TAG}' to pin."
+    fi
+  fi
 fi
 
 # ─── Generate .env ─────────────────────────────────────────────────────
