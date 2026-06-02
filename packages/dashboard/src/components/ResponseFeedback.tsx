@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { ThumbsUp, ThumbsDown, Check } from "lucide-react";
-import { createMemory } from "@/api/client";
+import { createMemory } from "@/api/client.js";
 
 interface ResponseFeedbackProps {
   responseText: string;
