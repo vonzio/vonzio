@@ -40,6 +40,12 @@ curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bas
 
 The installer checks for Docker, Compose v2, Node 22+, git, make, and openssl. It generates a fresh `.env` with secure random secrets, brings up postgres, runs the one-time Better Auth schema migration, and starts the stack. About five minutes on a warm machine.
 
+By default it installs the **latest tagged release**. Pin to a specific version with `VONZIO_VERSION=v0.1.3` (or pass `--tag v0.1.3` after the `bash`) — useful for reproducible installs, security advisories, or staying off in-flight `main`:
+
+```bash
+VONZIO_VERSION=v0.1.3 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
+```
+
 If you'd rather read the script first, the clone-then-run path uses the same code:
 
 ```bash
