@@ -17,6 +17,7 @@
 // the whole dashboard.
 
 import telegramRegister from "@vonzio/plugin-telegram/frontend";
+import slackRegister from "@vonzio/plugin-slack/frontend";
 
 interface PluginEntry {
   name: string;
@@ -25,6 +26,7 @@ interface PluginEntry {
 
 const plugins: PluginEntry[] = [
   { name: "telegram", register: telegramRegister },
+  { name: "slack", register: slackRegister },
 ];
 
 /**
