@@ -75,7 +75,15 @@ export function SlackIntegrationRow({
           <Button size="sm" onClick={handleConnect} disabled={connecting}>
             {connecting ? "Connecting…" : "Connect Slack"}
           </Button>
-        ) : null
+        ) : (
+          // Slack OAuth requires SLACK_CLIENT_ID + SLACK_CLIENT_SECRET
+          // env vars on the server. When they aren't set, surface the
+          // reason explicitly -- matches Teller's "not configured by
+          // admin" treatment so the row doesn't look broken.
+          <span style={{ fontSize: 12, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>
+            not configured by admin
+          </span>
+        )
       }
       testResult={testResult?.id === slack?.id ? testResult : undefined}
     />
