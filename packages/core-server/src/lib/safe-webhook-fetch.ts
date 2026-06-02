@@ -97,10 +97,36 @@ function isBlockedIp(ip: string): boolean {
   if (norm.startsWith("fe80:")) return true;            // link-local
   if (norm.startsWith("fc") || norm.startsWith("fd")) return true; // ULA fc00::/7
   if (norm.startsWith("ff")) return true;               // multicast
-  // IPv4-mapped — extract the v4 portion and re-check
+  // IPv4-mapped (::ffff:0:0/96) — extract the v4 portion and re-check.
+  // Two surface forms reach us:
+  //   - preserved dotted form:  ::ffff:127.0.0.1
+  //   - hex form, after Node's URL parser canonicalizes:  ::ffff:7f00:1
+  // Both must resolve to the same v4 block decision.
   const mapped = norm.match(/^::ffff:([0-9a-f.:]+)$/);
-  if (mapped && isIP(mapped[1]) === 4) {
-    return isBlockedIp(mapped[1]);
+  if (mapped) {
+    const inner = mapped[1];
+    if (isIP(inner) === 4) {
+      return isBlockedIp(inner);
+    }
+    // Hex form: XXXX:YYYY where each group is 1-4 hex chars and together
+    // they encode 32 bits of IPv4 address.
+    const hex = inner.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (hex) {
+      const hi = parseInt(hex[1], 16);
+      const lo = parseInt(hex[2], 16);
+      const v4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+      return isBlockedIp(v4);
+    }
+    // Lone trailing group form: ::ffff:1 (= 0.0.0.1 — part of 0.0.0.0/8).
+    const single = inner.match(/^([0-9a-f]{1,4})$/);
+    if (single) {
+      const lo = parseInt(single[1], 16);
+      const v4 = `0.0.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+      return isBlockedIp(v4);
+    }
+    // Anything else under the ::ffff: prefix that we couldn't parse:
+    // refuse rather than allow a bypass.
+    return true;
   }
   return false;
 }
@@ -123,15 +149,38 @@ function isAllowlisted(host: string, allowlist: string[]): boolean {
   return false;
 }
 
+interface ValidatedUrl {
+  url: URL;
+  /** The plain hostname with any IPv6 brackets stripped. */
+  bareHost: string;
+  /** Resolved IP for connect-time pinning. Empty when allowlisted. */
+  resolvedIp: string;
+  family: 4 | 6;
+  /** True iff the host matched the allowlist — pin is skipped. */
+  allowlisted: boolean;
+}
+
+/**
+ * Strip the surrounding brackets that WHATWG URL keeps around IPv6
+ * hostnames. Without this, isIP("[::1]") returns 0 and the literal
+ * path is bypassed.
+ */
+function bareHostname(host: string): string {
+  if (host.length >= 2 && host.startsWith("[") && host.endsWith("]")) {
+    return host.slice(1, -1);
+  }
+  return host;
+}
+
 /**
  * Validate a URL string: scheme is http(s), hostname resolves to a
  * non-blocked IP (unless allowlisted). Returns the resolved IP +
- * family so the caller can pin the request via `lookup`.
+ * family so the caller can pin the request.
  */
 async function validateUrl(
   urlStr: string,
   allowlist: string[],
-): Promise<{ url: URL; resolvedIp: string; family: 4 | 6 }> {
+): Promise<ValidatedUrl> {
   let url: URL;
   try {
     url = new URL(urlStr);
@@ -145,27 +194,34 @@ async function validateUrl(
     throw new SsrfBlockedError("missing host", urlStr);
   }
 
+  const bareHost = bareHostname(url.hostname);
+
   // Host might already be an IP literal — short-circuit DNS.
-  const literalFamily = isIP(url.hostname);
+  const literalFamily = isIP(bareHost);
   if (literalFamily) {
-    if (isBlockedIp(url.hostname)) {
-      throw new SsrfBlockedError(`IP ${url.hostname} in blocked range`, urlStr);
+    if (isBlockedIp(bareHost)) {
+      throw new SsrfBlockedError(`IP ${bareHost} in blocked range`, urlStr);
     }
-    return { url, resolvedIp: url.hostname, family: literalFamily as 4 | 6 };
+    return {
+      url,
+      bareHost,
+      resolvedIp: bareHost,
+      family: literalFamily as 4 | 6,
+      allowlisted: false,
+    };
   }
 
-  if (isAllowlisted(url.hostname, allowlist)) {
-    // Allowlisted hostname bypasses the IP check. Don't pin; let Node
-    // resolve at connect time. This is the explicit "I want internal
-    // callbacks" path.
-    // We still need SOME ip for the lookup hook, but returning a
-    // sentinel and skipping the pin tells the caller to not override.
-    // Simplest: resolve, but trust the host.
-    const records = await dnsLookup(url.hostname, { all: true }).catch(() => []);
-    if (records.length === 0) {
-      throw new SsrfBlockedError("DNS resolution failed", urlStr);
-    }
-    return { url, resolvedIp: records[0].address, family: records[0].family as 4 | 6 };
+  if (isAllowlisted(bareHost, allowlist)) {
+    // Allowlisted hostname bypasses the IP check. We don't pin — let
+    // Node resolve at connect time. This is the explicit "I want
+    // internal callbacks" path.
+    return {
+      url,
+      bareHost,
+      resolvedIp: "",
+      family: 4,
+      allowlisted: true,
+    };
   }
 
   // Resolve ALL A + AAAA records; any blocked one fails the call.
@@ -173,7 +229,7 @@ async function validateUrl(
   // private record (rebinding-defense pattern).
   let records: { address: string; family: number }[];
   try {
-    records = await dnsLookup(url.hostname, { all: true });
+    records = await dnsLookup(bareHost, { all: true });
   } catch (err) {
     throw new SsrfBlockedError(
       `DNS resolution failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -188,14 +244,15 @@ async function validateUrl(
       throw new SsrfBlockedError(`resolved IP ${r.address} is blocked`, urlStr);
     }
   }
-  // Pin the request to the first record. Node's HTTPS agent will use
-  // the IP we hand it via the `lookup` option, defeating DNS-rebinding
-  // attacks where a second resolution after the check returns a
-  // private IP.
+  // Pin the request to the first record by substituting it into the
+  // URL host. Defeats DNS-rebinding where a second resolution after
+  // the check returns a private IP.
   return {
     url,
+    bareHost,
     resolvedIp: records[0].address,
     family: records[0].family as 4 | 6,
+    allowlisted: false,
   };
 }
 
@@ -217,114 +274,136 @@ export async function safeWebhookFetch(
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   const allowlist = readAllowlist(options.allowlist);
 
+  // Single timer + AbortController for the WHOLE call (validation +
+  // every redirect hop + body streaming). A per-hop timer would let
+  // an attacker stall N × timeoutMs by chaining 3xx responses, and a
+  // pre-stream-only timer (clearTimeout in finally before body read)
+  // would let a slow endpoint dribble bytes forever.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   let currentUrl = initialUrl;
   let redirectCount = 0;
   let lastResponse: Response | null = null;
 
-  while (true) {
-    const validated = await validateUrl(currentUrl, allowlist);
+  try {
+    while (true) {
+      const validated = await validateUrl(currentUrl, allowlist);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      // Note: undici (Node 18+) fetch doesn't expose a `lookup` hook
-      // the way `http.request` does. To pin to the resolved IP, we
-      // substitute the hostname in the URL with the IP literal and
-      // set the Host header back to the original hostname. This
-      // closes the DNS-rebinding window between validate() and
-      // connect().
-      const requestUrl = (() => {
-        // If allowlisted, don't pin -- the user said "I trust this".
-        if (isAllowlisted(validated.url.hostname, allowlist)) {
-          return validated.url.toString();
-        }
-        const pinned = new URL(validated.url.toString());
-        // IPv6 needs brackets in the URL host.
-        pinned.hostname = validated.family === 6
+      // Note: undici fetch doesn't expose a `lookup` hook. To pin to
+      // the resolved IP, we substitute the hostname in the URL with
+      // the IP literal and set the Host header back to the original
+      // hostname. This closes the DNS-rebinding window between
+      // validate() and connect().
+      let requestUrl: string;
+      if (validated.allowlisted) {
+        requestUrl = validated.url.toString();
+      } else {
+        validated.url.hostname = validated.family === 6
           ? `[${validated.resolvedIp}]`
           : validated.resolvedIp;
-        return pinned.toString();
-      })();
+        requestUrl = validated.url.toString();
+      }
 
       const headers: Record<string, string> = { ...(init.headers ?? {}) };
       // Set Host explicitly so TLS SNI + virtual hosts still work
       // when we connected via the pinned IP.
-      headers["Host"] = validated.url.host;
+      headers["Host"] = `${validated.bareHost}${
+        validated.url.port ? ":" + validated.url.port : ""
+      }`;
 
-      lastResponse = await fetch(requestUrl, {
-        method: init.method ?? "POST",
-        headers,
-        body: init.body,
-        redirect: "manual", // we handle redirects ourselves
-        signal: controller.signal,
-      });
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`webhook request timed out after ${timeoutMs}ms`);
+      // Release the previous 3xx response body before issuing the
+      // next hop, otherwise undici holds the socket open until GC.
+      if (lastResponse) {
+        await lastResponse.body?.cancel().catch(() => {});
+        lastResponse = null;
       }
-      throw err;
-    } finally {
-      clearTimeout(timer);
+
+      try {
+        lastResponse = await fetch(requestUrl, {
+          method: init.method ?? "POST",
+          headers,
+          body: init.body,
+          redirect: "manual",
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (controller.signal.aborted) {
+          throw new Error(`webhook request timed out after ${timeoutMs}ms`);
+        }
+        throw err;
+      }
+
+      // Manual redirect handling
+      if (lastResponse.status >= 300 && lastResponse.status < 400) {
+        const location = lastResponse.headers.get("location");
+        if (!location) break; // 3xx with no Location — treat as final.
+        redirectCount++;
+        if (redirectCount > maxRedirects) {
+          throw new SsrfBlockedError(
+            `exceeded ${maxRedirects} redirects`,
+            currentUrl,
+          );
+        }
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+      break;
     }
 
-    // Manual redirect handling
-    if (lastResponse.status >= 300 && lastResponse.status < 400) {
-      const location = lastResponse.headers.get("location");
-      if (!location) {
-        // 3xx with no Location — treat as final.
-        break;
-      }
-      redirectCount++;
-      if (redirectCount > maxRedirects) {
-        throw new SsrfBlockedError(
-          `exceeded ${maxRedirects} redirects`,
-          currentUrl,
-        );
-      }
-      // Resolve relative redirect to absolute.
-      currentUrl = new URL(location, currentUrl).toString();
-      continue;
-    }
-    break;
-  }
+    if (!lastResponse) throw new Error("no response received");
 
-  if (!lastResponse) {
-    throw new Error("no response received");
-  }
-
-  // Read up to maxBytes of the body so we can include status text in
-  // errors without slurping a multi-GB payload from a misbehaving
-  // endpoint.
-  const reader = lastResponse.body?.getReader();
-  let bytes = 0;
-  const chunks: Uint8Array[] = [];
-  if (reader) {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > maxBytes) {
+    // Read up to maxBytes of the body. The reader's lock + underlying
+    // socket are released on EVERY exit path via the inner finally —
+    // including read() throwing mid-stream and the size-cap throw.
+    const reader = lastResponse.body?.getReader();
+    let body = "";
+    if (reader) {
+      const decoder = new TextDecoder("utf-8");
+      let bytes = 0;
+      let truncated = false;
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          // Cap BEFORE accumulating so an oversized chunk can't sit
+          // in memory next to the already-buffered body.
+          if (bytes + value.byteLength > maxBytes) {
+            truncated = true;
+            break;
+          }
+          bytes += value.byteLength;
+          body += decoder.decode(value, { stream: true });
+        }
+        body += decoder.decode();
+      } finally {
+        // releaseLock alone wouldn't close the socket on early exit;
+        // cancel does. Safe to call after a successful drain too.
         await reader.cancel().catch(() => {});
+      }
+      if (truncated) {
         throw new WebhookResponseTooLargeError(maxBytes);
       }
-      chunks.push(value);
     }
-  }
-  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const c of chunks) {
-    merged.set(c, offset);
-    offset += c.byteLength;
-  }
-  const body = new TextDecoder().decode(merged);
 
-  return {
-    status: lastResponse.status,
-    statusText: lastResponse.statusText,
-    body,
-  };
+    return {
+      status: lastResponse.status,
+      statusText: lastResponse.statusText,
+      body,
+    };
+  } catch (err) {
+    // If we throw partway through the redirect loop, the in-flight
+    // response body still needs to be released.
+    if (lastResponse) {
+      await lastResponse.body?.cancel().catch(() => {});
+    }
+    if (controller.signal.aborted && err instanceof Error && err.name === "AbortError") {
+      throw new Error(`webhook request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Exported for tests
