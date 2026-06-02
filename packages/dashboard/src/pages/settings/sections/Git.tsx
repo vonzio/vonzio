@@ -36,6 +36,14 @@ export function GitSection() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauth = params.get("oauth");
+    // Git + Integration sections both render under the Integrations
+    // tab (via IntegrationsAndGitSection). Each owns one useEffect
+    // watching ?oauth=success; without a discriminator, whichever
+    // mounts first claims every OAuth callback and clears the URL.
+    // The git OAuth callback redirects with hash=#git; slack / gmail /
+    // others redirect with hash=#integrations -- the hash check keeps
+    // Git.tsx from misclaiming the others.
+    if (window.location.hash !== "#git") return;
     if (oauth === "success") {
       setOauthStatus({ type: "success", message: "Git provider connected" });
       refetch();
