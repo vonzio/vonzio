@@ -8,12 +8,8 @@ import {
   type SecretScope,
   fetchProfiles, type ProfileSummary,
 } from "../../../api/client.js";
-// Slack API moved into the plugin in Phase 3E.2. Slack's dashboard
-// surface is one row (Connect/Disconnect button), too small to
-// warrant moving the JSX too -- left here, importing from the
-// plugin's API client. Mirrors how Telegram bot list import in
-// Playbooks.tsx works post-3D.1e.
-import { fetchSlackConfig, getSlackAuthorizeUrl } from "@vonzio/plugin-slack/dashboard/api";
+// Slack contributes its row via registerIntegrationRow (Phase 3F.1)
+// -- no slack-specific imports needed here anymore.
 import {
   Card, Button, Field, Input, Select,
   Pill, Modal,
@@ -21,6 +17,7 @@ import {
 import { formatDate } from "../../../lib/utils.js";
 import { openTellerConnect } from "../../../lib/teller-connect.js";
 import { ErrorBanner, ScopePicker } from "./_shared.js";
+import { getIntegrationRows, useEntitlements } from "../../../registry/index.js";
 
 // ───────────────────────────────────────────────────────────────────
 // Integrations
@@ -28,12 +25,10 @@ import { ErrorBanner, ScopePicker } from "./_shared.js";
 
 export function IntegrationSection() {
   const { data: integrations, loading, refetch } = useApi<Integration[]>(() => fetchIntegrations());
-  const { data: slackConfig } = useApi<{ enabled: boolean }>(() => fetchSlackConfig());
   const { data: gmailConfig } = useApi<{ enabled: boolean }>(() => fetchGmailConfig());
   const { data: tellerConfig } = useApi<TellerConfigInfo>(() => fetchTellerConfig());
   const { data: agentProfiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
   const [oauthStatus, setOauthStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const [connecting, setConnecting] = useState(false);
   const [connectingGmail, setConnectingGmail] = useState(false);
   const [connectingTeller, setConnectingTeller] = useState(false);
   // Scope editor: one modal serves every integration row (Bank, Gmail,
@@ -74,11 +69,6 @@ export function IntegrationSection() {
     }
   }, []);
 
-  const handleConnect = async () => {
-    setConnecting(true); setError("");
-    try { const { url } = await getSlackAuthorizeUrl("/settings"); window.location.href = url; }
-    catch (e) { setError(e instanceof Error ? e.message : "Failed to start OAuth"); setConnecting(false); }
-  };
   const handleConnectGmail = async () => {
     setConnectingGmail(true); setError("");
     try { const { url } = await getGmailAuthorizeUrl("/settings"); window.location.href = url; }
@@ -193,11 +183,44 @@ export function IntegrationSection() {
     return `${names.length} agents`;
   };
 
-  const slack = integrations?.find((i) => i.type === "slack");
   const gmail = integrations?.find((i) => i.type === "gmail");
   const email = integrations?.find((i) => i.type === "email");
   const webhook = integrations?.find((i) => i.type === "webhook");
   const tellerEnrollments = integrations?.filter((i) => i.type === "teller") ?? [];
+
+  // Plugin-contributed integration rows. Each plugin's frontend.tsx
+  // calls registerIntegrationRow with a section ("notifications" |
+  // "data-sources" | "other"); we render them at the bottom of each
+  // section's Card after the hardcoded rows.
+  const entitlements = useEntitlements();
+  const slotProps = {
+    integrations: integrations ?? [],
+    agentProfiles: (agentProfiles ?? []).map((p) => ({
+      id: p.id,
+      slug: p.slug,
+      name: p.name,
+    })),
+    refetch,
+    // Wrap to take an id so the slot prop signature stays narrow
+    // (Integration.openScopeEditor takes the wider Integration row).
+    openScopeEditor: (integrationId: string) => {
+      const row = integrations?.find((i) => i.id === integrationId);
+      if (row) openScopeEditor(row);
+    },
+    handleSetDefault,
+    handleTest,
+    testResult,
+    testingId,
+    scopeSummary,
+  };
+  function renderRows(section: "notifications" | "data-sources" | "other") {
+    return getIntegrationRows(section)
+      .filter((r) => !r.entitlement || entitlements.includes(r.entitlement))
+      .map((reg) => {
+        const Comp = reg.component;
+        return <Comp key={reg.id} {...slotProps} />;
+      });
+  }
 
   return (
     <>
@@ -239,35 +262,11 @@ export function IntegrationSection() {
           Notifications &amp; chat
         </div>
         <Card style={{ padding: 0 }}>
-          <IntegrationRow
-            badgeBg="#4A154B" badgeChar="S" name="Slack"
-            value={slack ? (slack.config.team_name as string) : "Not connected"}
-            isDefault={slack?.is_default}
-            connected={!!slack}
-            available={!!slackConfig?.enabled}
-            actions={
-              slack ? (
-                <>
-                  {!slack.is_default && <Button variant="ghost" size="sm" onClick={() => handleSetDefault(slack.id)}>Set default</Button>}
-                  <Button variant="ghost" size="sm" onClick={() => openScopeEditor(slack)}>Scope: {scopeSummary(slack)}</Button>
-                  <Button variant="ghost" size="sm" onClick={() => handleTest(slack.id)} disabled={testingId === slack.id}>
-                    {testingId === slack.id ? "Sending…" : "Test"}
-                  </Button>
-                  <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnect(slack.id)}>Disconnect</Button>
-                </>
-              ) : slackConfig?.enabled ? (
-                <Button size="sm" onClick={handleConnect} disabled={connecting}>
-                  {connecting ? "Connecting…" : "Connect Slack"}
-                </Button>
-              ) : null
-            }
-            testResult={testResult?.id === slack?.id ? testResult : undefined}
-          />
           {/*
-            Telegram bot list + connect flow moved to
-            @vonzio/plugin-telegram/dashboard/TelegramSettings.tsx
-            (Phase 3D.1e). Surfaced at /settings#telegram via the
-            plugin's registerSettingsSection contribution.
+            Slack row moved to @vonzio/plugin-slack and contributes
+            via registerIntegrationRow (Phase 3F.1).
+            Telegram has its own /settings#telegram tab via
+            registerSettingsSection (Phase 3D.1e).
           */}
           <IntegrationRow
             badgeBg="#2563EB" badgeChar="@" name="Email"
@@ -312,8 +311,12 @@ export function IntegrationSection() {
               )
             }
             testResult={testResult?.id === webhook?.id ? testResult : undefined}
-            isLast
+            // Stay non-last so the bottom seam survives when a plugin
+            // adds a notifications row below; if no plugins register,
+            // the row's bottom border is hidden by Card's own border.
+            isLast={getIntegrationRows("notifications").length === 0}
           />
+          {renderRows("notifications")}
         </Card>
 
         <div
@@ -364,7 +367,7 @@ export function IntegrationSection() {
                   <span style={{ fontSize: 12, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>not configured by admin</span>
                 )
               }
-              isLast
+              isLast={getIntegrationRows("data-sources").length === 0}
             />
           ) : (
             <>
@@ -403,10 +406,11 @@ export function IntegrationSection() {
                     {connectingTeller ? "Opening…" : "Add bank"}
                   </Button>
                 }
-                isLast
+                isLast={getIntegrationRows("data-sources").length === 0}
               />
             </>
           )}
+          {renderRows("data-sources")}
         </Card>
         </>
       )}
