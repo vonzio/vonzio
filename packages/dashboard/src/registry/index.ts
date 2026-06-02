@@ -2,6 +2,9 @@ export type {
   ComposerSlotProps,
   ComposerSlotReg,
   Entitlement,
+  IntegrationRowReg,
+  IntegrationRowSection,
+  IntegrationRowSlotProps,
   NavItemReg,
   NavSection,
   OnboardingStepProps,
@@ -18,6 +21,7 @@ export type {
 
 export {
   getComposerSlots,
+  getIntegrationRows,
   getNavItems,
   getOnboardingSteps,
   getRoutes,
@@ -26,6 +30,7 @@ export {
   getUserMenuItems,
   getWorkspaceHeaderSlots,
   registerComposerSlot,
+  registerIntegrationRow,
   registerNavItem,
   registerOnboardingStep,
   registerRoute,
