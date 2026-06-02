@@ -1,7 +1,6 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
-  fetchSlackConfig, getSlackAuthorizeUrl,
   fetchGmailConfig, getGmailAuthorizeUrl,
   fetchTellerConfig, submitTellerEnrollment, type TellerConfigInfo,
   fetchIntegrations, deleteIntegration, createIntegration, updateIntegration, testIntegration,
@@ -9,6 +8,12 @@ import {
   type SecretScope,
   fetchProfiles, type ProfileSummary,
 } from "../../../api/client.js";
+// Slack API moved into the plugin in Phase 3E.2. Slack's dashboard
+// surface is one row (Connect/Disconnect button), too small to
+// warrant moving the JSX too -- left here, importing from the
+// plugin's API client. Mirrors how Telegram bot list import in
+// Playbooks.tsx works post-3D.1e.
+import { fetchSlackConfig, getSlackAuthorizeUrl } from "@vonzio/plugin-slack/dashboard/api";
 import {
   Card, Button, Field, Input, Select,
   Pill, Modal,

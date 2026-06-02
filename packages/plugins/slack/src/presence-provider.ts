@@ -3,20 +3,17 @@
 // ask "is this session bound to a slack thread?" without reading
 // the slack tables directly.
 //
-// Until the slack schema move (Phase 3E.2), the reads still target
-// core-owned `slack_thread_mappings`. Raw SQL via ctx.core.db --
-// same pattern telegram's presence provider used pre-3D.1c, switches
-// to typed drizzle once the schema moves in 3E.2.
+// As of Phase 3E.2 the plugin owns the slack_thread_mappings schema;
+// reads here go through typed drizzle against the plugin-owned
+// pgTable in ./db/schema.ts.
 
-import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type {
   PluginContext,
   SessionPresenceProvider,
 } from "@vonzio/plugin-api";
-
-interface DbHandle {
-  execute(query: ReturnType<typeof sql>): Promise<{ rows: Array<Record<string, unknown>> }>;
-}
+import { slackThreadMappings } from "./db/schema.js";
 
 /**
  * Build the provider bound to the plugin context. Returned for the
@@ -26,7 +23,7 @@ interface DbHandle {
  * Reachability section in the agent system prompt reads identically.
  */
 export function buildSlackPresenceProvider(ctx: PluginContext): SessionPresenceProvider {
-  const db = ctx.core.db as DbHandle;
+  const db = ctx.core.db as NodePgDatabase<Record<string, never>>;
 
   return {
     surface: "slack",
@@ -36,20 +33,21 @@ export function buildSlackPresenceProvider(ctx: PluginContext): SessionPresenceP
     },
 
     async hasSession(sessionId) {
-      const result = await db.execute(sql`
-        SELECT 1 FROM slack_thread_mappings WHERE session_id = ${sessionId} LIMIT 1
-      `);
-      return result.rows.length > 0;
+      const rows = await db
+        .select({ id: slackThreadMappings.session_id })
+        .from(slackThreadMappings)
+        .where(eq(slackThreadMappings.session_id, sessionId))
+        .limit(1);
+      return rows.length > 0;
     },
 
     async resolveUserIdBySession(sessionId) {
-      const result = await db.execute(sql`
-        SELECT user_id FROM slack_thread_mappings WHERE session_id = ${sessionId} LIMIT 1
-      `);
-      const row = result.rows[0];
-      if (!row) return null;
-      const userId = row.user_id;
-      return typeof userId === "string" ? userId : null;
+      const rows = await db
+        .select({ user_id: slackThreadMappings.user_id })
+        .from(slackThreadMappings)
+        .where(eq(slackThreadMappings.session_id, sessionId))
+        .limit(1);
+      return rows[0]?.user_id ?? null;
     },
   };
 }

@@ -227,6 +227,15 @@ const migrations: Migration[] = [
       )`);
 
       // -- slack_thread_mappings --
+      // The slack plugin owns the authoritative schema as of Phase
+      // 3E.2 (packages/plugins/slack/src/db/schema.ts) and creates
+      // the table via its own idempotent migration. This block stays
+      // for fresh installs that DON'T load @vonzio/plugin-slack --
+      // without it, core's notification-service can't dispatch
+      // (the table doesn't exist) and the slack-related schema in
+      // user_integrations rows has no destination. Both creation
+      // paths use IF NOT EXISTS so they compose safely on dual-load
+      // setups.
       await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS slack_thread_mappings (
         id SERIAL PRIMARY KEY,
         slack_team_id TEXT NOT NULL,
