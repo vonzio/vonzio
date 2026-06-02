@@ -25,9 +25,10 @@ export function createEventTracker(db: DrizzleDB, log?: Logger): Tracker {
     log: log ? { error: (obj, msg) => log.error(obj as Record<string, unknown>, msg ?? "") } : undefined,
     write: async (e) => {
       await db.execute(sql`
-        INSERT INTO events (user_id, session_id, event, source, properties, ip, user_agent, created_at)
+        INSERT INTO events (user_id, org_id, session_id, event, source, properties, ip, user_agent, created_at)
         VALUES (
           ${e.user_id},
+          ${e.org_id ?? null},
           ${e.session_id},
           ${e.event},
           ${e.source},

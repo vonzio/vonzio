@@ -1,12 +1,38 @@
 import "dotenv/config";
-import Docker from "dockerode";
-import { loadConfig } from "./config.js";
+import Docker, { type DockerOptions } from "dockerode";
+import { loadConfig, type Config } from "./config.js";
 import { createDB } from "./db/index.js";
 import { runMigrations } from "./db/migrations.js";
 import { DockerManager } from "./container/docker-manager.js";
 import { NoopContainerManager } from "./container/noop-manager.js";
 import { buildServer } from "./server.js";
 import type { ContainerManager } from "@vonzio/shared";
+
+// Picks dockerode connection params. DOCKER_HOST (Docker-CLI-compatible URL)
+// wins when set — that's the path used by the bundled compose stack to route
+// the daemon through docker-socket-proxy. Falls back to the legacy
+// DOCKER_SOCKET unix path otherwise.
+function resolveDockerEndpoint(config: Config): { dockerOpts: DockerOptions; dockerEndpoint: string } {
+  if (config.DOCKER_HOST) {
+    const raw = config.DOCKER_HOST;
+    if (raw.startsWith("unix://")) {
+      const socketPath = raw.slice("unix://".length);
+      return { dockerOpts: { socketPath }, dockerEndpoint: raw };
+    }
+    // Accept tcp://host:port (Docker-CLI convention) and translate to plain
+    // HTTP for dockerode — the proxy speaks HTTP over its TCP port, no TLS.
+    const u = new URL(raw.replace(/^tcp:/, "http:"));
+    const port = Number(u.port) || 2375;
+    return {
+      dockerOpts: { protocol: "http", host: u.hostname, port },
+      dockerEndpoint: raw,
+    };
+  }
+  return {
+    dockerOpts: { socketPath: config.DOCKER_SOCKET },
+    dockerEndpoint: config.DOCKER_SOCKET,
+  };
+}
 
 async function main() {
   const config = loadConfig();
@@ -16,13 +42,14 @@ async function main() {
 
   let containerManager: ContainerManager;
   if (config.DOCKER_ENABLED) {
-    const docker = new Docker({ socketPath: config.DOCKER_SOCKET });
+    const { dockerOpts, dockerEndpoint } = resolveDockerEndpoint(config);
+    const docker = new Docker(dockerOpts);
 
     // Preflight: Docker daemon reachable?
     try {
       await docker.ping();
     } catch (err) {
-      console.error(`Docker daemon unreachable at ${config.DOCKER_SOCKET}: ${err instanceof Error ? err.message : err}`);
+      console.error(`Docker daemon unreachable at ${dockerEndpoint}: ${err instanceof Error ? err.message : err}`);
       process.exit(1);
     }
 
@@ -40,7 +67,12 @@ async function main() {
     console.log("Docker disabled — running in API-only mode (no task execution)");
   }
 
-  const server = await buildServer({ config, db, pool: handle.pool, containerManager });
+  // Plugin lifecycle (bus, registry, scheduler, loader, teardown) all
+  // live inside buildServer now -- buildServer needs access to
+  // integrationService and the notification bus to wire NotificationService,
+  // and the teardown is registered via server.addHook("onClose") so we
+  // don't have to thread the LoadedPlugin[] back here.
+  const server = await buildServer({ config, db, pool: handle.pool, handle, containerManager });
 
   try {
     await server.listen({ port: config.PORT, host: config.HOST });
@@ -54,7 +86,7 @@ async function main() {
     if (stopping) return;
     stopping = true;
     server.log.info("Shutting down...");
-    await server.close();
+    await server.close(); // fires onClose hooks: plugin teardown + scheduler.stopAll
     await closeDb();
     process.exit(0);
   };

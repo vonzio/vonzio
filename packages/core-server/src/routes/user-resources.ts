@@ -36,6 +36,17 @@ export interface UserResourceRoutesOptions {
   subagentService: SubagentService;
   gitProviderService: GitProviderService;
   secretVaultService: SecretVaultService;
+  /**
+   * Optional SaaS hook — given userId + the ALS-pinned active org,
+   * returns the set of user_secret ids to hide from the response.
+   * cp-server hides materialized rows whose source org_secret doesn't
+   * belong to the active org, preventing cross-tenant leak. OSS
+   * leaves this undefined; the user sees all their secrets.
+   */
+  hiddenUserSecretIdsForOrg?: (
+    userId: string,
+    activeOrgId: string | null,
+  ) => Promise<Set<string>>;
 }
 
 export const userResourceRoutes = fp(
@@ -315,7 +326,13 @@ export const userResourceRoutes = fp(
         tags: ["Secrets"],
       },
     }, async (request) => {
-      return secretVaultService.list(request.user!.id);
+      const userId = request.user!.id;
+      const secrets = await secretVaultService.list(userId);
+      if (!opts.hiddenUserSecretIdsForOrg) return secrets;
+      const activeOrgId = request.orgContext?.org_id ?? null;
+      const hidden = await opts.hiddenUserSecretIdsForOrg(userId, activeOrgId);
+      if (hidden.size === 0) return secrets;
+      return secrets.filter((s) => !hidden.has(s.id));
     });
 
     server.post<{ Body: { name: string; value: string; scope?: "all" | "agents"; profile_ids?: string[] } }>(

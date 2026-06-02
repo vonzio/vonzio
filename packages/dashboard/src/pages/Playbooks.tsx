@@ -11,14 +11,20 @@ import {
   fetchPlaybookRun,
   fetchAllPlaybookRuns,
   fetchProfiles,
-  fetchTelegramBots,
   type Playbook,
   type PlaybookRun,
   type PlaybookChainConfig,
   type ActivityLogEntry,
   type ProfileSummary,
-  type TelegramBot,
 } from "../api/client.js";
+// Telegram bot list comes from the plugin's API client -- the
+// playbook notification picker needs it to render the per-bot
+// checkboxes. Pragmatic cross-dep for now; longer-term the picker
+// should be a slot the plugin contributes to.
+import {
+  fetchTelegramBots,
+  type TelegramBot,
+} from "@vonzio/plugin-telegram/dashboard/api";
 import {
   PageHeader,
   PageBody,

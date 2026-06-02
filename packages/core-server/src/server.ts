@@ -15,7 +15,7 @@ import type { Config } from "./config.js";
 import type { DrizzleDB } from "./db/index.js";
 import { schema } from "./db/index.js";
 import type { ContainerManager } from "@vonzio/shared";
-import { createAuth, mountBetterAuth } from "./auth/better-auth.js";
+import { createAuth, mountBetterAuth, type ExtraAuthHooks } from "./auth/better-auth.js";
 import { fromNodeHeaders } from "better-auth/node";
 import { userAuthHook, adminOnlyHook } from "./auth/user-auth.js";
 import { buildDefaultCoreDeps } from "./lib/build-core-deps.js";
@@ -49,18 +49,14 @@ import { poolRoutes } from "./routes/pool.js";
 import { adminRoutes } from "./routes/admin.js";
 import { previewRoutes, setupHostnamePreviewProxy, setupPreviewWebSocketProxy } from "./routes/preview.js";
 import { gitOAuthRoutes, gitOAuthCallbackRoute } from "./routes/git-oauth.js";
-import { slackOAuthRoutes, slackOAuthCallbackRoute } from "./routes/slack-oauth.js";
 import { gmailOAuthRoutes, gmailOAuthCallbackRoute } from "./routes/gmail-oauth.js";
 import { tellerConnectRoutes } from "./routes/teller-connect.js";
-import { slackEventsRoutes } from "./routes/slack-events.js";
-import { telegramSetupRoutes, resyncTelegramBotCommands } from "./routes/telegram-setup.js";
-import { telegramEventsRoutes } from "./routes/telegram-events.js";
+// telegramSetupRoutes + resyncTelegramBotCommands now live in
+// @vonzio/plugin-telegram. The plugin's init() registers the same
 import { integrationRoutes } from "./routes/integrations.js";
 import { IntegrationService } from "./services/integration-service.js";
 import { MemoryService } from "./services/memory-service.js";
-import { SlackService } from "./services/slack-service.js";
 import { TelegramService } from "./services/telegram-service.js";
-import { PlatformBotService } from "./services/platform-bot-service.js";
 import { SecretVaultService } from "./services/secret-vault-service.js";
 import { PlaybookService } from "./services/playbook-service.js";
 import { PlaybookScheduler } from "./services/playbook-scheduler.js";
@@ -80,16 +76,28 @@ import { tellerMcpPlugin } from "./mcp/teller-mcp.js";
 import { TellerClient } from "./services/teller-client.js";
 import { platformMcpPlugin } from "./mcp/platform-mcp.js";
 import { ErrorCodes, errorResponse } from "./errors.js";
+import { NotificationBusImpl } from "./plugins/notification-bus.js";
+import { McpRegistryImpl } from "./plugins/mcp-registry.js";
+import { SchedulerImpl } from "./plugins/scheduler.js";
+import { loadPluginsFromEnv, teardownPlugins, type LoadedPlugin } from "./plugins/loader.js";
+import { SessionPresenceRegistry } from "./lib/session-presence.js";
 
 export interface ServerDeps {
   config: Config;
   db: DrizzleDB;
   pool: pg.Pool;
+  /**
+   * DB handle (db + close + pool together). buildServer needs `handle`
+   * to pass to the plugin loader's migration runner; everything else
+   * uses `db` directly. Same db inside both -- handle is just the
+   * wrapper.
+   */
+  handle: import("./db/index.js").DB;
   containerManager: ContainerManager;
 }
 
 export async function buildServer(deps: ServerDeps) {
-  const { config, db, pool: pgPool, containerManager } = deps;
+  const { config, db, handle, pool: pgPool, containerManager } = deps;
 
   const server = Fastify({
     logger: { level: config.LOG_LEVEL },
@@ -198,12 +206,26 @@ export async function buildServer(deps: ServerDeps) {
   const subagentService = new SubagentService(db);
   const gitProviderService = new GitProviderService(db, config.ENCRYPTION_KEY);
   const integrationService = new IntegrationService(db, config.ENCRYPTION_KEY);
+  // Plugin runtime infrastructure. Created here so NotificationService
+  // can take a reference (it dispatches outbound notifications via
+  // `notificationBus.dispatch(...)` for any kind a plugin has claimed).
+  // The actual plugin load happens further down, after the rest of the
+  // server is wired -- plugin routes register AFTER core's so the
+  // routing table reads core > plugins.
+  const notificationBus = new NotificationBusImpl();
+  const mcpRegistry = new McpRegistryImpl();
+  const scheduler = new SchedulerImpl();
+  // loadedPlugins is filled in inside the onReady hook below. The
+  // onClose hook (way below) reads it; both hooks close over this
+  // shared binding.
+  let loadedPlugins: LoadedPlugin[] = [];
   const memoryService = new MemoryService(db);
   const secretVaultService = new SecretVaultService(db, config.ENCRYPTION_KEY);
-  const slackService = new SlackService();
+  // TelegramService kept in core only as a vestigial NotificationService
+  // dep -- never called there. Will be removed when notification-service.ts
+  // drops its now-unused telegramService field.
   const telegramService = new TelegramService();
   const tellerClient = new TellerClient(config);
-  const platformBotService = new PlatformBotService(config, telegramService, server.log);
 
   containerPool.setSessionRegistry(sessionRegistry, (containerId) => {
     server.log.info({ containerId }, "Orphan container removed");
@@ -223,6 +245,12 @@ export async function buildServer(deps: ServerDeps) {
     registrationEnabled: config.REGISTRATION_ENABLED,
   });
 
+  // Chat-surface presence registry: orchestrator + ask-user fallback +
+  // workspace-service all walk this instead of reading chat-plugin
+  // tables directly. Telegram + slack both register their providers
+  // during their respective plugin loads (3D.1a, 3E.1).
+  const sessionPresence = new SessionPresenceRegistry();
+
   const orchestrator = new Orchestrator({
     queue,
     containerManager,
@@ -238,8 +266,16 @@ export async function buildServer(deps: ServerDeps) {
     memoryService,
     secretVaultService,
     integrationService,
+    sessionPresence,
     eventLog,
     vpnTunnelProvider: () => coreDeps.vpnTunnelProvider,
+    // Late-bind: cp-server's registerCpServer mutates
+    // coreDeps.resolveOrgIdForTask AFTER the orchestrator is built.
+    // Read at call time, mirror of vpnTunnelProvider's getter.
+    resolveOrgIdForTask: (taskId) =>
+      coreDeps.resolveOrgIdForTask
+        ? coreDeps.resolveOrgIdForTask(taskId)
+        : Promise.resolve(null),
     db,
     log: server.log,
     config: {
@@ -258,12 +294,12 @@ export async function buildServer(deps: ServerDeps) {
 
   // Services
   const taskService = new TaskService(db, queue, orchestrator, profileService);
-  const workspaceService = new WorkspaceService(db, sessionRegistry, containerManager);
+  const workspaceService = new WorkspaceService(db, sessionRegistry, containerManager, sessionPresence);
   const playbookService = new PlaybookService(db, integrationService);
   const notificationService = new NotificationService({
-    slackService,
     telegramService,
     integrationService,
+    notificationBus,
     db,
     dashboardUrl: config.BETTER_AUTH_URL,
     log: server.log,
@@ -273,10 +309,9 @@ export async function buildServer(deps: ServerDeps) {
   // can deliver, push a notification through the user's account-level
   // channels with a link back to the dashboard.
   const askUserFallback = createAskUserFallback({
-    db,
     sessionRegistry,
     notificationService,
-    integrationService,
+    sessionPresence,
     dashboardUrl: config.BETTER_AUTH_URL,
     log: server.log,
   });
@@ -370,7 +405,15 @@ export async function buildServer(deps: ServerDeps) {
   // are merged in here; OSS leaves the array empty.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const extraAuthPlugins: any[] = cpServerModule?.getAuthPlugins?.() ?? [];
-  const auth = createAuth(config, pgPool, db, eventTracker, extraAuthPlugins);
+  // Extra databaseHooks contributions from cp-server (e.g. personal-org
+  // auto-create on signup). Optional-chained so OSS-only deployments and
+  // older cp-server builds without this export keep working unchanged —
+  // createAuth then sees the default empty object.
+  // `await` defends against an accidentally-async getAuthHooks: on a Promise
+  // it unwraps; on a sync return it's a no-op. Without this, a Promise would
+  // satisfy `?? {}` (truthy) and then userCreateAfter would be undefined.
+  const extraAuthHooks: ExtraAuthHooks = (await cpServerModule?.getAuthHooks?.({ db })) ?? {};
+  const auth = createAuth(config, pgPool, db, eventTracker, extraAuthPlugins, extraAuthHooks);
 
   // First-run OSS setup wizard. Creates the lone admin on a fresh
   // single-user instance, then disables itself (the no-users precondition
@@ -527,14 +570,72 @@ export async function buildServer(deps: ServerDeps) {
       getUserId: getUserIdFromRequest,
     });
     v1.register(eventRoutes, { tracker: eventTracker });
-    v1.register(taskRoutes, { taskService, profileService });
+    v1.register(taskRoutes, {
+      taskService,
+      profileService,
+      // Late-bind for the same reason resolveOrgIdForTask is — cp-server
+      // mounts AFTER v1 is registered. Reading at call time picks up
+      // the mutation.
+      recordTaskOrg: (taskId, orgId) =>
+        coreDeps.recordTaskOrg
+          ? coreDeps.recordTaskOrg(taskId, orgId)
+          : Promise.resolve(),
+    });
     v1.register(workspaceRoutes, { workspaceService, profileService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
-    v1.register(profileRoutes, { profileService, apiKeyService, modelListService });
-    v1.register(userResourceRoutes, { db, apiKeyService, profileService, toolFileService, skillService, subagentService, gitProviderService, secretVaultService });
+    v1.register(profileRoutes, {
+      profileService,
+      apiKeyService,
+      modelListService,
+      // Late-binding wrappers — cp-server populates these AFTER
+      // server.ts captures coreDeps. Same pattern as recordTaskOrg /
+      // hiddenUserSecretIdsForOrg above.
+      recordProfileOrg: (profileId, orgId) => coreDeps.recordProfileOrg
+        ? coreDeps.recordProfileOrg(profileId, orgId)
+        : Promise.resolve(),
+      forgetProfileOrg: (profileId) => coreDeps.forgetProfileOrg
+        ? coreDeps.forgetProfileOrg(profileId)
+        : Promise.resolve(),
+      visibleProfileIdsForOrg: (userId, activeOrgId, candidates) =>
+        coreDeps.visibleProfileIdsForOrg
+          ? coreDeps.visibleProfileIdsForOrg(userId, activeOrgId, candidates)
+          : Promise.resolve(null),
+      isMaterializedOrgProfile: (profileId) =>
+        coreDeps.isMaterializedOrgProfile
+          ? coreDeps.isMaterializedOrgProfile(profileId)
+          : Promise.resolve(false),
+      materializedOrgProfileIds: (profileIds) =>
+        coreDeps.materializedOrgProfileIds
+          ? coreDeps.materializedOrgProfileIds(profileIds)
+          : Promise.resolve(new Set<string>()),
+    });
+    v1.register(userResourceRoutes, {
+      db,
+      apiKeyService,
+      profileService,
+      toolFileService,
+      skillService,
+      subagentService,
+      gitProviderService,
+      secretVaultService,
+      // Late-bind: cp-server mutates coreDeps.hiddenUserSecretIdsForOrg
+      // AFTER this register call, same pattern as recordTaskOrg /
+      // resolveOrgIdForTask in PRs #52 + #53.
+      hiddenUserSecretIdsForOrg: (userId, activeOrgId) =>
+        coreDeps.hiddenUserSecretIdsForOrg
+          ? coreDeps.hiddenUserSecretIdsForOrg(userId, activeOrgId)
+          : Promise.resolve(new Set()),
+    });
+    // Docker image catalogue — same data as /admin/images, but
+    // visible to any logged-in user (org owners need it for the
+    // team-agent editor's container picker). Image names aren't
+    // sensitive.
+    v1.get<{ Querystring: { filter?: string } }>("/v1/images", async (request) => {
+      return containerManager.listImages(request.query.filter ?? "vonzio");
+    });
     v1.register(gitOAuthRoutes, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
-    v1.register(slackOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
-    v1.register(telegramSetupRoutes, { config, integrationService, telegramService, profileService, workspaceService, platformBotService });
+    // /v1/integrations/slack/* + /v1/integrations/telegram/* routes
+    // moved to their respective plugins (registered via init()).
     v1.register(gmailOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(tellerConnectRoutes, { config, integrationService });
     v1.register(integrationRoutes, { integrationService, notificationService, profileService });
@@ -559,12 +660,19 @@ export async function buildServer(deps: ServerDeps) {
       eventLog,
       imageRewriterService,
       log: server.log,
+      // Same late-binding pattern as the /v1/tasks route — cp-server
+      // mutates coreDeps.recordTaskOrg AFTER this register call, so a
+      // direct field reference would capture undefined forever.
+      recordTaskOrg: (taskId, orgId) =>
+        coreDeps.recordTaskOrg
+          ? coreDeps.recordTaskOrg(taskId, orgId)
+          : Promise.resolve(),
     });
   });
 
   // OAuth callbacks (no auth — browser redirect from provider)
   server.register(gitOAuthCallbackRoute, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
-  server.register(slackOAuthCallbackRoute, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
+  // Slack OAuth callback moved to @vonzio/plugin-slack.
   server.register(gmailOAuthCallbackRoute, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
 
   // Playbook webhook trigger (no auth — token-based)
@@ -575,7 +683,9 @@ export async function buildServer(deps: ServerDeps) {
     memoryService,
     resolveSession: (token) => {
       const session = orchestrator.resolveMemoryToken(token);
-      return session ? { userId: session.userId, profileId: session.profileId } : null;
+      return session
+        ? { userId: session.userId, profileId: session.profileId, orgId: session.orgId }
+        : null;
     },
   });
 
@@ -614,33 +724,24 @@ export async function buildServer(deps: ServerDeps) {
     taskService,
     chainRunner,
     integrationService,
-    slackService,
     workspaceService,
     profileService,
     eventLog,
     resolveSession: (token: string) => {
       const session = orchestrator.resolvePlatformToken(token);
-      return session ? { userId: session.userId, profileId: session.profileId } : null;
+      return session
+        ? { userId: session.userId, profileId: session.profileId, orgId: session.orgId }
+        : null;
     },
   });
 
-  // Slack events + interactions (no auth — verified via signing secret)
-  server.register(slackEventsRoutes, {
-    config, db, integrationService, slackService,
-    taskService, profileService, sessionRegistry, workspaceService, orchestrator, eventLog,
-    imageRewriterService,
-    modelListService,
-  });
+  // Slack events + Telegram webhook both moved to their respective
+  // plugins (3D.1d.1, 3E.2). Each plugin's init() registers its own
+  // routes via ctx.server; no slack/telegram code in server.ts.
 
-  // Telegram webhook (no auth — verified via per-bot secret_token header)
-  server.register(telegramEventsRoutes, {
-    config, db, integrationService, telegramService,
-    taskService, profileService, sessionRegistry, workspaceService, orchestrator, eventLog,
-    connectionManager,
-    imageRewriterService,
-    platformBotService,
-    modelListService,
-  });
+  // Telegram webhook + outbound relay now live in
+  // @vonzio/plugin-telegram (Phase 3D.1d.1). PlatformBotService is
+  // constructed inside the plugin's init() instead of here.
 
   // /admin/* routes — admin role auth scoped here only
   server.register(adminRoutes, { auth, db, tokenValidator: coreDeps.tokenValidator, profileService, apiKeyService, toolFileService, skillService, subagentService, gitProviderService, containerManager });
@@ -663,6 +764,7 @@ export async function buildServer(deps: ServerDeps) {
       adminOnlyHook,
       coreDeps,
       orchestrator,
+      modelListService,
       config: {
         BETTER_AUTH_URL: config.BETTER_AUTH_URL,
         EMAIL_FROM: config.EMAIL_FROM,
@@ -747,6 +849,56 @@ export async function buildServer(deps: ServerDeps) {
     });
   }
 
+  // Plugin loader. Registered as a Fastify plugin (`server.register`)
+  // so it runs in the boot phase WHERE NEW ROUTES CAN STILL BE ADDED
+  // -- the previous attempt put this inside `onReady` and crashed
+  // with "Root plugin has already booted" because by onReady the
+  // routing tree is finalized. Sandboxed: a failed plugin is logged
+  // and skipped; core proceeds without it.
+  server.register(async (scope) => {
+    loadedPlugins = await loadPluginsFromEnv({
+      envList: config.VONZIO_PLUGINS,
+      // Hand the plugin loader the SAME server instance core uses --
+      // not the inner `scope` -- so the plugin's routePrefix.absolute
+      // mounts land at the URL the dashboard expects, not under an
+      // auto-generated scope prefix.
+      server,
+      handle,
+      config,
+      notificationBus,
+      mcpRegistry,
+      scheduler,
+      integrationService,
+      profileService,
+      workspaceService,
+      // Services exposed in 3D.1b for telegram-events.ts's upcoming
+      // move into the plugin -- the plugin needs taskService.submit,
+      // sessionRegistry mutations, orchestrator.wakeWorkspaceContainer,
+      // event-log appends/reads, dashboard WS push, image rewriter,
+      // and the model-list lookup.
+      taskService,
+      sessionRegistry,
+      orchestrator,
+      eventLog,
+      connectionManager,
+      imageRewriterService,
+      modelListService,
+      // Orchestrator extends node:events.EventEmitter, so it satisfies
+      // SessionEventEmitterLike directly. Plugins that subscribe via
+      // ctx.sessionEvents.on(...) get a thin typed facade over it.
+      sessionEventEmitter: orchestrator,
+      // Plugins whose routes need authenticated access opt into this
+      // hook themselves. Same hook v1 uses.
+      authHook,
+      // Plugins contribute chat-surface presence providers (telegram,
+      // slack-when-extracted, ...) so core's orchestrator + fallback
+      // logic can ask "is this session reachable?" without reading
+      // plugin-owned tables.
+      sessionPresence,
+    });
+    void scope; // unused -- see comment above
+  });
+
   // Preview WebSocket proxy (intercepts 'upgrade' on the raw http.Server for preview URLs)
   server.addHook("onReady", () => {
     setupPreviewWebSocketProxy(
@@ -799,24 +951,20 @@ export async function buildServer(deps: ServerDeps) {
     connectionManager.start();
     playbookScheduler.start();
     metrics.startPeriodicFlush(config.METRICS_FLUSH_INTERVAL_SECS * 1000);
-    // Best-effort: registers the platform Telegram bot's webhook if the
-    // env vars are set. Silent no-op otherwise. Never throws — failure
-    // disables the feature without taking the server down.
-    await platformBotService.init();
-    // Background re-sync of every connected bot's slash-command menu.
-    // Telegram clients cache the menu, so bots paired before a
-    // BOT_COMMANDS update keep serving the stale list until we call
-    // setMyCommands again. Fire-and-forget so it doesn't gate readiness.
-    void resyncTelegramBotCommands({
-      integrationService,
-      telegramService,
-      platformBotToken: platformBotService.getToken(),
-      log: server.log,
-    });
+    // PlatformBotService now lives in @vonzio/plugin-telegram and is
+    // init-fired from the plugin's init(). resyncTelegramBotCommands
+    // too.
+
     server.log.info("Vonzio server ready");
   });
 
   server.addHook("onClose", async () => {
+    // Plugins teardown FIRST so their handlers (telegramService etc.)
+    // can flush state before the DB closes. scheduler.stopAll() is
+    // belt-and-suspenders for any plugin that didn't clear its own
+    // intervals in teardown().
+    await teardownPlugins(loadedPlugins, server.log);
+    scheduler.stopAll();
     await orchestrator.stop();
     await containerPool.shutdown();
     playbookScheduler.stop();

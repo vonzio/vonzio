@@ -89,19 +89,31 @@ export class ModelListService {
     if (!profile) return { ok: false, status: 404, error: "Profile not found" };
     const profileDefault = profile.model ?? null;
     if (!profile.api_key_id) return { ok: true, models: [], profileDefault };
+    const inner = await this.listForApiKey(profile.api_key_id);
+    if (!inner.ok) return inner;
+    return { ok: true, models: inner.models, profileDefault };
+  }
 
-    const cached = this.cache.get(profile.api_key_id);
+  /**
+   * Same fetch as listForProfile but keyed by the api_key_id directly —
+   * used by SaaS surfaces (org-agent editor) that need the model list
+   * without going through an OSS profile row. `profileDefault` is always
+   * null here; the caller already knows the default of whichever
+   * resource they're editing.
+   */
+  async listForApiKey(apiKeyId: string): Promise<ModelListResult> {
+    const cached = this.cache.get(apiKeyId);
     if (cached && Date.now() - cached.ts < MODELS_CACHE_TTL) {
-      return { ok: true, models: cached.models, profileDefault };
+      return { ok: true, models: cached.models, profileDefault: null };
     }
 
-    const apiKey = await this.apiKeyService.getWithSecrets(profile.api_key_id);
-    if (!apiKey) return { ok: true, models: [], profileDefault };
+    const apiKey = await this.apiKeyService.getWithSecrets(apiKeyId);
+    if (!apiKey) return { ok: true, models: [], profileDefault: null };
 
     let models: ProfileModel[] = [];
     try {
       if (apiKey.provider === "ollama") {
-        if (!apiKey.api_key) return { ok: true, models: [], profileDefault };
+        if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
         const ollama = await fetchOllamaModels(apiKey.api_key);
         models = ollama.map((m) => ({
           id: m.id,
@@ -109,10 +121,8 @@ export class ModelListService {
           provider: "ollama" as const,
         }));
       } else {
-        // Anthropic — `api_key` is the BYO key, `auth_token` covers the
-        // subscription-token case (both proxy through here today).
         const secret = apiKey.api_key ?? apiKey.auth_token;
-        if (!secret) return { ok: true, models: [], profileDefault };
+        if (!secret) return { ok: true, models: [], profileDefault: null };
         const res = await fetch("https://api.anthropic.com/v1/models", {
           method: "GET",
           headers: {
@@ -135,7 +145,7 @@ export class ModelListService {
       return { ok: false, status: 502, error: err instanceof Error ? err.message : "Failed to fetch models" };
     }
 
-    this.cache.set(profile.api_key_id, { models, ts: Date.now() });
-    return { ok: true, models, profileDefault };
+    this.cache.set(apiKeyId, { models, ts: Date.now() });
+    return { ok: true, models, profileDefault: null };
   }
 }

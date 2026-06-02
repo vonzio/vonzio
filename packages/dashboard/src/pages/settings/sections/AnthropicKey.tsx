@@ -121,11 +121,22 @@ export function AnthropicKeySection() {
     return userNames[k.user_id] ?? k.user_id.slice(0, 8);
   };
 
+  // SaaS-only: an api_keys row with org_id set is the materialization
+  // of a team-shared org_credential. The current user has access via
+  // org membership, not ownership — managed by the org owner under
+  // /org/settings → Credentials. Hide editor / delete affordances.
+  const isTeamKey = (k: AnthropicKeyInfo): boolean => Boolean(k.org_id) && !k.user_id;
+
   const cols: DataColumn<AnthropicKeyInfo>[] = [
     {
       key: "name",
       label: "Name",
-      render: (k) => <span style={{ fontWeight: 500, color: "var(--vz-ink)" }}>{k.name}</span>,
+      render: (k) => (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontWeight: 500, color: "var(--vz-ink)" }}>{k.name}</span>
+          {isTeamKey(k) && <Badge tone="accent">Team</Badge>}
+        </span>
+      ),
     },
     ...(isAdmin ? [{
       key: "owner",
@@ -165,7 +176,9 @@ export function AnthropicKeySection() {
               <CheckCircle size={13} />
             </button>
           )}
-          {(isAdmin || k.user_id === currentUser.id) && (
+          {/* Team-shared keys: never owned by this user. Editing /
+              deleting happens in /org/settings → Credentials. */}
+          {!isTeamKey(k) && (isAdmin || k.user_id === currentUser.id) && (
             <button type="button" className="vz-action-btn vz-action-btn--danger" title="Delete" onClick={() => setConfirmDeleteId(k.id)}>
               <Trash2 size={13} />
             </button>
@@ -190,7 +203,7 @@ export function AnthropicKeySection() {
         columns={cols}
         rows={keys ?? []}
         rowKey={(k) => k.id}
-        onRowClick={(k) => { if (isAdmin || k.user_id === currentUser.id) openEditor(k); }}
+        onRowClick={(k) => { if (!isTeamKey(k) && (isAdmin || k.user_id === currentUser.id)) openEditor(k); }}
         loading={loading}
         actions={<Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Add key</Button>}
         emptyState={

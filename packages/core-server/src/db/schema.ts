@@ -70,24 +70,33 @@ export const workspaces = pgTable(
     last_active_at: text("last_active_at").notNull(),
     created_at: text("created_at").notNull(),
     expires_at: text("expires_at").notNull(),
+    org_id: text("org_id"),
   },
   (table) => [
     index("sessions_status_idx").on(table.status),
     index("sessions_profile_id_idx").on(table.profile_id),
     index("sessions_expires_at_idx").on(table.expires_at),
+    index("workspaces_org_id_idx").on(table.org_id),
   ],
 );
 
-export const anthropicKeys = pgTable("api_keys", {
-  id: text("id").primaryKey(),
-  user_id: text("user_id"),
-  name: text("name").notNull(),
-  provider: text("provider", { enum: [...PROFILE_PROVIDERS] }).notNull(),
-  encrypted_api_key: text("encrypted_api_key"),
-  encrypted_auth_token: text("encrypted_auth_token"),
-  created_at: text("created_at").notNull(),
-  last_used_at: text("last_used_at"),
-});
+export const anthropicKeys = pgTable(
+  "api_keys",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id"),
+    name: text("name").notNull(),
+    provider: text("provider", { enum: [...PROFILE_PROVIDERS] }).notNull(),
+    encrypted_api_key: text("encrypted_api_key"),
+    encrypted_auth_token: text("encrypted_auth_token"),
+    created_at: text("created_at").notNull(),
+    last_used_at: text("last_used_at"),
+    org_id: text("org_id"),
+  },
+  (table) => [
+    index("api_keys_org_id_idx").on(table.org_id),
+  ],
+);
 
 // Junction table: which users have access to which API keys
 export const apiKeyUsers = pgTable("api_key_users", {
@@ -232,17 +241,24 @@ export const subagents = pgTable("subagents", {
 // Owned by @vonzio/cp-server (multi-tenant control plane). The table lives
 // here for now because migrations are centralized; when cp-server takes
 // ownership of its own migrations the schema will move with it.
-export const invites = pgTable("invites", {
-  id: text("id").primaryKey(),
-  email: text("email").notNull(),
-  role: text("role").notNull().default("user"),
-  token_hash: text("token_hash").notNull(),
-  invited_by: text("invited_by").notNull(),
-  api_key_ids: jsonb("api_key_ids").$type<string[]>().notNull().default([]),
-  expires_at: text("expires_at").notNull(),
-  used_at: text("used_at"),
-  created_at: text("created_at").notNull(),
-});
+export const invites = pgTable(
+  "invites",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    role: text("role").notNull().default("user"),
+    token_hash: text("token_hash").notNull(),
+    invited_by: text("invited_by").notNull(),
+    api_key_ids: jsonb("api_key_ids").$type<string[]>().notNull().default([]),
+    expires_at: text("expires_at").notNull(),
+    used_at: text("used_at"),
+    created_at: text("created_at").notNull(),
+    org_id: text("org_id"),
+  },
+  (table) => [
+    index("invites_org_id_idx").on(table.org_id),
+  ],
+);
 
 export const userIntegrations = pgTable(
   "user_integrations",
@@ -271,80 +287,19 @@ export const userIntegrations = pgTable(
   ],
 );
 
-export const slackThreadMappings = pgTable(
-  "slack_thread_mappings",
-  {
-    id: serial("id").primaryKey(),
-    slack_team_id: text("slack_team_id").notNull(),
-    slack_channel_id: text("slack_channel_id").notNull(),
-    slack_thread_ts: text("slack_thread_ts").notNull(),
-    session_id: text("session_id").notNull(),
-    user_id: text("user_id").notNull(),
-    profile_id: text("profile_id").notNull(),
-    created_at: text("created_at").notNull(),
-  },
-  (table) => [
-    index("slack_thread_lookup_idx").on(table.slack_team_id, table.slack_channel_id, table.slack_thread_ts),
-    index("slack_thread_session_idx").on(table.session_id),
-  ],
-);
+// slack_thread_mappings pgTable moved to
+// @vonzio/plugin-slack/db/schema in Phase 3E.2. Migration v1's body
+// still creates the table for backward-compat with installs that
+// don't load the slack plugin; the plugin's idempotent
+// CREATE TABLE IF NOT EXISTS migration is a no-op on existing
+// installs and the sole creator on plugin-enabled fresh installs.
 
-export const telegramActiveSessions = pgTable(
-  "telegram_active_sessions",
-  {
-    bot_user_id: text("bot_user_id").notNull(),
-    chat_id: text("chat_id").notNull(),
-    tg_user_id: text("tg_user_id").notNull(),
-    session_id: text("session_id").notNull(),
-    profile_id: text("profile_id").notNull(),
-    user_id: text("user_id").notNull(),
-    last_used_at: text("last_used_at").notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.bot_user_id, table.chat_id, table.tg_user_id] }),
-    index("telegram_active_session_idx").on(table.session_id),
-  ],
-);
-
-export const telegramPlaybookThreads = pgTable(
-  "telegram_playbook_threads",
-  {
-    bot_user_id: text("bot_user_id").notNull(),
-    chat_id: text("chat_id").notNull(),
-    // BIGINT-shaped Telegram message_id stored as text — JSON numbers
-    // lose precision above 2^53 and Drizzle's bigint binding is awkward.
-    // Comparisons are exact-string anyway.
-    message_id: text("message_id").notNull(),
-    session_id: text("session_id").notNull(),
-    label: text("label"),
-    sent_at: text("sent_at").notNull(),
-    claimed_at: text("claimed_at"),
-    dismissed_at: text("dismissed_at"),
-  },
-  (table) => [
-    primaryKey({ columns: [table.bot_user_id, table.chat_id, table.message_id] }),
-    index("telegram_playbook_threads_chat_sent_idx").on(table.bot_user_id, table.chat_id, table.sent_at),
-    index("telegram_playbook_threads_session_idx").on(table.session_id),
-  ],
-);
-
-export const telegramSessions = pgTable(
-  "telegram_sessions",
-  {
-    session_id: text("session_id").primaryKey(),
-    bot_user_id: text("bot_user_id").notNull(),
-    chat_id: text("chat_id").notNull(),
-    tg_user_id: text("tg_user_id").notNull(),
-    user_id: text("user_id").notNull(),
-    profile_id: text("profile_id").notNull(),
-    title: text("title"),
-    started_at: text("started_at").notNull(),
-    ended_at: text("ended_at"),
-  },
-  (table) => [
-    index("telegram_sessions_chat_idx").on(table.bot_user_id, table.chat_id, table.started_at),
-  ],
-);
+// The three telegram_* table definitions moved to
+// packages/plugins/telegram/src/db/schema.ts in Phase 3D.1c and
+// telegram-events.ts itself moved in 3D.1d.1, so core no longer
+// references the tables. Their CREATE TABLE migrations (formerly
+// v14 + v19) also got deleted from migrations.ts -- the plugin's
+// idempotent 0001 migration creates them on first boot now.
 
 export const metrics = pgTable(
   "metrics",
@@ -372,12 +327,14 @@ export const memories = pgTable(
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
     last_accessed_at: text("last_accessed_at"),
+    org_id: text("org_id"),
   },
   (table) => [
     index("memories_user_id_idx").on(table.user_id),
     index("memories_user_profile_idx").on(table.user_id, table.profile_id),
     index("memories_user_type_idx").on(table.user_id, table.type),
     index("memories_updated_at_idx").on(table.updated_at),
+    index("memories_org_id_idx").on(table.org_id),
   ],
 );
 
@@ -421,9 +378,11 @@ export const playbooks = pgTable(
     next_run_at: text("next_run_at"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
+    org_id: text("org_id"),
   },
   (table) => [
     index("playbooks_user_id_idx").on(table.user_id),
+    index("playbooks_org_id_idx").on(table.org_id),
   ],
 );
 
@@ -494,9 +453,11 @@ export const events = pgTable(
     ip: text("ip"),
     user_agent: text("user_agent"),
     created_at: text("created_at").notNull(),
+    org_id: text("org_id"),
   },
   (table) => [
     index("events_user_created_idx").on(table.user_id, table.created_at),
     index("events_event_created_idx").on(table.event, table.created_at),
+    index("events_org_id_idx").on(table.org_id),
   ],
 );

@@ -37,6 +37,13 @@ export interface SubagentDefinition {
 export interface AnthropicKey {
   id: string;
   user_id?: string | null;
+  /**
+   * When set, the key is materialized from an org_credential (SaaS
+   * only). The user sees it in their list because they're a member of
+   * the org, but it's owned by the org owner — read-only from the
+   * user's perspective. OSS deployments leave this null.
+   */
+  org_id?: string | null;
   name: string;
   provider: ProfileProvider;
   api_key?: string;
@@ -72,6 +79,15 @@ export interface Profile {
   continuation_budget_usd?: number;
   concurrency_limit: number;
   user_id?: string | null;
+  /**
+   * SaaS-only flag. `true` when the row is a per-member materialization
+   * of an org_profile (team-shared agent). Dashboard uses this to
+   * segment "Your agents" vs "Team agents" and hide the edit/delete
+   * affordances. Server enforces read-only via 403 on PATCH/DELETE;
+   * the flag just stops the UI from offering the action. Undefined on
+   * OSS / personal rows.
+   */
+  team_owned?: boolean;
   created_at: string;
   last_used_at?: string;
 }

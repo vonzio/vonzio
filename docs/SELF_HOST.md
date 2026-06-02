@@ -127,6 +127,8 @@ The full env var reference is in [packages/core-server/src/config.ts](../package
 | `BETTER_AUTH_URL` | `http://localhost:3000` | Public URL where vonzio is reachable |
 | `CORS_ORIGIN` | `*` | Comma-separated allowed origins |
 | `AGENT_IMAGE` | `vonzio-agent:latest` | Container image for agent sessions |
+| `DOCKER_HOST` | `tcp://docker-proxy:2375` (in compose) | Docker API endpoint. Takes precedence over `DOCKER_SOCKET`. Accepts `unix:///path` or `tcp://host:port`. |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Legacy fallback. Used only when `DOCKER_HOST` is unset. |
 | `POOL_MIN_SIZE` | `0` | Warm container count |
 | `SESSION_IDLE_TTL_SECS` | `14400` | How long a paused session sticks around |
 
@@ -147,6 +149,11 @@ The production stack:
 - Sets `REGISTRATION_ENABLED=false` by default
 
 There's also a `deploy.sh` script that bootstraps a fresh Debian/Ubuntu server end-to-end — read the script before running it.
+
+**Before deploying anywhere with sensitive data**, read
+[SECURITY_MODEL.md](./SECURITY_MODEL.md) for the threat model and
+[HARDENING.md](./HARDENING.md) for opt-in steps (gVisor runtime,
+restricted Docker socket, network policies) beyond the defaults.
 
 ## Troubleshooting
 

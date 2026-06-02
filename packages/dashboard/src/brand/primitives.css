@@ -1017,7 +1017,9 @@
   letter-spacing: 0.04em;
 }
 
-.vz-topbar__actions {
+.vz-topbar__actions,
+.vz-topbar__left-slots,
+.vz-topbar__right-slots {
   display: flex; align-items: center; gap: 8px;
 }
 

@@ -1,5 +1,22 @@
 const BASE = "/v1";
 
+/**
+ * Active-org storage key, shared with cp-dashboard's orgs extension.
+ * SaaS deployments write it from the topbar OrgSwitcher; OSS leaves
+ * it unset, in which case no X-Org-Id is sent and the server's
+ * orgContext stays undefined (OSS code path).
+ */
+const ORG_ID_STORAGE_KEY = "vonzio_current_org_id";
+
+function readCurrentOrgId(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return localStorage.getItem(ORG_ID_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -7,6 +24,14 @@ async function request<T>(
   const headers: Record<string, string> = { ...options.headers as Record<string, string> };
   if (options.body) {
     headers["Content-Type"] = "application/json";
+  }
+  // Inject the active org if set (SaaS only). Without this, server
+  // routes like POST /v1/tasks have no orgContext and can't tag the
+  // resulting workspace — cp-server's CHECK constraint then rejects
+  // the insert.
+  const orgId = readCurrentOrgId();
+  if (orgId) {
+    headers["X-Org-Id"] = orgId;
   }
   const res = await fetch(`${BASE}${path}`, {
     ...options,
@@ -222,6 +247,9 @@ export interface ProfileSummary {
   default_tools: string[];
   concurrency_limit: number;
   user_id?: string | null;
+  /** SaaS-only — true when this row was materialized from an
+   *  org_profile (team-shared agent). Read-only for members. */
+  team_owned?: boolean;
   created_at: string;
   last_used_at?: string;
 }
@@ -351,130 +379,17 @@ export interface Integration {
   updated_at: string;
 }
 
-export function fetchSlackConfig(): Promise<{ enabled: boolean }> {
-  return request("/integrations/slack/config");
-}
-
-export function getSlackAuthorizeUrl(returnPath?: string): Promise<{ url: string }> {
-  const params = returnPath ? `?returnPath=${encodeURIComponent(returnPath)}` : "";
-  return request(`/integrations/slack/authorize${params}`);
-}
+// Slack endpoints moved to @vonzio/plugin-slack/dashboard/api in
+// Phase 3E.2 -- the dashboard no longer references any
+// /v1/integrations/slack/* endpoints directly.
 
 export function fetchGmailConfig(): Promise<{ enabled: boolean }> {
   return request("/integrations/gmail/config");
 }
 
-// --- Telegram ---
-
-/**
- * A single connected Telegram bot. Replaces the legacy single-bot
- * TelegramStatus shape — users can now pair multiple bots, each
- * optionally bound to a specific agent profile.
- */
-export interface TelegramBot {
-  id: string;
-  bot_username: string;
-  bot_user_id: string;
-  linked: boolean;
-  link_code: string | null;
-  /** https://t.me/<bot>?start=<code> — opens in browser, redirects to app */
-  link_url: string | null;
-  /** tg://resolve?domain=<bot>&start=<code> — opens Telegram app directly */
-  link_url_native: string | null;
-  bound_profile_id: string | null;
-  bound_profile_slug: string | null;
-  bound_profile_name: string | null;
-  /** true → shared platform-hosted bot; false → user-owned BotFather creation */
-  is_platform_owned: boolean;
-}
-
-/** @deprecated use TelegramBot from fetchTelegramBots(). Kept for legacy components mid-rollout. */
-export interface TelegramStatus extends Partial<TelegramBot> {
-  connected: boolean;
-}
-
-export interface TelegramConfigInfo {
-  enabled: boolean;
-  publicReachable: boolean;
-  webhookBase: string;
-  /** Present when PLATFORM_TELEGRAM_BOT_TOKEN is configured on the server. */
-  platformBot: { bot_username: string } | null;
-}
-export function fetchTelegramConfig(): Promise<TelegramConfigInfo> {
-  return request("/integrations/telegram/config");
-}
-
-export function connectTelegramPlatform(
-  opts?: { bound_profile_id?: string | null },
-): Promise<TelegramBot & { link_instructions: string }> {
-  return request("/integrations/telegram/connect-platform", {
-    method: "POST",
-    body: JSON.stringify({ bound_profile_id: opts?.bound_profile_id ?? null }),
-  });
-}
-
-export function fetchTelegramStatus(): Promise<TelegramStatus> {
-  return request("/integrations/telegram/status");
-}
-
-export function fetchTelegramBots(): Promise<{ bots: TelegramBot[] }> {
-  return request("/integrations/telegram/bots");
-}
-
-export function connectTelegram(
-  botToken: string,
-  opts?: { bound_profile_id?: string | null },
-): Promise<TelegramBot & { link_instructions: string }> {
-  return request("/integrations/telegram/connect", {
-    method: "POST",
-    body: JSON.stringify({ bot_token: botToken, bound_profile_id: opts?.bound_profile_id ?? null }),
-  });
-}
-
-export function updateTelegramBotBinding(botId: string, boundProfileId: string | null): Promise<TelegramBot> {
-  return request(`/integrations/telegram/bots/${botId}`, {
-    method: "PATCH",
-    body: JSON.stringify({ bound_profile_id: boundProfileId }),
-  });
-}
-
-export function disconnectTelegram(botId?: string): Promise<{ status: string }> {
-  return request("/integrations/telegram/disconnect", {
-    method: "POST",
-    body: JSON.stringify(botId ? { bot_id: botId } : {}),
-  });
-}
-
-/**
- * The bot best suited to receive a "resume this workspace" deep link.
- * Returns `null` when the user has no linked Telegram bots — the
- * dashboard hides the "Open in Telegram" button in that case.
- */
-export interface TelegramBotForWorkspace {
-  id: string;
-  bot_username: string;
-  /** https://t.me/<bot>?start=resume_<session> — universal link */
-  deep_link: string;
-  /** tg://resolve?domain=<bot>&start=resume_<session> — native app */
-  deep_link_native: string;
-  /** true when the bot's bound_profile_id matched the workspace's profile */
-  matched_by_profile: boolean;
-}
-
-export function fetchTelegramBotForWorkspace(sessionId: string): Promise<{ bot: TelegramBotForWorkspace | null }> {
-  return request(`/integrations/telegram/bots/for-workspace/${sessionId}`);
-}
-
-export function regenerateTelegramLinkCode(botId?: string): Promise<{
-  link_code: string;
-  link_url: string;
-  link_url_native: string;
-}> {
-  return request("/integrations/telegram/regenerate-link-code", {
-    method: "POST",
-    body: JSON.stringify(botId ? { bot_id: botId } : {}),
-  });
-}
+// Telegram API client lives in @vonzio/plugin-telegram/dashboard/api
+// as of Phase 3D.1e -- the dashboard no longer references any /v1/
+// integrations/telegram/* endpoints directly.
 
 export function getGmailAuthorizeUrl(returnPath?: string): Promise<{ url: string }> {
   const params = returnPath ? `?returnPath=${encodeURIComponent(returnPath)}` : "";

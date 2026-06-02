@@ -227,6 +227,15 @@ const migrations: Migration[] = [
       )`);
 
       // -- slack_thread_mappings --
+      // The slack plugin owns the authoritative schema as of Phase
+      // 3E.2 (packages/plugins/slack/src/db/schema.ts) and creates
+      // the table via its own idempotent migration. This block stays
+      // for fresh installs that DON'T load @vonzio/plugin-slack --
+      // without it, core's notification-service can't dispatch
+      // (the table doesn't exist) and the slack-related schema in
+      // user_integrations rows has no destination. Both creation
+      // paths use IF NOT EXISTS so they compose safely on dual-load
+      // setups.
       await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS slack_thread_mappings (
         id SERIAL PRIMARY KEY,
         slack_team_id TEXT NOT NULL,
@@ -477,36 +486,13 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS last_run_model TEXT`);
     },
   },
-  {
-    version: 14,
-    description: "Add telegram_active_sessions and telegram_sessions tables for Telegram bot integration",
-    up: async (handle) => {
-      await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS telegram_active_sessions (
-        bot_user_id TEXT NOT NULL,
-        chat_id TEXT NOT NULL,
-        tg_user_id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        last_used_at TEXT NOT NULL,
-        PRIMARY KEY (bot_user_id, chat_id, tg_user_id)
-      )`);
-      await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS telegram_active_session_idx ON telegram_active_sessions(session_id)`);
-
-      await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS telegram_sessions (
-        session_id TEXT PRIMARY KEY,
-        bot_user_id TEXT NOT NULL,
-        chat_id TEXT NOT NULL,
-        tg_user_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        title TEXT,
-        started_at TEXT NOT NULL,
-        ended_at TEXT
-      )`);
-      await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS telegram_sessions_chat_idx ON telegram_sessions(bot_user_id, chat_id, started_at)`);
-    },
-  },
+  // version 14: previously created telegram_active_sessions +
+  // telegram_sessions. Moved to @vonzio/plugin-telegram in Phase
+  // 3D.1d.1; the plugin's idempotent 0001 migration is now the sole
+  // creator. Existing installs already have the version-14 row in
+  // `_migrations` so the runner skips it on next boot; the deleted
+  // migration's absence doesn't matter. (Migrations array is
+  // version-keyed, not array-index-keyed -- gaps are fine.)
   {
     version: 15,
     description: "Add indexed external_id column to user_integrations for O(1) provider lookups (replaces O(N) decrypt scan)",
@@ -551,25 +537,9 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE user_integrations ADD COLUMN IF NOT EXISTS profile_ids JSONB NOT NULL DEFAULT '[]'::jsonb`);
     },
   },
-  {
-    version: 19,
-    description: "Add telegram_playbook_threads table for thread-claim routing (feature #18) — links a Telegram message_id to the playbook session that sent it",
-    up: async (handle) => {
-      await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS telegram_playbook_threads (
-        bot_user_id TEXT NOT NULL,
-        chat_id TEXT NOT NULL,
-        message_id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        label TEXT,
-        sent_at TEXT NOT NULL,
-        claimed_at TEXT,
-        dismissed_at TEXT,
-        PRIMARY KEY (bot_user_id, chat_id, message_id)
-      )`);
-      await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS telegram_playbook_threads_chat_sent_idx ON telegram_playbook_threads(bot_user_id, chat_id, sent_at)`);
-      await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS telegram_playbook_threads_session_idx ON telegram_playbook_threads(session_id)`);
-    },
-  },
+  // version 19: previously created telegram_playbook_threads.
+  // Moved to @vonzio/plugin-telegram (Phase 3D.1d.1). See v14's
+  // comment for why removing the entry is safe.
   {
     version: 20,
     description: "Re-encrypt all stored ciphertexts with the new HKDF info string (legacy salt 'reclaude-encryption' → 'vonzio-encryption'). No-op on fresh installs; one-shot rewrite on installs that predate this version.",
@@ -649,6 +619,21 @@ const migrations: Migration[] = [
         }
       }
       console.log(`  migration 20: re-encrypted ${processed} row(s) across ${tables.length} tables`);
+    },
+  },
+  {
+    version: 21,
+    description: "Add nullable org_id column + single-column index to workspaces, playbooks, memories, invites, api_keys, events (populated by cp-server in SaaS; stays NULL in OSS)",
+    up: async (handle) => {
+      // Postgres supports transactional DDL, so either all 12 statements
+      // apply or none — no half-migrated state on partial failure.
+      await handle.db.transaction(async (tx) => {
+        const tables = ["workspaces", "playbooks", "memories", "invites", "api_keys", "events"];
+        for (const table of tables) {
+          await tx.execute(sql.raw(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS org_id TEXT`));
+          await tx.execute(sql.raw(`CREATE INDEX IF NOT EXISTS ${table}_org_id_idx ON ${table}(org_id)`));
+        }
+      });
     },
   },
 ];

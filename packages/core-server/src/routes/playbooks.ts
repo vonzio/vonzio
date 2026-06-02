@@ -31,7 +31,7 @@ export const playbookRoutes = fp(
         tags: ["Playbooks"],
       },
     }, async (request) => {
-      return playbookService.list(request.user!.id);
+      return playbookService.list(request.user!.id, request.orgContext?.org_id);
     });
 
     server.post<{ Body: { name: string; profile_id: string; prompt: string; schedule: string; description?: string; chain_config?: Record<string, unknown>; enabled?: boolean; trigger_type?: string; notify_on?: string; notification_channels?: string[]; interval_seconds?: number; success_criteria?: unknown[] } }>(
@@ -76,7 +76,7 @@ export const playbookRoutes = fp(
             notification_channels,
             interval_seconds,
             success_criteria: success_criteria as SuccessCriterion[] | undefined,
-          });
+          }, request.orgContext?.org_id);
           if (playbook.enabled) {
             await playbookScheduler.recomputeNextRun(playbook.id);
           }
@@ -112,6 +112,7 @@ export const playbookRoutes = fp(
             request.params.id,
             request.user!.id,
             body as Parameters<PlaybookService["update"]>[2],
+            request.orgContext?.org_id,
           );
           if (!updated) {
             return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Playbook not found"));
@@ -136,7 +137,7 @@ export const playbookRoutes = fp(
         },
       },
       async (request, reply) => {
-        const deleted = await playbookService.delete(request.params.id, request.user!.id);
+        const deleted = await playbookService.delete(request.params.id, request.user!.id, request.orgContext?.org_id);
         if (!deleted) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Playbook not found"));
         }
@@ -159,8 +160,11 @@ export const playbookRoutes = fp(
         },
       },
       async (request, reply) => {
-        const playbook = await playbookService.get(request.params.id);
-        if (!playbook || playbook.user_id !== request.user!.id) {
+        const playbook = await playbookService.get(request.params.id, {
+          userId: request.user!.id,
+          orgId: request.orgContext?.org_id,
+        });
+        if (!playbook) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Playbook not found"));
         }
         // Fire in background, return immediately
@@ -182,8 +186,11 @@ export const playbookRoutes = fp(
         },
       },
       async (request, reply) => {
-        const playbook = await playbookService.get(request.params.id);
-        if (!playbook || playbook.user_id !== request.user!.id) {
+        const playbook = await playbookService.get(request.params.id, {
+          userId: request.user!.id,
+          orgId: request.orgContext?.org_id,
+        });
+        if (!playbook) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Playbook not found"));
         }
         return playbookService.listRuns(request.params.id);
@@ -197,7 +204,16 @@ export const playbookRoutes = fp(
         tags: ["Playbooks"],
       },
     }, async (request) => {
-      return playbookService.listRunsForUser(request.user!.id);
+      // playbook_runs has no org_id column today — ownership is
+      // inherited via the parent playbook. Pass orgId so the service
+      // JOINs through playbooks and filters server-side; OSS callers
+      // leave orgContext undefined → no JOIN filter, no change.
+      return playbookService.listRunsForUser(
+        request.user!.id,
+        undefined,
+        undefined,
+        request.orgContext?.org_id,
+      );
     });
 
     server.get<{ Params: { id: string } }>(
@@ -214,6 +230,19 @@ export const playbookRoutes = fp(
         const run = await playbookService.getRun(request.params.id);
         if (!run || run.user_id !== request.user!.id) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Run not found"));
+        }
+        // Org boundary check: when an OrgContext is set, the parent
+        // playbook must belong to the same tenant. Without this an
+        // org admin could read another tenant's runs via a smuggled
+        // run_id (same user_id, different org).
+        if (request.orgContext?.org_id) {
+          const parent = await playbookService.get(run.playbook_id, {
+            userId: request.user!.id,
+            orgId: request.orgContext.org_id,
+          });
+          if (!parent) {
+            return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Run not found"));
+          }
         }
         return run;
       },
@@ -233,6 +262,17 @@ export const playbookRoutes = fp(
         const run = await playbookService.getRun(request.params.id);
         if (!run || run.user_id !== request.user!.id) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Run not found"));
+        }
+        // Same org-scope check as the GET above — prevent cross-tenant
+        // cancel via a smuggled run_id.
+        if (request.orgContext?.org_id) {
+          const parent = await playbookService.get(run.playbook_id, {
+            userId: request.user!.id,
+            orgId: request.orgContext.org_id,
+          });
+          if (!parent) {
+            return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Run not found"));
+          }
         }
         const cancelled = chainRunner.cancelRun(request.params.id);
         if (!cancelled) {

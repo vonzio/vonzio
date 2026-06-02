@@ -12,6 +12,17 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Allow public-tunnel hosts (ngrok, cloudflared, localtunnel) when
+    // developers need an HTTPS public URL for webhook testing -- e.g.
+    // the Telegram bot webhook, which Telegram requires to be HTTPS +
+    // reachable. Each leading dot is a wildcard-subdomain match.
+    allowedHosts: [
+      ".ngrok-free.app",
+      ".ngrok.app",
+      ".ngrok.io",
+      ".trycloudflare.com",
+      ".loca.lt",
+    ],
     proxy: {
       "/v1": {
         target: "http://localhost:3000",

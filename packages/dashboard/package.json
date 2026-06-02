@@ -21,7 +21,13 @@
     "./contexts/UserContext": "./src/contexts/UserContext.tsx",
     "./hooks/useTheme": "./src/hooks/useTheme.ts",
     "./hooks/use-mobile": "./src/hooks/use-mobile.ts",
+    "./hooks/useHashTab": "./src/hooks/useHashTab.ts",
+    "./hooks/useApi": "./src/hooks/useApi.ts",
     "./registry": "./src/registry/index.ts",
+    "./registry/api": "./src/registry/api.ts",
+    "./components/McpServerEditor": "./src/components/McpServerEditor.tsx",
+    "./components/ToolPillSelect": "./src/components/ToolPillSelect.tsx",
+    "./components/ProfileModelSelect": "./src/components/ProfileModelSelect.tsx",
     "./App": "./src/App.tsx",
     "./app.css": "./src/app.css"
   },
@@ -32,6 +38,8 @@
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
+    "@vonzio/plugin-slack": "*",
+    "@vonzio/plugin-telegram": "*",
     "better-auth": "^1.6.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

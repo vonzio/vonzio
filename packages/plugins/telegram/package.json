@@ -1,0 +1,54 @@
+{
+  "name": "@vonzio/plugin-telegram",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram integration for vonzio. POC for the plugin extraction arc -- the real telegram code is being moved here piecewise from packages/core-server and packages/dashboard.",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://vonzio.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vonzio/vonzio.git",
+    "directory": "packages/plugins/telegram"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./frontend": {
+      "types": "./src/frontend.tsx",
+      "import": "./src/frontend.tsx"
+    },
+    "./service": {
+      "types": "./src/services/telegram-service.ts",
+      "import": "./src/services/telegram-service.ts"
+    },
+    "./dashboard/api": {
+      "types": "./src/dashboard/api.ts",
+      "import": "./src/dashboard/api.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@vonzio/dashboard": "*",
+    "@vonzio/plugin-api": "*",
+    "drizzle-orm": "^0.45.1",
+    "qrcode.react": "^4.2.0",
+    "zod": "^3.24.4"
+  },
+  "peerDependencies": {
+    "fastify": "^5.0.0",
+    "lucide-react": "^0.474.0",
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  }
+}

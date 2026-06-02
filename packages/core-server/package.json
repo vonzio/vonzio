@@ -20,7 +20,9 @@
     "./errors": "./src/errors.ts",
     "./auth/user-auth": "./src/auth/user-auth.ts",
     "./auth/crypto": "./src/auth/crypto.ts",
-    "./orchestrator/orchestrator": "./src/orchestrator/orchestrator.ts"
+    "./auth/better-auth": "./src/auth/better-auth.ts",
+    "./orchestrator/orchestrator": "./src/orchestrator/orchestrator.ts",
+    "./lib/active-org": "./src/lib/active-org.ts"
   },
   "scripts": {
     "build": "tsc",
@@ -37,6 +39,9 @@
     "@fastify/swagger-ui": "^5.2.6",
     "@fastify/websocket": "^11.2.0",
     "@opentelemetry/api": "^1.9.1",
+    "@vonzio/plugin-api": "*",
+    "@vonzio/plugin-slack": "*",
+    "@vonzio/plugin-telegram": "*",
     "@vonzio/shared": "*",
     "bcrypt": "^6.0.0",
     "better-auth": "^1.6.10",
@@ -53,6 +58,7 @@
     "pino": "^9.6.0",
     "resend": "^6.12.3",
     "slackify-markdown": "^5.0.0",
+    "tsx": "^4.19.4",
     "undici": "^8.3.0",
     "ws": "^8.18.2",
     "zod": "^3.24.4"
@@ -64,7 +70,6 @@
     "@types/pg": "^8.15.4",
     "@types/ws": "^8.18.1",
     "better-sqlite3": "^11.9.1",
-    "drizzle-kit": "^0.31.10",
-    "tsx": "^4.19.4"
+    "drizzle-kit": "^0.31.10"
   }
 }

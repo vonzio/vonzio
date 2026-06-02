@@ -51,6 +51,7 @@ describe("server", () => {
       config: testConfig,
       db: handle.db,
       pool: handle.pool,
+      handle,
       containerManager: createMockManager(),
     });
 

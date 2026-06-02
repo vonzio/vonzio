@@ -1,17 +1,15 @@
-import React, { useState, useEffect, type ReactNode } from "react";
-import { QRCodeSVG } from "qrcode.react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
-  fetchSlackConfig, getSlackAuthorizeUrl,
   fetchGmailConfig, getGmailAuthorizeUrl,
-  fetchTelegramConfig, fetchTelegramBots, connectTelegram, connectTelegramPlatform, disconnectTelegram, regenerateTelegramLinkCode, updateTelegramBotBinding,
   fetchTellerConfig, submitTellerEnrollment, type TellerConfigInfo,
-  type TelegramBot, type TelegramConfigInfo,
   fetchIntegrations, deleteIntegration, createIntegration, updateIntegration, testIntegration,
   type Integration,
   type SecretScope,
   fetchProfiles, type ProfileSummary,
 } from "../../../api/client.js";
+// Slack contributes its row via registerIntegrationRow (Phase 3F.1)
+// -- no slack-specific imports needed here anymore.
 import {
   Card, Button, Field, Input, Select,
   Pill, Modal,
@@ -19,6 +17,7 @@ import {
 import { formatDate } from "../../../lib/utils.js";
 import { openTellerConnect } from "../../../lib/teller-connect.js";
 import { ErrorBanner, ScopePicker } from "./_shared.js";
+import { getIntegrationRows, useEntitlements } from "../../../registry/index.js";
 
 // ───────────────────────────────────────────────────────────────────
 // Integrations
@@ -26,15 +25,10 @@ import { ErrorBanner, ScopePicker } from "./_shared.js";
 
 export function IntegrationSection() {
   const { data: integrations, loading, refetch } = useApi<Integration[]>(() => fetchIntegrations());
-  const { data: slackConfig } = useApi<{ enabled: boolean }>(() => fetchSlackConfig());
   const { data: gmailConfig } = useApi<{ enabled: boolean }>(() => fetchGmailConfig());
   const { data: tellerConfig } = useApi<TellerConfigInfo>(() => fetchTellerConfig());
-  const { data: telegramConfig } = useApi<TelegramConfigInfo>(() => fetchTelegramConfig());
-  const { data: telegramBotsData, refetch: refetchTelegram } = useApi<{ bots: TelegramBot[] }>(() => fetchTelegramBots());
-  const telegramBots = telegramBotsData?.bots ?? [];
   const { data: agentProfiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
   const [oauthStatus, setOauthStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const [connecting, setConnecting] = useState(false);
   const [connectingGmail, setConnectingGmail] = useState(false);
   const [connectingTeller, setConnectingTeller] = useState(false);
   // Scope editor: one modal serves every integration row (Bank, Gmail,
@@ -57,17 +51,6 @@ export function IntegrationSection() {
   const [webhookSecret, setWebhookSecret] = useState("");
   const [savingWebhook, setSavingWebhook] = useState(false);
 
-  // Telegram
-  const [showTelegram, setShowTelegram] = useState(false);
-  const [telegramToken, setTelegramToken] = useState("");
-  const [telegramBoundProfileId, setTelegramBoundProfileId] = useState<string>("");
-  const [savingTelegram, setSavingTelegram] = useState(false);
-  // Transient hint (keyed by bot id when scoped) shown after a fresh connect
-  // to tell the user whether the t.me tab auto-opened or whether their popup
-  // blocker swallowed it. The QR panel below the row is the persistent
-  // fallback either way.
-  const [telegramPopupHint, setTelegramPopupHint] = useState<{ botId: string; state: "opened" | "blocked" } | null>(null);
-
   const [testResult, setTestResult] = useState<{ id: string; status: "success" | "error"; message: string } | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
 
@@ -86,11 +69,6 @@ export function IntegrationSection() {
     }
   }, []);
 
-  const handleConnect = async () => {
-    setConnecting(true); setError("");
-    try { const { url } = await getSlackAuthorizeUrl("/settings"); window.location.href = url; }
-    catch (e) { setError(e instanceof Error ? e.message : "Failed to start OAuth"); setConnecting(false); }
-  };
   const handleConnectGmail = async () => {
     setConnectingGmail(true); setError("");
     try { const { url } = await getGmailAuthorizeUrl("/settings"); window.location.href = url; }
@@ -164,69 +142,6 @@ export function IntegrationSection() {
     setSavingWebhook(false);
   };
 
-  const handleSaveTelegram = async () => {
-    setSavingTelegram(true);
-    try {
-      const result = await connectTelegram(telegramToken.trim(), {
-        bound_profile_id: telegramBoundProfileId || null,
-      });
-      setTelegramToken(""); setTelegramBoundProfileId(""); setShowTelegram(false);
-      refetch();
-      refetchTelegram();
-      // One-tap claim: open the t.me link in a new tab so Telegram (web or
-      // desktop) can hand the user straight to the bot with /start <code>
-      // already filled in. window.open() after an `await` may be popup-blocked
-      // — the QR panel below the row is the persistent fallback either way.
-      if (result.link_url) {
-        let popup: Window | null = null;
-        try { popup = window.open(result.link_url, "_blank", "noopener,noreferrer"); } catch { /* no-op */ }
-        const blocked = !popup || popup.closed;
-        setTelegramPopupHint({ botId: result.id, state: blocked ? "blocked" : "opened" });
-        setTimeout(() => setTelegramPopupHint(null), 8000);
-      }
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect"); }
-    setSavingTelegram(false);
-  };
-  const handleConnectTelegramPlatform = async () => {
-    setSavingTelegram(true);
-    try {
-      const result = await connectTelegramPlatform({
-        bound_profile_id: telegramBoundProfileId || null,
-      });
-      setTelegramBoundProfileId("");
-      refetch();
-      refetchTelegram();
-      // Same one-tap claim flow as the BYO-token path. Pop the t.me
-      // link so the user lands in the platform bot's chat with the
-      // pair code prefilled; if their browser blocks the popup, the
-      // QR panel under the new row is the fallback.
-      if (result.link_url) {
-        let popup: Window | null = null;
-        try { popup = window.open(result.link_url, "_blank", "noopener,noreferrer"); } catch { /* no-op */ }
-        const blocked = !popup || popup.closed;
-        setTelegramPopupHint({ botId: result.id, state: blocked ? "blocked" : "opened" });
-        setTimeout(() => setTelegramPopupHint(null), 8000);
-      }
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect platform bot"); }
-    setSavingTelegram(false);
-  };
-  const handleDisconnectTelegram = async (botId: string) => {
-    try {
-      await disconnectTelegram(botId);
-      refetch();
-      refetchTelegram();
-    } catch (e) { setError(e instanceof Error ? e.message : "Disconnect failed"); }
-  };
-  const handleRegenerateLinkCode = async (botId: string) => {
-    try {
-      await regenerateTelegramLinkCode(botId);
-      refetchTelegram();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to regenerate code"); }
-  };
-  const handleCopyLinkCode = async (code: string | null | undefined) => {
-    if (!code) return;
-    try { await navigator.clipboard.writeText(code); } catch { /* clipboard may be unavailable */ }
-  };
   const openScopeEditor = (integration: Integration) => {
     setScopeIntegration(integration);
     setScopeValue(integration.scope);
@@ -268,18 +183,44 @@ export function IntegrationSection() {
     return `${names.length} agents`;
   };
 
-  const handleUpdateTelegramBinding = async (botId: string, profileId: string | null) => {
-    try {
-      await updateTelegramBotBinding(botId, profileId);
-      refetchTelegram();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to update agent binding"); }
-  };
-
-  const slack = integrations?.find((i) => i.type === "slack");
   const gmail = integrations?.find((i) => i.type === "gmail");
   const email = integrations?.find((i) => i.type === "email");
   const webhook = integrations?.find((i) => i.type === "webhook");
   const tellerEnrollments = integrations?.filter((i) => i.type === "teller") ?? [];
+
+  // Plugin-contributed integration rows. Each plugin's frontend.tsx
+  // calls registerIntegrationRow with a section ("notifications" |
+  // "data-sources" | "other"); we render them at the bottom of each
+  // section's Card after the hardcoded rows.
+  const entitlements = useEntitlements();
+  const slotProps = {
+    integrations: integrations ?? [],
+    agentProfiles: (agentProfiles ?? []).map((p) => ({
+      id: p.id,
+      slug: p.slug,
+      name: p.name,
+    })),
+    refetch,
+    // Wrap to take an id so the slot prop signature stays narrow
+    // (Integration.openScopeEditor takes the wider Integration row).
+    openScopeEditor: (integrationId: string) => {
+      const row = integrations?.find((i) => i.id === integrationId);
+      if (row) openScopeEditor(row);
+    },
+    handleSetDefault,
+    handleTest,
+    testResult,
+    testingId,
+    scopeSummary,
+  };
+  function renderRows(section: "notifications" | "data-sources" | "other") {
+    return getIntegrationRows(section)
+      .filter((r) => !r.entitlement || entitlements.includes(r.entitlement))
+      .map((reg) => {
+        const Comp = reg.component;
+        return <Comp key={reg.id} {...slotProps} />;
+      });
+  }
 
   return (
     <>
@@ -321,187 +262,12 @@ export function IntegrationSection() {
           Notifications &amp; chat
         </div>
         <Card style={{ padding: 0 }}>
-          <IntegrationRow
-            badgeBg="#4A154B" badgeChar="S" name="Slack"
-            value={slack ? (slack.config.team_name as string) : "Not connected"}
-            isDefault={slack?.is_default}
-            connected={!!slack}
-            available={!!slackConfig?.enabled}
-            actions={
-              slack ? (
-                <>
-                  {!slack.is_default && <Button variant="ghost" size="sm" onClick={() => handleSetDefault(slack.id)}>Set default</Button>}
-                  <Button variant="ghost" size="sm" onClick={() => openScopeEditor(slack)}>Scope: {scopeSummary(slack)}</Button>
-                  <Button variant="ghost" size="sm" onClick={() => handleTest(slack.id)} disabled={testingId === slack.id}>
-                    {testingId === slack.id ? "Sending…" : "Test"}
-                  </Button>
-                  <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnect(slack.id)}>Disconnect</Button>
-                </>
-              ) : slackConfig?.enabled ? (
-                <Button size="sm" onClick={handleConnect} disabled={connecting}>
-                  {connecting ? "Connecting…" : "Connect Slack"}
-                </Button>
-              ) : null
-            }
-            testResult={testResult?.id === slack?.id ? testResult : undefined}
-          />
           {/*
-            Telegram supports multiple bots per user (Option A: one bot per
-            agent flavor). Render each connected bot as its own row, then
-            an "Add bot" row at the end. When there are zero connected
-            bots, the "Add bot" row carries the full Connect CTA.
+            Slack row moved to @vonzio/plugin-slack and contributes
+            via registerIntegrationRow (Phase 3F.1).
+            Telegram has its own /settings#telegram tab via
+            registerSettingsSection (Phase 3D.1e).
           */}
-          {telegramBots.length === 0 ? (
-            <IntegrationRow
-              badgeBg="#229ED9" badgeChar="T" name="Telegram"
-              value={telegramConfig?.platformBot
-                ? `Not connected — one-tap pair with @${telegramConfig.platformBot.bot_username} or bring your own bot`
-                : "Not connected"}
-              connected={false}
-              available
-              actions={
-                <>
-                  {telegramConfig?.platformBot && (
-                    <Button size="sm" onClick={handleConnectTelegramPlatform} disabled={savingTelegram || !telegramConfig.publicReachable}>
-                      {savingTelegram ? "Pairing…" : `Connect with @${telegramConfig.platformBot.bot_username}`}
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant={telegramConfig?.platformBot ? "ghost" : "primary"}
-                    onClick={() => setShowTelegram(true)}
-                    disabled={!telegramConfig?.publicReachable}
-                  >
-                    {telegramConfig?.publicReachable
-                      ? (telegramConfig.platformBot ? "Use your own bot" : "Connect Telegram bot")
-                      : "Public URL required"}
-                  </Button>
-                </>
-              }
-            />
-          ) : (
-            <>
-              {telegramBots.map((bot) => {
-                const tgIntegration = integrations?.find((i) => i.id === bot.id);
-                const isDefault = tgIntegration?.is_default;
-                const platformTag = bot.is_platform_owned ? " · platform" : "";
-                const valueText = bot.linked
-                  ? `@${bot.bot_username}${bot.bound_profile_slug ? ` → @${bot.bound_profile_slug}` : " (any agent)"}${platformTag}`
-                  : `@${bot.bot_username} — awaiting first message${platformTag}`;
-                return (
-                  <React.Fragment key={bot.id}>
-                    <IntegrationRow
-                      badgeBg="#229ED9" badgeChar="T" name="Telegram"
-                      value={valueText}
-                      isDefault={isDefault}
-                      connected
-                      available
-                      actions={
-                        <>
-                          {!bot.linked && bot.link_url && (
-                            <Button
-                              size="sm"
-                              onClick={() => { try { window.open(bot.link_url!, "_blank", "noopener,noreferrer"); } catch { /* no-op */ } }}
-                            >
-                              Open in Telegram
-                            </Button>
-                          )}
-                          {!bot.linked && (
-                            <Button variant="ghost" size="sm" onClick={() => handleCopyLinkCode(bot.link_code)}>
-                              Copy code{bot.link_code ? ` (${bot.link_code})` : ""}
-                            </Button>
-                          )}
-                          {!bot.linked && (
-                            <Button variant="ghost" size="sm" onClick={() => handleRegenerateLinkCode(bot.id)}>New code</Button>
-                          )}
-                          {bot.linked && (
-                            <>
-                              <Select
-                                value={bot.bound_profile_id ?? ""}
-                                onChange={(v) => handleUpdateTelegramBinding(bot.id, v || null)}
-                                options={[
-                                  { value: "", label: "Any agent (default)" },
-                                  ...(agentProfiles ?? []).map((p) => ({ value: p.id, label: `@${p.slug}` })),
-                                ]}
-                              />
-                              {tgIntegration && !isDefault && (
-                                <Button variant="ghost" size="sm" onClick={() => handleSetDefault(bot.id)}>Set default</Button>
-                              )}
-                              {tgIntegration && (
-                                <Button variant="ghost" size="sm" onClick={() => openScopeEditor(tgIntegration)}>Scope: {scopeSummary(tgIntegration)}</Button>
-                              )}
-                              {tgIntegration && (
-                                <Button variant="ghost" size="sm" onClick={() => handleTest(bot.id)} disabled={testingId === bot.id}>
-                                  {testingId === bot.id ? "Sending…" : "Test"}
-                                </Button>
-                              )}
-                            </>
-                          )}
-                          <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnectTelegram(bot.id)}>Disconnect</Button>
-                        </>
-                      }
-                      testResult={testResult?.id === bot.id ? testResult : undefined}
-                    />
-                    {!bot.linked && bot.link_url && (
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 16,
-                          alignItems: "center",
-                          padding: "14px 18px",
-                          background: "rgba(34, 158, 217, 0.06)",
-                          borderTop: "1px solid var(--vz-border)",
-                        }}
-                      >
-                        <div style={{ background: "#fff", padding: 6, borderRadius: 6, lineHeight: 0, flexShrink: 0 }}>
-                          <QRCodeSVG value={bot.link_url} size={108} level="M" />
-                        </div>
-                        <div style={{ flex: 1, fontSize: 12.5, color: "var(--vz-muted)", lineHeight: 1.6 }}>
-                          <div style={{ color: "var(--vz-text)", fontWeight: 500, marginBottom: 4 }}>
-                            Finish linking on your phone
-                          </div>
-                          <div>
-                            Scan with your camera, or tap <b>Open in Telegram</b> above. Then tap <b>Start</b> in the bot chat.
-                          </div>
-                          {telegramPopupHint?.botId === bot.id && telegramPopupHint.state === "blocked" && (
-                            <div style={{ color: "var(--vz-warn, #c2410c)", marginTop: 6 }}>
-                              Your browser blocked the auto-open. Use the QR or the button above.
-                            </div>
-                          )}
-                          <div style={{ marginTop: 6, fontFamily: "var(--vz-font-mono)", fontSize: 11 }}>
-                            Code: {bot.link_code}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-              <IntegrationRow
-                badgeBg="#229ED9" badgeChar="+" name="Add Telegram bot"
-                value="Connect another bot — bind it to a specific agent for direct access"
-                connected={false}
-                available
-                actions={
-                  <>
-                    {/*
-                      Only offer the platform bot here if the user doesn't
-                      already have one paired — server enforces one-platform-
-                      pairing-per-user. Keeps the row tidy.
-                    */}
-                    {telegramConfig?.platformBot && !telegramBots.some((b) => b.is_platform_owned) && (
-                      <Button size="sm" onClick={handleConnectTelegramPlatform} disabled={savingTelegram || !telegramConfig.publicReachable}>
-                        {savingTelegram ? "Pairing…" : `Pair @${telegramConfig.platformBot.bot_username}`}
-                      </Button>
-                    )}
-                    <Button size="sm" variant="ghost" onClick={() => setShowTelegram(true)} disabled={!telegramConfig?.publicReachable}>
-                      {telegramConfig?.publicReachable ? "Add bot" : "Public URL required"}
-                    </Button>
-                  </>
-                }
-              />
-            </>
-          )}
           <IntegrationRow
             badgeBg="#2563EB" badgeChar="@" name="Email"
             value={email ? (email.config.from_address as string) : "Not configured"}
@@ -545,8 +311,12 @@ export function IntegrationSection() {
               )
             }
             testResult={testResult?.id === webhook?.id ? testResult : undefined}
-            isLast
+            // Stay non-last so the bottom seam survives when a plugin
+            // adds a notifications row below; if no plugins register,
+            // the row's bottom border is hidden by Card's own border.
+            isLast={getIntegrationRows("notifications").length === 0}
           />
+          {renderRows("notifications")}
         </Card>
 
         <div
@@ -597,7 +367,7 @@ export function IntegrationSection() {
                   <span style={{ fontSize: 12, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>not configured by admin</span>
                 )
               }
-              isLast
+              isLast={getIntegrationRows("data-sources").length === 0}
             />
           ) : (
             <>
@@ -636,10 +406,11 @@ export function IntegrationSection() {
                     {connectingTeller ? "Opening…" : "Add bank"}
                   </Button>
                 }
-                isLast
+                isLast={getIntegrationRows("data-sources").length === 0}
               />
             </>
           )}
+          {renderRows("data-sources")}
         </Card>
         </>
       )}
@@ -693,47 +464,6 @@ export function IntegrationSection() {
           </Field>
           <Field label="From address">
             <Input value={emailFrom} onChange={(e) => setEmailFrom(e.target.value)} placeholder="alerts@yourdomain.com" />
-          </Field>
-        </div>
-      </Modal>
-
-      <Modal
-        open={showTelegram}
-        onClose={() => setShowTelegram(false)}
-        size="md"
-        dismissable={false}
-        title="Connect Telegram bot"
-        footer={
-          <>
-            <Button variant="ghost" size="sm" onClick={() => setShowTelegram(false)}>Cancel</Button>
-            <Button size="sm" onClick={handleSaveTelegram} disabled={savingTelegram || !telegramToken.trim()}>
-              {savingTelegram ? "Connecting…" : "Connect"}
-            </Button>
-          </>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <ol style={{ fontSize: 12.5, color: "var(--vz-muted)", paddingLeft: 18, lineHeight: 1.6, margin: 0 }}>
-            <li>Open Telegram and message <b>@BotFather</b>.</li>
-            <li>Send <code>/newbot</code> and follow the prompts to choose a name + username.</li>
-            <li>BotFather replies with an HTTP API token — paste it below.</li>
-            <li>After connecting, Telegram opens automatically — tap <b>Start</b> to link your account.</li>
-          </ol>
-          <Field label="Bot token" hint="Format: 123456789:ABC-DEF... — kept encrypted at rest.">
-            <Input type="password" value={telegramToken} onChange={(e) => setTelegramToken(e.target.value)} placeholder="123456789:ABC..." />
-          </Field>
-          <Field
-            label="Bind to agent (optional)"
-            hint="When set, /new in this bot defaults to this agent — no @slug needed."
-          >
-            <Select
-              value={telegramBoundProfileId}
-              onChange={(v) => setTelegramBoundProfileId(v)}
-              options={[
-                { value: "", label: "Any agent (uses default)" },
-                ...(agentProfiles ?? []).map((p) => ({ value: p.id, label: `@${p.slug} — ${p.name}` })),
-              ]}
-            />
           </Field>
         </div>
       </Modal>

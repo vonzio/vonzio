@@ -9,6 +9,20 @@
 
 FROM node:22-slim
 
+# Pull the latest debian security patches into every rebuild. The
+# node:22-slim base lags upstream by days-to-weeks; `apt-get upgrade`
+# brings libgnutls30, linux-libc-dev, and friends current with whatever
+# the security tracker has on the date of build. This is what makes the
+# Trivy CI gate satisfiable -- without this step the base image carries
+# whatever CVEs accumulated since node:22-slim was last rebuilt.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
+# The bundled npm in node:22-slim ships an older picomatch (HIGH ReDoS).
+# Upgrade npm globally so its dependency tree is patched. agent-runner
+# uses npx + npm install at agent startup, so an out-of-date npm here
+# means an out-of-date dep tree there.
+RUN npm install -g npm@latest
+
 # System tools for Claude Code agents.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget git ca-certificates openssh-client \
@@ -22,7 +36,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # agents that read/write user databases (Supabase/Postgres, MySQL,
     # Redis, SQLite). Each is small (~5-15 MB).
     postgresql-client default-mysql-client redis-tools sqlite3 \
-    sudo procps file \
+    procps file \
+    # Re-run `apt-get upgrade` AFTER chromium installs so any chromium
+    # patch published between the line-18 upgrade and now lands too.
+    # Chromium ships HIGH/CRITICAL CVEs frequently (see CVE-2026-9872+
+    # batch on 2026-05-31 that gated PR #83/#84); without this step a
+    # rebuild only picks up new chromium when the chromium line itself
+    # gets re-cached. This step is cheap on weekly-cron rebuilds and
+    # invalidates correctly on real CVE drift.
+    && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/* \
     # Symlink fd (Debian names it fdfind).
     && ln -sf /usr/bin/fdfind /usr/bin/fd
@@ -58,10 +80,15 @@ RUN chmod +x /app/cleanup.sh /app/git-credential-helper.sh /app/entrypoint.sh
 RUN git config --system credential.helper /app/git-credential-helper.sh
 
 # Unprivileged agent user (claude-agent-sdk's bypassPermissions refuses to
-# run as root) + workspace + sudoers + npm-global prefix.
+# run as root) + workspace + npm-global prefix.
+#
+# Deliberately NO sudo and no sudoers entry. The agent runs strictly as the
+# unprivileged `agent` user with no path to root inside the container. If a
+# deployer needs runtime apt installs they should bake them into a custom
+# agent image (the supported extension point) rather than handing the LLM
+# root-equivalent power — see docs/HARDENING.md.
 RUN useradd -m -s /bin/bash agent && \
-    mkdir -p /workspace/output && \
-    echo 'agent ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/agent
+    mkdir -p /workspace/output
 
 RUN mkdir -p /home/agent/.npm-global && chown agent:agent /home/agent/.npm-global
 
