@@ -2,14 +2,13 @@ import { createHmac } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { Resend } from "resend";
-import type { SlackService } from "./slack-service.js";
 import type { TelegramService } from "./telegram-service.js";
-import type { IntegrationService, SlackConfig } from "./integration-service.js";
+import type { IntegrationService } from "./integration-service.js";
 import type { NotificationBusImpl } from "../plugins/notification-bus.js";
 import type { DrizzleDB } from "../db/index.js";
 import * as schema from "../db/schema.js";
 import { emailLayout } from "../email/templates.js";
-import { toHtml, toPlainText, toSlackMrkdwn } from "./format-message.js";
+import { toHtml, toPlainText } from "./format-message.js";
 import type { Logger } from "../orchestrator/orchestrator.js";
 import type { Playbook, PlaybookRun } from "@vonzio/shared";
 import type { NotificationChannel } from "@vonzio/shared";
@@ -82,7 +81,6 @@ export function formatPlaybookNotification(
 }
 
 export interface NotificationServiceDeps {
-  slackService: SlackService;
   /**
    * Retained on deps for now -- some non-notification paths in this
    * service still construct Telegram messages directly. The notify
@@ -178,10 +176,22 @@ export class NotificationService {
 
     try {
       switch (integration.type) {
-        case "slack":
-          await this.sendViaSlack(integration, message);
-          result = { success: true, channel: "slack" };
+        case "slack": {
+          // Bus-inverted in Phase 3E.2 -- @vonzio/plugin-slack owns
+          // the actual send. Same pattern as telegram in #74.
+          const slResult = await this.deps.notificationBus.dispatch({
+            kind: "slack",
+            recipient: integration.id,
+            text: message,
+            metadata: { userId },
+          });
+          if (slResult.ok) {
+            result = { success: true, channel: "slack" };
+          } else {
+            result = { success: false, channel: "slack", error: slResult.error };
+          }
           break;
+        }
         case "email":
           await this.sendViaEmail(integration, userId, message);
           result = { success: true, channel: "email" };
@@ -250,30 +260,6 @@ export class NotificationService {
         }
       }),
     );
-  }
-
-  private async sendViaSlack(
-    integration: { config: Record<string, unknown> },
-    message: string,
-  ): Promise<void> {
-    const config = integration.config as unknown as SlackConfig;
-
-    const res = await fetch("https://slack.com/api/conversations.open", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.bot_token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ users: config.authed_user_id }),
-    });
-    const data = await res.json() as Record<string, unknown>;
-    const dmChannel = (data.channel as Record<string, unknown>)?.id as string | undefined;
-
-    if (!dmChannel) {
-      throw new Error("Failed to open Slack DM channel");
-    }
-
-    await this.deps.slackService.sendMessage(config.bot_token, {
-      channel: dmChannel,
-      text: toSlackMrkdwn(message),
-    });
   }
 
   private async sendViaEmail(

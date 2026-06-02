@@ -1,8 +1,31 @@
-import type { FastifyInstance } from "fastify";
+// Slack OAuth routes -- the user-initiated authorize endpoint
+// (auth-gated) and the redirect callback (public).
+//
+// Moved here from packages/core-server/src/routes/slack-oauth.ts in
+// Phase 3E.2. The diffs from the in-core version:
+//   - Config narrowed to the 3 fields actually read
+//   - IntegrationService -> PluginIntegrationLookup
+//   - encrypt/decrypt -> ctx.core.encryption (passed via opts)
+//   - authHook accepted on the authorize-routes opts; the plugin's
+//     init() wraps the authorize routes in an explicit child scope to
+//     keep fp()'s un-encapsulation from leaking the auth hook to the
+//     public callback route (same pattern as setup.ts's #83 fix).
+
+import type { FastifyInstance, onRequestHookHandler } from "fastify";
 import fp from "fastify-plugin";
-import type { Config } from "../config.js";
-import type { IntegrationService } from "../services/integration-service.js";
-import { encrypt, decrypt } from "../auth/crypto.js";
+import type {
+  PluginIntegrationLookup,
+  AuthUser,
+} from "@vonzio/plugin-api";
+
+interface FastifyRequestWithUser {
+  user?: AuthUser;
+}
+
+interface PluginEncryption {
+  encrypt(plaintext: string): string;
+  decrypt(ciphertext: string): string;
+}
 
 const SLACK_SCOPES = [
   "chat:write",
@@ -16,19 +39,37 @@ const SLACK_SCOPES = [
   "users:read",
 ].join(",");
 
-export interface SlackOAuthRoutesOptions {
-  config: Config;
-  integrationService: IntegrationService;
-  encryptionKey: string;
+interface SharedOAuthOpts {
+  config: {
+    SLACK_CLIENT_ID?: string;
+    SLACK_CLIENT_SECRET?: string;
+    BETTER_AUTH_URL: string;
+  };
+  integrationService: PluginIntegrationLookup;
+  encryption: PluginEncryption;
+}
+
+export interface SlackOAuthRoutesOptions extends SharedOAuthOpts {
+  /**
+   * Plugin-provided auth hook (ctx.core.authHook). Applied inside
+   * THIS fastify-plugin scope only -- the plugin's init() wraps the
+   * registration in `ctx.server.register(async (scope) => {...})` so
+   * fp()'s un-encapsulation lifts the hook only to that explicit
+   * child scope, NOT to the root server (and thus not to the public
+   * callback route in slackOAuthCallbackRoute).
+   */
+  authHook: onRequestHookHandler;
 }
 
 /**
- * Auth-guarded Slack OAuth routes — register inside the /v1 scope.
+ * Auth-guarded Slack OAuth routes -- register inside a child scope.
  */
 export const slackOAuthRoutes = fp(
   async (server: FastifyInstance, opts: SlackOAuthRoutesOptions) => {
-    const { config, encryptionKey } = opts;
+    const { config, encryption, authHook } = opts;
     const callbackBase = config.BETTER_AUTH_URL.replace(/\/$/, "");
+
+    server.addHook("onRequest", authHook);
 
     server.get("/v1/integrations/slack/config", async () => {
       return {
@@ -43,11 +84,10 @@ export const slackOAuthRoutes = fp(
           return reply.code(400).send({ error: "Slack OAuth not configured" });
         }
 
-        const user = request.user!;
+        const user = (request as FastifyRequestWithUser).user!;
         const returnPath = request.query.returnPath ?? "/agents";
-        const state = encrypt(
+        const state = encryption.encrypt(
           JSON.stringify({ userId: user.id, returnPath, ts: Date.now() }),
-          encryptionKey,
         );
 
         const redirectUri = `${callbackBase}/api/slack/callback`;
@@ -66,11 +106,12 @@ export const slackOAuthRoutes = fp(
 );
 
 /**
- * Slack OAuth callback — register at top level (no auth, browser redirect).
+ * Slack OAuth callback -- public route; Slack redirects the browser
+ * here after the authorize page, no cookie attached.
  */
 export const slackOAuthCallbackRoute = fp(
-  async (server: FastifyInstance, opts: SlackOAuthRoutesOptions) => {
-    const { config, integrationService, encryptionKey } = opts;
+  async (server: FastifyInstance, opts: SharedOAuthOpts) => {
+    const { config, integrationService, encryption } = opts;
     const callbackBase = config.BETTER_AUTH_URL.replace(/\/$/, "");
 
     server.get<{ Querystring: { code?: string; state?: string; error?: string } }>(
@@ -89,7 +130,7 @@ export const slackOAuthCallbackRoute = fp(
         // Decrypt and validate state
         let stateData: { userId: string; returnPath?: string; ts: number };
         try {
-          stateData = JSON.parse(decrypt(state, encryptionKey));
+          stateData = JSON.parse(encryption.decrypt(state));
         } catch {
           return reply.redirect("/agents?oauth=error&message=invalid_state#integrations");
         }

@@ -379,14 +379,9 @@ export interface Integration {
   updated_at: string;
 }
 
-export function fetchSlackConfig(): Promise<{ enabled: boolean }> {
-  return request("/integrations/slack/config");
-}
-
-export function getSlackAuthorizeUrl(returnPath?: string): Promise<{ url: string }> {
-  const params = returnPath ? `?returnPath=${encodeURIComponent(returnPath)}` : "";
-  return request(`/integrations/slack/authorize${params}`);
-}
+// Slack endpoints moved to @vonzio/plugin-slack/dashboard/api in
+// Phase 3E.2 -- the dashboard no longer references any
+// /v1/integrations/slack/* endpoints directly.
 
 export function fetchGmailConfig(): Promise<{ enabled: boolean }> {
   return request("/integrations/gmail/config");
