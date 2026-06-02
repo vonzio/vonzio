@@ -3,7 +3,7 @@ import { Plus, ChevronRight, Star, Archive, Trash2, MessageSquare, CheckCircle2,
 import type { GroupedWorkspaces } from "../hooks/useWorkspaces.js";
 import type { WorkspaceSummary } from "../api/client.js";
 import { Modal, Button } from "@/brand/components.js";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils.js";
 
 interface Props {
   grouped: GroupedWorkspaces;

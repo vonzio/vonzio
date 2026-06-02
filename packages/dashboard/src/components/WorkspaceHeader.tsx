@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Send, Shield } from "lucide-react";
+import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Shield } from "lucide-react";
 import { Pill } from "@/brand/components.js";
-import { fetchProfileModels, fetchTelegramBotForWorkspace, type ProfileModel, type TelegramBotForWorkspace } from "@/api/client.js";
+import { fetchProfileModels, type ProfileModel } from "@/api/client.js";
 import { MODEL_DISPLAY_FALLBACK } from "@/lib/model-display.js";
 import { getWorkspaceHeaderSlots } from "@/registry/index.js";
 import { useEntitlements } from "@/registry/EntitlementContext.js";
@@ -81,9 +81,6 @@ export function WorkspaceHeader({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(name ?? "");
   const [models, setModels] = useState<ProfileModel[]>([]);
-  // Telegram bot to deep-link this workspace into (if the user has one linked).
-  // null when the user has no linked bot; the button stays hidden.
-  const [tgBot, setTgBot] = useState<TelegramBotForWorkspace | null>(null);
 
   // Load profile models so we can render a friendly display name in the readout.
   useEffect(() => {
@@ -104,18 +101,10 @@ export function WorkspaceHeader({
     };
   }, [profileId]);
 
-  // Resolve the best Telegram bot to deep-link this workspace into. The
-  // server picks one bound to the workspace's profile if possible. A 404
-  // (workspace not found / no linked bots) leaves tgBot null and the
-  // button stays hidden.
-  useEffect(() => {
-    if (!sessionId) { setTgBot(null); return; }
-    let cancelled = false;
-    fetchTelegramBotForWorkspace(sessionId)
-      .then((res) => { if (!cancelled) setTgBot(res.bot); })
-      .catch(() => { if (!cancelled) setTgBot(null); });
-    return () => { cancelled = true; };
-  }, [sessionId]);
+  // The "Open in Telegram" deep-link button moved to
+  // @vonzio/plugin-telegram/dashboard/WorkspaceHeaderTelegramButton.tsx
+  // in Phase 3D.1e -- rendered via the registerWorkspaceHeaderSlot
+  // contribution alongside other header slots below.
 
   const overridden = !!modelOverride;
   const resolvedModelLabel = (() => {
@@ -311,20 +300,6 @@ export function WorkspaceHeader({
           <Download className="w-3 h-3" />
           <span className="hidden sm:inline">Export</span>
         </button>
-
-        {tgBot && (
-          <a
-            href={tgBot.deep_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="vz-action-btn"
-            style={{ width: "auto", padding: "0 8px", gap: 5, fontSize: 12, textDecoration: "none" }}
-            title={`Continue in Telegram via @${tgBot.bot_username}${tgBot.matched_by_profile ? " (bound to this agent)" : ""}`}
-          >
-            <Send className="w-3 h-3" />
-            <span className="hidden sm:inline">Telegram</span>
-          </a>
-        )}
 
         <button
           type="button"

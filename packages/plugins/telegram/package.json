@@ -25,6 +25,10 @@
     "./service": {
       "types": "./src/services/telegram-service.ts",
       "import": "./src/services/telegram-service.ts"
+    },
+    "./dashboard/api": {
+      "types": "./src/dashboard/api.ts",
+      "import": "./src/dashboard/api.ts"
     }
   },
   "scripts": {
@@ -36,10 +40,12 @@
     "@vonzio/dashboard": "*",
     "@vonzio/plugin-api": "*",
     "drizzle-orm": "^0.45.1",
+    "qrcode.react": "^4.2.0",
     "zod": "^3.24.4"
   },
   "peerDependencies": {
     "fastify": "^5.0.0",
+    "lucide-react": "^0.474.0",
     "react": "^19.0.0"
   },
   "peerDependenciesMeta": {
