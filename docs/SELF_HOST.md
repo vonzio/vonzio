@@ -18,7 +18,15 @@ If you want multi-user invites, plans, billing, and an admin panel, those live i
 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
 ```
 
-The installer handles everything below automatically — dep checks, secret generation, postgres, Better Auth schema, stack boot. Flags: `--dir <path>`, `--yes`, `--no-start`, `--uninstall`, `--help`.
+The installer handles everything below automatically — dep checks, secret generation, postgres, Better Auth schema, stack boot. Flags: `--dir <path>`, `--tag <tag>`, `--yes`, `--no-start`, `--uninstall`, `--help`.
+
+By default, it installs the **latest tagged release**. Pin a specific version via `VONZIO_VERSION` (env) or `--tag` (flag):
+
+```bash
+VONZIO_VERSION=v0.1.3 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
+```
+
+Use a pinned install when you need reproducibility, are following a security advisory, or want to stay off the in-flight `main` branch.
 
 The manual recipe below is the same steps without the wrapper, for readers who want to understand what's happening or run them individually.
 
