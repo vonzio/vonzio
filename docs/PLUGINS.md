@@ -659,6 +659,31 @@ src/
 
 ## 12. Common patterns
 
+### Calling an mTLS upstream (`secrets.mtls`)
+
+If an upstream requires a client certificate (mutual TLS — e.g. the Teller
+banking API), you never handle the private key yourself. Declare the capability
+and the logical cert names; the operator provisions the PEM files in policy:
+
+```jsonc
+// package.json "vonzio" block
+"capabilities": ["http.outbound", "secrets.mtls"],
+"outboundHosts": ["api.teller.io"],
+"mtlsSecrets": ["teller-client"]
+```
+
+```ts
+// in init() / a request handler
+const ref = ctx.secrets.mtls("teller-client");          // opaque — no bytes
+const res = await ctx.http.fetch("https://api.teller.io/accounts", { mtls: ref });
+```
+
+The operator maps each name to host files in `vonzio-plugins.json`
+(`mtls_secrets: { "teller-client": { cert, key, ca?, passphraseEnv? } }`). Core
+reads the PEMs and presents the cert server-side; your code only ever holds the
+opaque ref. A name you didn't declare (or the operator didn't provision) throws
+`CapabilityViolationError`. See [PLUGIN_LOADER_SPEC.md §5](./PLUGIN_LOADER_SPEC.md).
+
 ### Auth scoping for fastify-plugins
 
 `fastify-plugin` (`fp()`) intentionally un-encapsulates so a registered
