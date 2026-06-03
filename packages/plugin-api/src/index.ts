@@ -883,16 +883,14 @@ export interface PluginStorageKv {
  * IPs, DNS rebinding), and requires the host to match the manifest∩policy
  * `outboundHosts` allowlist. See §10.
  *
- * `fetch` returns a real WHATWG `Response` (so existing `.json()` / `.ok` /
- * `.arrayBuffer()` call sites keep working). `responseType: "buffer"` is for
- * binary downloads where UTF-8 decoding would corrupt the bytes.
+ * `fetch` returns a real WHATWG `Response`, so existing `.json()` / `.ok` /
+ * `.text()` / `.arrayBuffer()` call sites keep working — binary downloads use
+ * `.arrayBuffer()` and are not corrupted (the bytes are preserved end to end).
  */
 export interface PluginHttpInit {
   method?: string;
   headers?: Record<string, string>;
   body?: string | Uint8Array | FormData;
-  /** "text" (default) reads the body as UTF-8; "buffer" preserves raw bytes. */
-  responseType?: "text" | "buffer";
   /** Per-call timeout override (ms), capped at 30s. */
   timeoutMs?: number;
   /** Per-call max response size override (bytes), capped at 5 MiB. */
