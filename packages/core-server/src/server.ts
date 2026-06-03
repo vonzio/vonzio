@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { serveDashboardIndex } from "./dashboard-csp.js";
+import { assertDashboardParity } from "./plugins/parity-check.js";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -823,6 +824,12 @@ export async function buildServer(deps: ServerDeps) {
     ? resolve(process.env.DASHBOARD_DIST)
     : join(__dirname, "../../dashboard/dist");
   if (existsSync(dashboardDist)) {
+    // Fail boot loudly if the dashboard bundle's approved-frontend set/hash
+    // disagrees with the runtime plugin policy (operator drift: forgot to
+    // rebuild, or edited the policy after building). No-op when the dashboard
+    // wasn't built with the vonzio Vite plugin (no .plugins.json).
+    assertDashboardParity({ dashboardDist });
+
     // Read index.html once at boot. It's served per-request (not statically) so
     // each response gets a fresh CSP nonce substituted for the build-time
     // placeholder the dashboard Vite plugin stamped onto every <script> tag.
