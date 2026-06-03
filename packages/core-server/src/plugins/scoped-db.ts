@@ -57,7 +57,7 @@ interface ScopeCtx {
 /** Does a drizzle table belong to the plugin's scope? A table is in-scope if
  *  its canonical name starts with `${prefix}_`, OR it lives in a Postgres
  *  schema literally named the prefix. */
-function tableInScope(table: object, ctx: ScopeCtx): boolean {
+function tableInScope(table: Table, ctx: ScopeCtx): boolean {
   const name = getTableName(table);
   if (name.startsWith(`${ctx.schemaPrefix}_`)) return true;
   try {
