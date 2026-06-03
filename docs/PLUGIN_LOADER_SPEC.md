@@ -663,6 +663,11 @@ ever touching the private key:
    mutually authenticated. The bytes never enter plugin-readable memory, so the
    plugin can't exfiltrate the key even through an allowed outbound host. This
    is why `secrets.mtls` is external-allowed and not a root-equivalent combo.
+   Two hardening properties: the ref must have been minted by `ctx.secrets.mtls`
+   (a hand-built ref object is refused, so every use goes through the audited
+   call); and the cert is **bound to the original target host** — a redirect to a
+   different host, even another allowlisted one, does NOT receive the client
+   cert, so the credential can't spill across hosts.
 
 ```typescript
 interface MtlsRef { readonly __vonzioMtls: true; readonly name: string }

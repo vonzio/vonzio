@@ -90,11 +90,18 @@ describe("ctx.secrets.mtls (opaque ref)", () => {
 
 describe("ctx.http.fetch with mTLS — real handshake", () => {
   const material = () => new Map([["teller-client", { cert, key, ca: cert }]]);
+  // Production wires a shared registry so ctx.http only accepts refs minted by
+  // the audited ctx.secrets.mtls().
+  const wire = () => {
+    const issued = new WeakSet<object>();
+    return {
+      http: makePluginHttp({ pluginName: "@x/teller", grantedHosts: ["localhost"], mtlsMaterial: material(), issuedMtlsRefs: issued }),
+      secrets: makePluginSecrets({ pluginName: "@x/teller", declaredNames: new Set(["teller-client"]), issued }),
+    };
+  };
 
   it("presents the client cert; the server validates and echoes its CN", async () => {
-    const http = makePluginHttp({ pluginName: "@x/teller", grantedHosts: ["localhost"], mtlsMaterial: material() });
-    const secrets = makePluginSecrets({ pluginName: "@x/teller", declaredNames: new Set(["teller-client"]) });
-
+    const { http, secrets } = wire();
     const res = await http.fetch(baseUrl, { mtls: secrets.mtls("teller-client") });
     expect(res.status).toBe(200);
     // The server only reaches the handler if the client cert validated; the
@@ -103,8 +110,16 @@ describe("ctx.http.fetch with mTLS — real handshake", () => {
   });
 
   it("refuses a ref for an unprovisioned name BEFORE any network call", async () => {
-    const http = makePluginHttp({ pluginName: "@x/teller", grantedHosts: ["localhost"], mtlsMaterial: material() });
+    const { http } = wire();
     const forged = { __vonzioMtls: true, name: "evil" } as never;
+    await expect(http.fetch(baseUrl, { mtls: forged })).rejects.toBeInstanceOf(CapabilityViolationError);
+  });
+
+  it("refuses a forged ref even with a valid provisioned name (not minted by ctx.secrets)", async () => {
+    const { http } = wire();
+    // Valid, provisioned name — but the plugin hand-built the object instead of
+    // calling ctx.secrets.mtls(), so it's not in the issued registry → refused.
+    const forged = { __vonzioMtls: true, name: "teller-client" } as never;
     await expect(http.fetch(baseUrl, { mtls: forged })).rejects.toBeInstanceOf(CapabilityViolationError);
   });
 

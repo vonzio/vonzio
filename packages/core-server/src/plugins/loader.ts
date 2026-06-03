@@ -895,11 +895,16 @@ export function buildPluginContext<TConfig>(args: {
     ? makePluginStorage(opts.handle, plugin.name)
     : stub<import("@vonzio/plugin-api").PluginStorageKv>("storage.kv", "storage");
 
+  // Shared registry of mtls refs minted by ctx.secrets.mtls — ctx.http enforces
+  // membership so a forged ref can't skip the audited resolution.
+  const issuedMtlsRefs = new WeakSet<object>();
+
   const http = granted.has("http.outbound")
     ? makePluginHttp({
         pluginName: plugin.name,
         grantedHosts,
         mtlsMaterial,
+        issuedMtlsRefs,
         onCall: (l) => emitOutboundCall(log, l),
         onViolation: (i) => emitOutboundViolation(log, i),
       })
@@ -909,6 +914,7 @@ export function buildPluginContext<TConfig>(args: {
     ? makePluginSecrets({
         pluginName: plugin.name,
         declaredNames: new Set(mtlsMaterial.keys()),
+        issued: issuedMtlsRefs,
         onResolve: (i) => emitMtlsResolve(log, i),
       })
     : stub<PluginSecrets>("secrets.mtls", "secrets");

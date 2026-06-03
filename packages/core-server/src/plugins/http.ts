@@ -52,6 +52,10 @@ export interface MakePluginHttpOpts {
    *  host files at load). A plugin reaches it only by passing the matching
    *  opaque MtlsRef; the bytes live in this closure, never in plugin memory. */
   mtlsMaterial?: ReadonlyMap<string, MtlsMaterial>;
+  /** Registry of refs minted by ctx.secrets.mtls. When provided, an mtls ref
+   *  must be a member — so a plugin can't forge a ref object and skip the
+   *  audited ctx.secrets.mtls() resolution. */
+  issuedMtlsRefs?: WeakSet<object>;
   /** Called once per completed call for the audit log. */
   onCall?: (log: PluginHttpCallLog) => void;
   /** Called when a host fails the allowlist (before the request is made). */
@@ -88,8 +92,12 @@ export function makePluginHttp(opts: MakePluginHttpOpts): PluginHttp {
       let mtlsName: string | undefined;
       if (init.mtls !== undefined) {
         const ref = asMtlsRef(init.mtls);
+        // The ref must have been minted by ctx.secrets.mtls (membership) AND
+        // resolve to provisioned material. A forged object — or a ref the
+        // plugin never resolved through the audited surface — is refused.
+        const issued = ref ? opts.issuedMtlsRefs?.has(ref) ?? true : false;
         const material = ref ? opts.mtlsMaterial?.get(ref.name) : undefined;
-        if (!ref || !material) {
+        if (!ref || !issued || !material) {
           throw new CapabilityViolationError({
             plugin: pluginName,
             capability: "secrets.mtls",
