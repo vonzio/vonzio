@@ -391,6 +391,11 @@ export async function safeFetchCore(
   let currentMethod = init.method ?? "POST";
   let currentBody: SafeFetchBody | undefined = init.body;
   let redirectCount = 0;
+  // Host the mTLS client cert is bound to (the ORIGINAL target). The cert is
+  // presented only to this host; a redirect to a different host — even another
+  // allowlisted one — does NOT get the client cert, so the credential can't
+  // spill across hosts. Captured on the first validated hop.
+  let mtlsHost: string | undefined;
   let lastResponse: Response | null = null;
   // The dispatcher pinning the CURRENT hop's connection to its validated IP.
   // Kept open until its response body is read; closed in the outer finally.
@@ -417,14 +422,20 @@ export async function safeFetchCore(
         await currentDispatcher.close().catch(() => {});
         currentDispatcher = undefined;
       }
+      // Bind the client cert to the original target host: present it only when
+      // this hop's host matches the first hop's. A cross-host redirect drops the
+      // cert (and likely fails at the new host, which is the safe outcome).
+      if (mtlsHost === undefined) mtlsHost = validated.bareHost;
+      const hopMtls = init.mtls && validated.bareHost === mtlsHost ? init.mtls : undefined;
+
       // Allowlisted hosts skip IP pinning (the explicit "internal callback"
       // path). A dispatcher is still needed when this call carries an mTLS
       // client cert, so build one whenever pinning OR mTLS applies.
       const needPin = !validated.allowlisted;
-      if (needPin || init.mtls) {
+      if (needPin || hopMtls) {
         currentDispatcher = makeConnectDispatcher({
           pin: needPin ? { ip: validated.resolvedIp, family: validated.family } : undefined,
-          mtls: init.mtls,
+          mtls: hopMtls,
         });
       }
 

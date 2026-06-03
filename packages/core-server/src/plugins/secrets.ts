@@ -14,6 +14,9 @@ export interface MakePluginSecretsOpts {
    *  (manifest.mtlsSecrets ∩ policy.mtls_secrets). Resolving any other name
    *  throws — defense in depth even though the loader already cross-checked. */
   declaredNames: ReadonlySet<string>;
+  /** Registry of refs this surface minted. ctx.http enforces membership, so a
+   *  plugin-forged ref object (bypassing this audited call) is rejected. */
+  issued?: WeakSet<object>;
   /** Audit hook fired once per successful resolution. */
   onResolve?: (info: { plugin: string; name: string }) => void;
 }
@@ -31,9 +34,11 @@ export function makePluginSecrets(opts: MakePluginSecretsOpts): PluginSecrets {
           key: `secrets.mtls(${name})`,
         });
       }
-      opts.onResolve?.({ plugin: pluginName, name });
       // Frozen so a plugin can't mutate the brand/name after the fact.
-      return Object.freeze({ __vonzioMtls: true as const, name });
+      const ref = Object.freeze({ __vonzioMtls: true as const, name });
+      opts.issued?.add(ref);
+      opts.onResolve?.({ plugin: pluginName, name });
+      return ref;
     },
   };
 }
