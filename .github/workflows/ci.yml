@@ -97,7 +97,10 @@ jobs:
             packages/core-server/src/plugins/audit.test.ts \
             packages/core-server/src/plugins/cli.test.ts \
             packages/core-server/src/plugins/builtins.test.ts \
-            packages/core-server/src/plugins/attack-corpus.test.ts
+            packages/core-server/src/plugins/attack-corpus.test.ts \
+            packages/core-server/src/plugins/parity-check.test.ts \
+            packages/core-server/src/dashboard-csp.test.ts \
+            packages/dashboard
 
   image-build-and-scan:
     # Builds the agent-base + server images on every PR and scans both

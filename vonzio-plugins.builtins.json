@@ -3,7 +3,7 @@
   "plugins": {
     "@vonzio/plugin-slack": {
       "version": "0.1.0",
-      "approved_hash_sha256": "b1653f114cb4eaa7ad7eaefab6ead3ae8602381f27c5e16f015b44a544cb0f6b",
+      "approved_hash_sha256": "b70f35f919ffc242622fc7207b540784517089bd35f2cde703b268a98134d991",
       "approved_capabilities": [
         "db.access",
         "encryption.encrypt",
@@ -25,6 +25,7 @@
         "events.read",
         "events.subscribe",
         "dashboard.push",
+        "images.rewrite",
         "models.list",
         "notifications.channel",
         "mcp.register",

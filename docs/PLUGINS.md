@@ -458,8 +458,25 @@ const register: PluginFrontendEntry = () => {
 export default register;
 ```
 
-The dashboard's `plugins.ts` imports each plugin's `/frontend` entry
-and calls its `register()` once before React mounts.
+A plugin's frontend is bundled into the dashboard **only when the
+operator policy approves it**. The dashboard's `vonzio-plugins` Vite
+plugin reads `vonzio-plugins.builtins.json` + the operator's
+`vonzio-plugins.json` at build time and bundles a plugin's frontend
+only if its policy entry sets `approved_frontend: true` (built-ins are
+auto-approved; externals require `vonzio plugin approve --frontend`).
+The approved set is exposed to `plugins.ts` via the virtual module
+`virtual:vonzio-plugins`, and `dist/.plugins.json` records what was
+bundled so the server can verify build↔runtime parity at boot.
+
+Frontend code runs in the dashboard origin with full DOM + session
+access — approving it is a real trust grant (see
+[SECURITY_MODEL.md](./SECURITY_MODEL.md) and the loader spec §2). The
+dashboard ships a strict Content-Security-Policy
+(`script-src 'nonce-<per-request>' 'strict-dynamic'`, no `'self'`) so
+**bundling is the only path code reaches the dashboard origin**: a
+script served from a plugin's Fastify route (or injected via XSS) lacks
+the per-request nonce and the browser refuses it. Approved frontend code
+is still fully trusted once bundled.
 
 ### Available slots (v0.1)
 
