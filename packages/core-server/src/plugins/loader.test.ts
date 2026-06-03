@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { EventEmitter } from "node:events";
-import { parsePluginEnvList, buildSessionEventsFacade } from "./loader.js";
+import { parsePluginEnvList, buildSessionEventsFacade, isValidPluginName } from "./loader.js";
 import { NotificationBusImpl } from "./notification-bus.js";
 import { McpRegistryImpl } from "./mcp-registry.js";
 import { SchedulerImpl } from "./scheduler.js";
@@ -41,6 +41,19 @@ describe("parsePluginEnvList", () => {
       { packageName: "@vonzio/plugin-slack" },
       { packageName: "my-plugin" },
     ]);
+  });
+});
+
+describe("isValidPluginName (§6)", () => {
+  it("accepts scoped + bare package names", () => {
+    expect(isValidPluginName("@vonzio/plugin-gmail")).toBe(true);
+    expect(isValidPluginName("my-custom-plugin")).toBe(true);
+    expect(isValidPluginName("plugin_x.y")).toBe(true);
+  });
+  it("rejects path traversal, absolute, URL, and whitespace forms", () => {
+    for (const bad of ["./x", "../x", "/etc/passwd", "file:./x", "http://x", "a b", "@scope/a/b"]) {
+      expect(isValidPluginName(bad), bad).toBe(false);
+    }
   });
 });
 

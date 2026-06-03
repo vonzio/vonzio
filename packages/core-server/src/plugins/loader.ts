@@ -1,11 +1,21 @@
 import type { FastifyInstance } from "fastify";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   PLUGIN_API_VERSION,
   assertApiCompatible,
+  validateManifest,
+  BUILTIN_ONLY_CAPABILITIES,
+  ROOT_EQUIVALENT_COMBINATIONS,
+  type PluginCapability,
   type PluginContext,
   type PluginCore,
   type PluginLogger,
+  type PluginManifest,
   type PluginSessionPresenceRegistry,
+  type PluginSource,
+  type RefusalReason,
   type VonzioPlugin,
 } from "@vonzio/plugin-api";
 import type { DB } from "../db/index.js";
@@ -15,6 +25,28 @@ import { NotificationBusImpl } from "./notification-bus.js";
 import { McpRegistryImpl } from "./mcp-registry.js";
 import { SchedulerImpl } from "./scheduler.js";
 import { runPluginMigrations } from "./migrations.js";
+import {
+  findRepoRoot,
+  hashPackageDir,
+  classifySource,
+  crossCheckPolicy,
+  loadPolicies,
+  type LoadedPolicies,
+} from "./policy.js";
+import { assembleCore, throwingSurface, type OnViolation } from "./membrane.js";
+import { scopedDb, checkMigrationPrefix } from "./scoped-db.js";
+import { makePluginHttp, installGlobalFetchGuard, runInPluginContext } from "./http.js";
+import { makePluginStorage } from "./storage.js";
+import {
+  emitPluginLoaded,
+  emitPluginRefused,
+  emitCapabilityViolation,
+  emitOutboundCall,
+  emitOutboundViolation,
+  emitRawFetchAnomaly,
+  withIntrinsicsCheck,
+  type AuditLogger,
+} from "./audit.js";
 
 /**
  * Plugin loader. Reads `config.VONZIO_PLUGINS`, dynamically imports
@@ -330,12 +362,310 @@ export interface LoadPluginsOpts {
    * fine, they just never fire.
    */
   sessionEventEmitter?: SessionEventEmitterLike;
+  /**
+   * Monorepo root used to classify builtin vs external plugins and locate
+   * the shipped builtins policy. Defaults to findRepoRoot() (walks to the
+   * workspaces package.json).
+   */
+  repoRoot?: string;
+  /** Override for the operator policy path (defaults to $VONZIO_PLUGIN_POLICY
+   *  then <cwd>/vonzio-plugins.json). */
+  operatorPolicyPath?: string;
+  /**
+   * Dry-run (`vonzio --list-plugins` / VONZIO_PLUGINS_DRY_RUN=1): run the §3
+   * validation pipeline (steps 1-17) + emit the audit block for every plugin,
+   * then return WITHOUT importing any plugin entry or calling init().
+   */
+  dryRun?: boolean;
+}
+
+/** §6 name validation. Rejects `./`, `../`, absolute/URL forms, whitespace. */
+export function isValidPluginName(name: string): boolean {
+  return /^(@[\w.-]+\/)?[\w.-]+$/.test(name);
+}
+
+const msg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+const unscopedName = (pkg: string): string => (pkg.includes("/") ? pkg.split("/").pop()! : pkg);
+
+/** Absolute-route deny-list (§8). Built-ins are exempt (trusted; §13). */
+const ABSOLUTE_ROUTE_DENYLIST = [
+  "/v1/auth",
+  "/v1/admin",
+  "/v1/orgs",
+  "/health",
+  "/metrics",
+  "/assets",
+  "/api",
+];
+
+interface ResolvedPackage {
+  realRoot: string;
+  version: string;
+  manifestRaw: unknown;
+  realResolvedEntry: string;
+}
+
+/** Resolve a package to its real root + read its package.json. Uses
+ *  import.meta.resolve (require.resolve throws on these exports-only
+ *  packages — deviation #1). Throws on unresolvable. */
+function resolvePackageRoot(packageName: string): ResolvedPackage {
+  const entryUrl = import.meta.resolve(packageName);
+  const realResolvedEntry = realpathSync(fileURLToPath(entryUrl));
+  let dir = path.dirname(realResolvedEntry);
+  while (!existsSync(path.join(dir, "package.json"))) {
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error(`no package.json ancestor for ${packageName}`);
+    dir = parent;
+  }
+  const realRoot = realpathSync(dir);
+  const pkg = JSON.parse(readFileSync(path.join(realRoot, "package.json"), "utf8")) as {
+    version?: string;
+    vonzio?: unknown;
+  };
+  return { realRoot, version: String(pkg.version ?? "0.0.0"), manifestRaw: pkg.vonzio, realResolvedEntry };
+}
+
+/** Resolve manifest.backendEntry/frontendEntry to a real path that is a child
+ *  of the package root (§3 step 10). For the backend, also require it to equal
+ *  the package's resolved entry (deviation #2). */
+function resolveEntry(
+  realRoot: string,
+  entryRel: string,
+  expectedRealEntry: string | undefined,
+): { ok: true; realPath: string } | { ok: false; reason: RefusalReason; message: string } {
+  const abs = path.resolve(realRoot, entryRel);
+  if (!existsSync(abs)) {
+    return { ok: false, reason: "backend_path_escape", message: `entry "${entryRel}" does not exist` };
+  }
+  const real = realpathSync(abs);
+  if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+    return { ok: false, reason: "backend_path_escape", message: `entry "${entryRel}" escapes the package root` };
+  }
+  if (expectedRealEntry && real !== expectedRealEntry) {
+    return {
+      ok: false,
+      reason: "backend_path_escape",
+      message: `backendEntry "${entryRel}" does not resolve to the package's entry point`,
+    };
+  }
+  return { ok: true, realPath: real };
+}
+
+interface PreparedPlugin {
+  plugin: VonzioPlugin;
+  context: PluginContext;
+  manifest: PluginManifest;
+  hasHttpOutbound: boolean;
+}
+
+interface PrepareEnv {
+  opts: LoadPluginsOpts;
+  policies: LoadedPolicies;
+  repoRoot: string;
+  trackVersions: "strict" | "loose";
+  fullPaths: boolean;
+  log: AuditLogger;
 }
 
 /**
- * Full happy-path: read env, import, migrate, init each plugin.
- * Returns the loaded set so the caller can call `teardown()` at
- * shutdown.
+ * Run the §3 manifest-before-import pipeline for one plugin. Returns a
+ * PreparedPlugin (validated, imported, migrated, context built) or null
+ * (refused — already audited — or dry-run). Plugin code does NOT execute
+ * before step 18 (the import).
+ */
+async function preparePlugin(packageName: string, env: PrepareEnv): Promise<PreparedPlugin | null> {
+  const { opts, policies, repoRoot, trackVersions, fullPaths, log } = env;
+  const refuse = (
+    reason: RefusalReason,
+    message: string,
+    remediation?: string,
+    detail?: Record<string, unknown>,
+  ): null => {
+    emitPluginRefused(log, { pluginName: packageName, reason, message, remediation, detail });
+    return null;
+  };
+
+  // 1. name validation
+  if (!isValidPluginName(packageName)) {
+    return refuse("manifest_invalid", `invalid plugin name "${packageName}"`);
+  }
+
+  // 1-3. resolve + read + validate manifest
+  let resolved: ResolvedPackage;
+  try {
+    resolved = resolvePackageRoot(packageName);
+  } catch (err) {
+    return refuse("package_unresolvable", `cannot resolve "${packageName}": ${msg(err)}`);
+  }
+  const { realRoot, version, manifestRaw, realResolvedEntry } = resolved;
+
+  const mres = validateManifest(manifestRaw);
+  if (!mres.ok) return refuse(mres.reason, mres.message);
+  const manifest = mres.manifest;
+
+  // 4. api compatibility
+  try {
+    assertApiCompatible(manifest.apiVersion, PLUGIN_API_VERSION);
+  } catch (err) {
+    return refuse("api_version_incompatible", msg(err));
+  }
+
+  // 5. classify
+  const source: PluginSource = classifySource(realRoot, repoRoot, policies.builtinNames, packageName);
+
+  // 6-9. external-only capability rules
+  if (source === "external") {
+    const expectedSuffix = path.sep + path.join("node_modules", ...packageName.split("/"));
+    if (!realRoot.endsWith(expectedSuffix)) {
+      return refuse(
+        "backend_path_escape",
+        `external package real path "${realRoot}" is not within node_modules/${packageName} (npm link / file: installs are not trusted as built-ins)`,
+      );
+    }
+    for (const cap of manifest.capabilities) {
+      if (BUILTIN_ONLY_CAPABILITIES.has(cap)) {
+        return refuse("external_db_access", `external plugin "${packageName}" cannot declare ${cap} (built-ins only)`);
+      }
+    }
+    if (manifest.capabilities.includes("db.scoped") && process.env.VONZIO_ALLOW_SCOPED_DB_PLUGINS !== "1") {
+      return refuse(
+        "external_db_scoped_not_opted_in",
+        `external plugin "${packageName}" declares db.scoped; set VONZIO_ALLOW_SCOPED_DB_PLUGINS=1 to allow`,
+      );
+    }
+    for (const combo of ROOT_EQUIVALENT_COMBINATIONS) {
+      if (combo.every((c) => manifest.capabilities.includes(c))) {
+        return refuse(
+          "external_root_combination",
+          `external plugin "${packageName}" declares the root-equivalent combination ${combo.join(" + ")}`,
+        );
+      }
+    }
+  }
+
+  // 10. backend/frontend path checks
+  const backend = resolveEntry(realRoot, manifest.backendEntry, realResolvedEntry);
+  if (!backend.ok) return refuse(backend.reason, backend.message);
+  if (manifest.frontendEntry) {
+    const fe = resolveEntry(realRoot, manifest.frontendEntry, undefined);
+    if (!fe.ok) return refuse("frontend_path_escape", fe.message);
+  }
+
+  // §8 absolute-route deny-list (built-ins exempt) — pre-import so a denied
+  // prefix refuses the plugin rather than half-loading it.
+  const rp = manifest.routePrefix ?? { kind: "auto" as const };
+  if (rp.kind === "absolute" && source === "external") {
+    const prefixes = Array.isArray(rp.prefix) ? rp.prefix : [rp.prefix];
+    for (const p of prefixes) {
+      for (const denied of ABSOLUTE_ROUTE_DENYLIST) {
+        if (p === denied || p.startsWith(denied + "/")) {
+          return refuse("absolute_route_denied", `absolute route prefix "${p}" overlaps the reserved namespace "${denied}"`);
+        }
+      }
+    }
+  }
+
+  // 15. hash + 16. policy cross-check
+  const installedHash = hashPackageDir(realRoot);
+  const entry = policies.entryFor(packageName);
+  const cc = crossCheckPolicy({ packageName, manifest, entry, installedVersion: version, installedHash, trackVersions });
+  if (!cc.ok) return refuse(cc.reason, cc.message, cc.remediation, cc.detail);
+  const granted = new Set<PluginCapability>(cc.grantedCapabilities);
+
+  // 17. audit "plugin loaded"
+  emitPluginLoaded(
+    log,
+    {
+      name: packageName,
+      version,
+      source,
+      realPath: realRoot,
+      packageHashSha256: installedHash,
+      apiVersion: manifest.apiVersion,
+      capabilitiesDeclared: manifest.capabilities,
+      capabilitiesGranted: cc.grantedCapabilities,
+      outboundHostsDeclared: manifest.outboundHosts ?? [],
+      outboundHostsGranted: cc.grantedOutboundHosts,
+      schemaPrefix: manifest.schemaPrefix ?? null,
+      routePrefix: manifest.routePrefix ?? { kind: "auto" },
+      frontendApproved: cc.frontendApproved,
+    },
+    { fullPaths },
+  );
+
+  // 18. dry-run stops before importing any plugin code.
+  if (opts.dryRun) return null;
+
+  try {
+    const mod = await import(pathToFileURL(backend.realPath).href);
+    const candidate = (mod as { default?: unknown }).default;
+    assertPluginShape(candidate, packageName);
+
+    // Migrations (prefix-checked for schema-scoped plugins).
+    if (candidate.migrations && candidate.migrations.length > 0) {
+      if (manifest.schemaPrefix) {
+        for (const m of candidate.migrations) {
+          const offending = checkMigrationPrefix(m.up, manifest.schemaPrefix);
+          if (offending) {
+            return refuse(
+              "schema_prefix_invalid",
+              `migration "${m.name}" touches "${offending}" outside schema prefix "${manifest.schemaPrefix}"`,
+            );
+          }
+        }
+      }
+      await runPluginMigrations(opts.handle, candidate.name, candidate.migrations);
+    }
+
+    const config = candidate.configSchema.parse(process.env);
+    const context = buildPluginContext({
+      plugin: candidate,
+      parsedConfig: config,
+      opts,
+      manifest,
+      granted,
+      grantedHosts: cc.grantedOutboundHosts,
+      log,
+    });
+
+    return { plugin: candidate, context, manifest, hasHttpOutbound: granted.has("http.outbound") };
+  } catch (err) {
+    return refuse("manifest_invalid", `failed to import / initialize "${packageName}": ${msg(err)}`);
+  }
+}
+
+/** Register a prepared plugin's routes on a per-plugin Fastify child scope.
+ *  Inner try/catch preserves per-plugin error isolation (§2.9): a throw in
+ *  init() is logged and the plugin's routes simply don't register — boot
+ *  continues. init() runs tagged with the plugin's async context (raw-fetch
+ *  detection) and inside the intrinsics-tamper snapshot (§14). */
+function registerPluginRoutes(server: FastifyInstance, prepared: PreparedPlugin, log: AuditLogger): void {
+  const { plugin, manifest } = prepared;
+  const rp = manifest.routePrefix ?? { kind: "auto" as const };
+  // auto -> a real /plugins/<name> child scope; absolute -> no scope prefix
+  // (the plugin uses its full legacy paths; deviation #4).
+  const registerOpts: { prefix?: string } =
+    rp.kind === "auto" ? { prefix: `/plugins/${plugin.name}` } : {};
+  void server.register(async (child) => {
+    try {
+      await runInPluginContext({ plugin: plugin.name, hasHttpOutbound: prepared.hasHttpOutbound }, () =>
+        withIntrinsicsCheck(log, plugin.name, () => plugin.init({ ...prepared.context, server: child })),
+      );
+    } catch (err) {
+      log.error(
+        { plugin: plugin.name, err: msg(err) },
+        "plugin init() threw; routes for this plugin are not registered (boot continues)",
+      );
+    }
+  }, registerOpts);
+}
+
+/**
+ * Load plugins through the §3 manifest-before-import pipeline: validate +
+ * policy-check each plugin from disk, then import + migrate + build a
+ * capability-gated context, push the LoadedPlugin eagerly (so teardown
+ * tracking is correct), and register routes on a per-plugin Fastify scope.
+ * Returns the loaded set for `teardownPlugins` at shutdown.
  */
 export async function loadPluginsFromEnv(opts: LoadPluginsOpts): Promise<LoadedPlugin[]> {
   const specs = parsePluginEnvList(opts.envList);
@@ -344,81 +674,61 @@ export async function loadPluginsFromEnv(opts: LoadPluginsOpts): Promise<LoadedP
     return [];
   }
 
+  const log = opts.server.log as unknown as AuditLogger;
+  const repoRoot = opts.repoRoot ?? findRepoRoot();
+  const policies = loadPolicies({ repoRoot, operatorPolicyPath: opts.operatorPolicyPath });
+  const trackVersions = process.env.VONZIO_PLUGIN_POLICY_TRACK_VERSIONS === "loose" ? "loose" : "strict";
+  const fullPaths = process.env.VONZIO_AUDIT_LOG_FULL_PATHS === "1";
+
+  // Best-effort raw-fetch detection (§10) installed once.
+  installGlobalFetchGuard((info) => emitRawFetchAnomaly(log, info));
+
   const loaded: LoadedPlugin[] = [];
   for (const spec of specs) {
-    try {
-      const mod = await import(spec.packageName);
-      const candidate = (mod as { default?: unknown }).default;
-      assertPluginShape(candidate, spec.packageName);
-      assertApiCompatible(candidate.apiVersion, PLUGIN_API_VERSION);
-
-      if (candidate.migrations && candidate.migrations.length > 0) {
-        await runPluginMigrations(opts.handle, candidate.name, candidate.migrations);
-      }
-
-      // Parse plugin config from env. The plugin owns the schema --
-      // whatever it accepts, that's what init() receives.
-      const config = candidate.configSchema.parse(process.env);
-
-      const context = buildPluginContext({
-        plugin: candidate,
-        parsedConfig: config,
-        opts,
-      });
-
-      await candidate.init(context);
-      loaded.push({ plugin: candidate, context, packageName: spec.packageName });
-      opts.server.log.info(
-        { plugin: candidate.name, packageName: spec.packageName },
-        "[plugins] loaded",
-      );
-    } catch (err) {
-      // Sandboxed: log and continue. A broken plugin loses its
-      // functionality but doesn't take down core.
-      opts.server.log.error(
-        { packageName: spec.packageName, err: err instanceof Error ? err.message : String(err) },
-        "[plugins] failed to load",
-      );
-    }
+    const prepared = await preparePlugin(spec.packageName, { opts, policies, repoRoot, trackVersions, fullPaths, log });
+    if (!prepared) continue; // refused (already audited) or dry-run
+    // Eager push BEFORE route registration: init() runs deferred inside the
+    // Fastify child scope, so teardown tracking must not depend on it.
+    loaded.push({ plugin: prepared.plugin, context: prepared.context, packageName: spec.packageName });
+    registerPluginRoutes(opts.server, prepared, log);
   }
   return loaded;
 }
 
 /**
- * Build the PluginContext a single plugin sees. Extracted so tests can
- * inject mock impls + so the same builder works for env-driven and
- * programmatic plugin registration (the latter is useful for tests
- * and could become a programmatic API later).
+ * Build the capability-gated PluginContext a single plugin sees. Assembles
+ * the complete ungated `fullCore`, wraps it in the membrane (assembleCore)
+ * keyed by the granted capabilities, and attaches the non-core ctx surfaces
+ * (storage/http/notificationBus/mcpRegistry/scheduler/sessionEvents) by
+ * conditional inclusion — present iff granted, else a throwing stub.
+ *
+ * `server` is set to the OUTER instance as a placeholder; registerPluginRoutes
+ * injects the per-plugin Fastify child instance at init time.
  */
 export function buildPluginContext<TConfig>(args: {
   plugin: VonzioPlugin<TConfig>;
   parsedConfig: TConfig;
   opts: LoadPluginsOpts;
+  manifest: PluginManifest;
+  granted: ReadonlySet<PluginCapability>;
+  grantedHosts: readonly string[];
+  log: AuditLogger;
 }): PluginContext<TConfig> {
-  const { plugin, parsedConfig, opts } = args;
+  const { plugin, parsedConfig, opts, manifest, granted, grantedHosts, log } = args;
 
-  const log = makePluginLogger(opts.server.log, plugin.name);
+  const pluginLog = makePluginLogger(opts.server.log, plugin.name);
+  const onViolation: OnViolation = (v) => emitCapabilityViolation(log, v);
 
-  // Apply the route prefix. Default (`auto`) wraps the plugin's routes
-  // under /plugins/<name>/. Explicit `absolute` keeps the literal
-  // string so plugins with externally-registered URLs (Slack OAuth
-  // callback, etc.) can preserve their legacy URLs.
-  const prefix =
-    plugin.routePrefix?.kind === "absolute"
-      ? plugin.routePrefix.prefix
-      : `/plugins/${plugin.name}`;
+  // The DB handle the membrane will expose IF db.* is granted: scoped wrapper
+  // for db.scoped, raw handle for db.access. assembleCore only surfaces it
+  // when a db capability is in `granted`.
+  const dbHandle =
+    granted.has("db.scoped") && manifest.schemaPrefix
+      ? scopedDb(opts.handle.db as object, plugin.name, manifest.schemaPrefix)
+      : opts.handle.db;
 
-  // Register a scoped Fastify instance under the prefix. The plugin
-  // gets `scopedServer` and registers routes relative to its prefix.
-  // We can't call server.register synchronously and return the inner
-  // FastifyInstance handle -- Fastify's plugin model is async. For
-  // v0.1 we hand the plugin the OUTER server but set the prefix as
-  // a route-level option. Plugins call `ctx.server.get(prefix + "/foo")`.
-  // (When 3C reveals this is awkward, we'll wrap with server.register.)
-  const scopedServer = opts.server;
-
-  const core: PluginCore = {
-    db: opts.handle.db,
+  const fullCore: PluginCore = {
+    db: dbHandle,
     encryption: {
       encrypt: (plaintext) => encrypt(plaintext, opts.config.ENCRYPTION_KEY),
       decrypt: (ciphertext) => decrypt(ciphertext, opts.config.ENCRYPTION_KEY),
@@ -501,44 +811,55 @@ export function buildPluginContext<TConfig>(args: {
     },
   };
 
-  // Typed facade over the raw EventEmitter -- plugins get exhaustive
-  // narrowing on event names + payloads while the backing dispatch
-  // stays a generic EventEmitter we don't have to specialize per event.
-  // Missing emitter = silent no-op (test setups, plugins that subscribe
-  // to events for a feature that's been disabled).
-  const sessionEvents = buildSessionEventsFacade(opts.sessionEventEmitter);
+  // ── Capability membrane over `core` ──────────────────────────────
+  const { core } = assembleCore(fullCore, { pluginName: plugin.name, granted, onViolation });
 
-  // TODO(C6/C7): `storage` and `http` are wired to real capability-gated
-  // implementations (plugin_storage-backed KV; safeWebhookFetch-backed
-  // audited fetch) when the membrane lands. Until then they are throwing
-  // stubs so the contract type is satisfied without granting access.
-  const storageStub: import("@vonzio/plugin-api").PluginStorageKv = {
-    get: () => { throw new Error("ctx.storage not yet available (pre-membrane build)"); },
-    set: () => { throw new Error("ctx.storage not yet available (pre-membrane build)"); },
-    delete: () => { throw new Error("ctx.storage not yet available (pre-membrane build)"); },
-    list: () => { throw new Error("ctx.storage not yet available (pre-membrane build)"); },
-  };
-  const httpStub: import("@vonzio/plugin-api").PluginHttp = {
-    fetch: () => { throw new Error("ctx.http not yet available (pre-membrane build)"); },
-  };
+  // ── Non-core ctx surfaces: conditional inclusion (§7 framing) ────
+  const stub = <T>(cap: PluginCapability, surface: string): T =>
+    throwingSurface<T>(plugin.name, cap, surface, onViolation);
+
+  const storage = granted.has("storage.kv")
+    ? makePluginStorage(opts.handle, plugin.name)
+    : stub<import("@vonzio/plugin-api").PluginStorageKv>("storage.kv", "storage");
+
+  const http = granted.has("http.outbound")
+    ? makePluginHttp({
+        pluginName: plugin.name,
+        grantedHosts,
+        onCall: (l) => emitOutboundCall(log, l),
+        onViolation: (i) => emitOutboundViolation(log, i),
+      })
+    : stub<import("@vonzio/plugin-api").PluginHttp>("http.outbound", "http");
+
+  const notificationBus = granted.has("notifications.channel")
+    ? opts.notificationBus
+    : stub<NotificationBusImpl>("notifications.channel", "notificationBus");
+
+  const mcpRegistry = granted.has("mcp.register")
+    ? opts.mcpRegistry
+    : stub<McpRegistryImpl>("mcp.register", "mcpRegistry");
+
+  const scheduler = granted.has("scheduler.run")
+    ? opts.scheduler
+    : stub<SchedulerImpl>("scheduler.run", "scheduler");
+
+  const sessionEvents = granted.has("events.subscribe")
+    ? buildSessionEventsFacade(opts.sessionEventEmitter)
+    : stub<import("@vonzio/plugin-api").SessionEvents>("events.subscribe", "sessionEvents");
 
   return {
-    server: scopedServer,
+    // Placeholder; registerPluginRoutes injects the per-plugin Fastify child.
+    server: opts.server,
     config: parsedConfig,
-    log,
+    log: pluginLog,
     core,
-    storage: storageStub,
-    http: httpStub,
-    notificationBus: opts.notificationBus,
-    mcpRegistry: opts.mcpRegistry,
-    scheduler: opts.scheduler,
+    storage,
+    http,
+    notificationBus,
+    mcpRegistry,
+    scheduler,
     sessionEvents,
-    // routePrefix isn't on PluginContext per the API contract; plugins
-    // use ctx.server with their own knowledge of routePrefix. (We pass
-    // it via env at register-time if needed.)
-  } satisfies PluginContext<TConfig> & Record<string, unknown>;
-  // The `as` is for the prefix shadowing -- the prefix is consumed by
-  // the loader to wire the route scope, not surfaced on the context.
+  };
 }
 
 /**
