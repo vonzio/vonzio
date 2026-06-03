@@ -22,11 +22,19 @@ services:
       - ../packages/dashboard/public:/app/packages/dashboard/public
       - ../packages/dashboard/index.html:/app/packages/dashboard/index.html
       - ../packages/dashboard/vite.config.ts:/app/packages/dashboard/vite.config.ts
+      # vite.config.ts imports this; without the mount the dev container's
+      # vite config loader fails with "Could not resolve ./vite-vonzio-plugins.js".
+      - ../packages/dashboard/vite-vonzio-plugins.ts:/app/packages/dashboard/vite-vonzio-plugins.ts
       - ../packages/widget/src:/app/packages/widget/src
       - ../agent-runner/src:/app/agent-runner/src
       - ../config:/app/config
       - ../tools:/app/tools
       - ../tsconfig.base.json:/app/tsconfig.base.json
+      # Built-in plugin policy: read by BOTH the backend loader (so slack +
+      # telegram classify as builtin, not external) and the dashboard Vite
+      # plugin (so their frontends get bundled). Without it the built-ins are
+      # refused at load and produce no frontend.
+      - ../vonzio-plugins.builtins.json:/app/vonzio-plugins.builtins.json
       # Startup wrapper (Better Auth migrate → server) + auth.ts the CLI
       # reads. Mounted instead of COPY'd so script edits don't require an
       # image rebuild.

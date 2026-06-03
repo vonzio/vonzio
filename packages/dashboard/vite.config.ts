@@ -2,9 +2,10 @@ import path from "path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import vonzioPlugins from "./vite-vonzio-plugins.js";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), vonzioPlugins()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
