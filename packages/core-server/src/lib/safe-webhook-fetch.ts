@@ -57,6 +57,14 @@ export interface SafeWebhookFetchOptions {
   /** Comma-separated host suffixes that bypass the IP block (read from
    *  WEBHOOK_URL_ALLOWLIST env when not supplied). Empty = no exceptions. */
   allowlist?: string[];
+  /**
+   * Called with the resolved target URL of every REDIRECT hop, before it is
+   * followed. Throw to abort (e.g. the plugin HTTP surface re-checks its
+   * outboundHosts allowlist here so a 302 to an un-allowlisted host cannot
+   * bypass the per-plugin allowlist). The initial URL is the caller's
+   * responsibility; this fires only for redirect targets.
+   */
+  onRedirectHop?: (url: string) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -256,19 +264,53 @@ async function validateUrl(
   };
 }
 
+/** Body shapes accepted by the safe fetch helpers. `string` is the original
+ *  contract; `Uint8Array` / `FormData` are additive (binary uploads, multipart
+ *  — used by the plugin HTTP surface, e.g. Telegram sendDocument). */
+export type SafeFetchBody = string | Uint8Array | FormData;
+
+export interface SafeFetchInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: SafeFetchBody;
+}
+
+/** Raw result of {@link safeFetchCore}: bytes + headers preserved so callers
+ *  can build a WHATWG Response (text OR binary) without re-decoding. */
+export interface SafeFetchResult {
+  status: number;
+  statusText: string;
+  /** ArrayBuffer-backed (not SharedArrayBuffer) so it is a valid BodyInit. */
+  bytes: Uint8Array<ArrayBuffer>;
+  headers: Headers;
+}
+
 /**
- * Safe fetch for user-supplied webhook URLs. See file header for the
- * full enforcement list.
+ * Safe fetch for user-supplied webhook URLs. Returns the body as a UTF-8
+ * string (the original contract — existing callers unchanged). Internally
+ * delegates to {@link safeFetchCore}.
  */
 export async function safeWebhookFetch(
   initialUrl: string,
-  init: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-  },
+  init: SafeFetchInit,
   options: SafeWebhookFetchOptions = {},
 ): Promise<{ status: number; statusText: string; body: string }> {
+  const { status, statusText, bytes } = await safeFetchCore(initialUrl, init, options);
+  return { status, statusText, body: new TextDecoder("utf-8").decode(bytes) };
+}
+
+/**
+ * SSRF-resistant fetch returning the raw response bytes + headers. Same
+ * enforcement as {@link safeWebhookFetch} (scheme, IP block, DNS-rebind pin,
+ * manual redirects, timeout, size cap). The plugin HTTP surface (§10) wraps
+ * the result in a real Response so plugins keep `.json()` / `.ok` /
+ * `.arrayBuffer()`.
+ */
+export async function safeFetchCore(
+  initialUrl: string,
+  init: SafeFetchInit,
+  options: SafeWebhookFetchOptions = {},
+): Promise<SafeFetchResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxResponseBytes ?? DEFAULT_MAX_BYTES;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
@@ -283,6 +325,8 @@ export async function safeWebhookFetch(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let currentUrl = initialUrl;
+  let currentMethod = init.method ?? "POST";
+  let currentBody: SafeFetchBody | undefined = init.body;
   let redirectCount = 0;
   let lastResponse: Response | null = null;
 
@@ -321,9 +365,10 @@ export async function safeWebhookFetch(
 
       try {
         lastResponse = await fetch(requestUrl, {
-          method: init.method ?? "POST",
+          method: currentMethod,
           headers,
-          body: init.body,
+          // string | Uint8Array | FormData are all valid BodyInit at runtime.
+          body: currentBody as BodyInit | undefined,
           redirect: "manual",
           signal: controller.signal,
         });
@@ -345,7 +390,20 @@ export async function safeWebhookFetch(
             currentUrl,
           );
         }
+        const status = lastResponse.status;
         currentUrl = new URL(location, currentUrl).toString();
+        // Per the fetch spec, 303 (and, as browsers do, 301/302 for a
+        // non-idempotent method) drops the request body and switches to GET —
+        // this also stops a secret-bearing POST body being forwarded to the
+        // redirect target.
+        if (status === 303 || ((status === 301 || status === 302) && currentMethod !== "GET" && currentMethod !== "HEAD")) {
+          currentMethod = "GET";
+          currentBody = undefined;
+        }
+        // Re-check the caller's per-hop policy (the plugin HTTP surface
+        // re-validates its outboundHosts allowlist here) BEFORE following —
+        // closes the "allowlisted host 302s to an un-allowlisted host" bypass.
+        options.onRedirectHop?.(currentUrl);
         continue;
       }
       break;
@@ -353,14 +411,15 @@ export async function safeWebhookFetch(
 
     if (!lastResponse) throw new Error("no response received");
 
-    // Read up to maxBytes of the body. The reader's lock + underlying
-    // socket are released on EVERY exit path via the inner finally —
-    // including read() throwing mid-stream and the size-cap throw.
+    // Read up to maxBytes of the body as raw bytes. The reader's lock +
+    // underlying socket are released on EVERY exit path via the inner finally —
+    // including read() throwing mid-stream and the size-cap throw. Raw bytes
+    // (not incremental string decode) so binary downloads are not corrupted;
+    // safeWebhookFetch decodes to UTF-8 for its text callers.
     const reader = lastResponse.body?.getReader();
-    let body = "";
+    const chunks: Uint8Array[] = [];
+    let total = 0;
     if (reader) {
-      const decoder = new TextDecoder("utf-8");
-      let bytes = 0;
       let truncated = false;
       try {
         while (true) {
@@ -368,14 +427,13 @@ export async function safeWebhookFetch(
           if (done) break;
           // Cap BEFORE accumulating so an oversized chunk can't sit
           // in memory next to the already-buffered body.
-          if (bytes + value.byteLength > maxBytes) {
+          if (total + value.byteLength > maxBytes) {
             truncated = true;
             break;
           }
-          bytes += value.byteLength;
-          body += decoder.decode(value, { stream: true });
+          total += value.byteLength;
+          chunks.push(value);
         }
-        body += decoder.decode();
       } finally {
         // releaseLock alone wouldn't close the socket on early exit;
         // cancel does. Safe to call after a successful drain too.
@@ -386,10 +444,18 @@ export async function safeWebhookFetch(
       }
     }
 
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      merged.set(c, offset);
+      offset += c.byteLength;
+    }
+
     return {
       status: lastResponse.status,
       statusText: lastResponse.statusText,
-      body,
+      bytes: merged,
+      headers: lastResponse.headers,
     };
   } catch (err) {
     // If we throw partway through the redirect loop, the in-flight

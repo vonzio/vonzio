@@ -11,11 +11,14 @@
 import type { FastifyInstance } from "fastify";
 
 /**
- * Current plugin-api version. Plugins encode the version they were
- * built against in `VonzioPlugin.apiVersion`; the loader rejects plugins
- * whose major version exceeds core's (see `assertApiCompatible`).
+ * Current plugin-api version. Plugins encode the version they were built
+ * against in their package.json `vonzio.apiVersion`; the loader rejects
+ * plugins whose major differs or whose minor is ahead of core's (see
+ * `assertApiCompatible`). Bumped to 1.0.0 with the external-loader contract
+ * (docs/PLUGIN_LOADER_SPEC.md) — the loader surface is now a stability
+ * commitment.
  */
-export const PLUGIN_API_VERSION = "0.1.0";
+export const PLUGIN_API_VERSION = "1.0.0";
 
 /**
  * The shape every plugin's default export must satisfy. Generic over
@@ -144,8 +147,31 @@ export interface PluginContext<TConfig = unknown> {
   /** Logger pre-tagged with `{ plugin: name }`. */
   log: PluginLogger;
 
-  /** Versioned access to core services. */
+  /**
+   * Versioned access to core services. At runtime this is a capability
+   * MEMBRANE (a revocable Proxy) — accessing a `core` surface the plugin
+   * did not declare + get granted throws `CapabilityViolationError` and is
+   * audited. The membrane is hygiene against honest mistakes via THIS
+   * reference; it is not a sandbox against `require('@vonzio/core-server')`.
+   * See docs/PLUGIN_LOADER_SPEC.md §2, §7.
+   */
   core: PluginCore;
+
+  /**
+   * Per-plugin namespaced key/value store. Present only when the plugin
+   * declared `storage.kv` and the operator granted it; otherwise accessing
+   * it throws `CapabilityViolationError`. Preferred over `db.*` for new
+   * plugins (§5).
+   */
+  storage: PluginStorageKv;
+
+  /**
+   * Audited outbound HTTP. Present only when the plugin declared
+   * `http.outbound` (with a non-empty `outboundHosts`) and the operator
+   * granted it. Every call is SSRF-checked, allowlist-checked against
+   * manifest∩policy hosts, and logged. See §10.
+   */
+  http: PluginHttp;
 
   /** Where the plugin claims a notification channel kind. */
   notificationBus: NotificationBus;
@@ -837,6 +863,80 @@ export interface AuthUser {
   role: string;
   feature_flags?: string;
 }
+
+/**
+ * Per-plugin key/value store (`ctx.storage`). Backed by the core-owned
+ * `plugin_storage` table; every read/write is filtered server-side by the
+ * plugin's id, so one plugin cannot read another's keys via this surface.
+ * Gated by the `storage.kv` capability. See §5.
+ */
+export interface PluginStorageKv {
+  get<T>(key: string): Promise<T | null>;
+  set<T>(key: string, value: T): Promise<void>;
+  delete(key: string): Promise<void>;
+  list(prefix?: string): Promise<Array<{ key: string; value: unknown }>>;
+}
+
+/**
+ * Audited outbound HTTP/WS surface (`ctx.http`). Gated by `http.outbound`.
+ * Every call resolves the hostname, blocks SSRF targets (private/link-local
+ * IPs, DNS rebinding), and requires the host to match the manifest∩policy
+ * `outboundHosts` allowlist. See §10.
+ *
+ * `fetch` returns a real WHATWG `Response`, so existing `.json()` / `.ok` /
+ * `.text()` / `.arrayBuffer()` call sites keep working — binary downloads use
+ * `.arrayBuffer()` and are not corrupted (the bytes are preserved end to end).
+ */
+export interface PluginHttpInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | Uint8Array | FormData;
+  /** Per-call timeout override (ms), capped at 30s. */
+  timeoutMs?: number;
+  /** Per-call max response size override (bytes), capped at 5 MiB. */
+  maxResponseBytes?: number;
+}
+
+export interface PluginHttp {
+  fetch(url: string, init?: PluginHttpInit): Promise<Response>;
+}
+
+export {
+  PLUGIN_CAPABILITIES,
+  CAPABILITY_SURFACE_MAP,
+  ROOT_EQUIVALENT_COMBINATIONS,
+  BUILTIN_ONLY_CAPABILITIES,
+  isPluginCapability,
+} from "./capabilities.js";
+export type { PluginCapability, CapabilitySurface, SurfaceKind } from "./capabilities.js";
+export {
+  MANIFEST_ALLOWED_KEYS,
+  POLICY_ENTRY_ALLOWED_KEYS,
+  SCHEMA_PREFIX_PATTERN,
+} from "./manifest.js";
+export type {
+  PluginManifest,
+  ManifestRoutePrefix,
+  PluginSource,
+  PolicyEntry,
+  OperatorPolicy,
+} from "./manifest.js";
+export {
+  validateManifest,
+  validatePolicy,
+  matchOutboundHost,
+  normalizeHostPattern,
+} from "./manifest-validate.js";
+export type { ManifestValidationResult } from "./manifest-validate.js";
+export {
+  CapabilityViolationError,
+  OutboundHostViolationError,
+  DbScopeViolationError,
+  PluginRefusedError,
+  PolicyViolationError,
+  REFUSAL_REASONS,
+} from "./errors.js";
+export type { RefusalReason } from "./errors.js";
 
 export { assertApiCompatible } from "./version.js";
 
