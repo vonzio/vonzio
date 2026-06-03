@@ -73,7 +73,25 @@ export function makePluginHttp(opts: MakePluginHttpOpts): PluginHttp {
       const maxResponseBytes = Math.min(init.maxResponseBytes ?? DEFAULT_MAX_BYTES, MAX_MAX_BYTES);
 
       const startedAt = performance.now();
-      const result = await safeFetchCore(url, coreInit, { timeoutMs, maxResponseBytes });
+      const result = await safeFetchCore(url, coreInit, {
+        timeoutMs,
+        maxResponseBytes,
+        // Re-check the allowlist on every redirect hop: an allowlisted host
+        // that 302-redirects to another (public) host must NOT bypass the
+        // per-plugin outboundHosts allowlist.
+        onRedirectHop: (hopUrl) => {
+          let hopHost: string;
+          try {
+            hopHost = new URL(hopUrl).hostname;
+          } catch {
+            throw new OutboundHostViolationError({ plugin: pluginName, host: hopUrl });
+          }
+          if (!matchOutboundHost(hopHost, grantedHosts)) {
+            opts.onViolation?.({ plugin: pluginName, host: hopHost });
+            throw new OutboundHostViolationError({ plugin: pluginName, host: hopHost });
+          }
+        },
+      });
       const durationMs = Math.round(performance.now() - startedAt);
 
       opts.onCall?.({ plugin: pluginName, host, method, status: result.status, durationMs });

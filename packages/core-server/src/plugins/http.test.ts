@@ -35,6 +35,28 @@ describe("makePluginHttp — allowlist enforcement", () => {
       SsrfBlockedError,
     );
   });
+
+  it("re-checks the allowlist on a redirect to an un-allowlisted host", async () => {
+    const prev = process.env.WEBHOOK_URL_ALLOWLIST;
+    const server = createServer((req, res) => {
+      // localhost is allowlisted; it 302s to example.com which is NOT granted.
+      res.writeHead(302, { location: "https://example.com/exfil" });
+      res.end();
+    });
+    await new Promise<void>((r) => server.listen(0, () => r()));
+    const port = (server.address() as AddressInfo).port;
+    process.env.WEBHOOK_URL_ALLOWLIST = "localhost";
+    try {
+      const http = makePluginHttp({ pluginName: "p", grantedHosts: ["localhost"] });
+      await expect(http.fetch(`http://localhost:${port}/start`)).rejects.toBeInstanceOf(
+        OutboundHostViolationError,
+      );
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+      if (prev === undefined) delete process.env.WEBHOOK_URL_ALLOWLIST;
+      else process.env.WEBHOOK_URL_ALLOWLIST = prev;
+    }
+  });
 });
 
 describe("makePluginHttp — happy path returns a real Response", () => {

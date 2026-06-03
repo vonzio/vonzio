@@ -57,6 +57,14 @@ export interface SafeWebhookFetchOptions {
   /** Comma-separated host suffixes that bypass the IP block (read from
    *  WEBHOOK_URL_ALLOWLIST env when not supplied). Empty = no exceptions. */
   allowlist?: string[];
+  /**
+   * Called with the resolved target URL of every REDIRECT hop, before it is
+   * followed. Throw to abort (e.g. the plugin HTTP surface re-checks its
+   * outboundHosts allowlist here so a 302 to an un-allowlisted host cannot
+   * bypass the per-plugin allowlist). The initial URL is the caller's
+   * responsibility; this fires only for redirect targets.
+   */
+  onRedirectHop?: (url: string) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -317,6 +325,8 @@ export async function safeFetchCore(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let currentUrl = initialUrl;
+  let currentMethod = init.method ?? "POST";
+  let currentBody: SafeFetchBody | undefined = init.body;
   let redirectCount = 0;
   let lastResponse: Response | null = null;
 
@@ -355,10 +365,10 @@ export async function safeFetchCore(
 
       try {
         lastResponse = await fetch(requestUrl, {
-          method: init.method ?? "POST",
+          method: currentMethod,
           headers,
           // string | Uint8Array | FormData are all valid BodyInit at runtime.
-          body: init.body as BodyInit | undefined,
+          body: currentBody as BodyInit | undefined,
           redirect: "manual",
           signal: controller.signal,
         });
@@ -380,7 +390,20 @@ export async function safeFetchCore(
             currentUrl,
           );
         }
+        const status = lastResponse.status;
         currentUrl = new URL(location, currentUrl).toString();
+        // Per the fetch spec, 303 (and, as browsers do, 301/302 for a
+        // non-idempotent method) drops the request body and switches to GET —
+        // this also stops a secret-bearing POST body being forwarded to the
+        // redirect target.
+        if (status === 303 || ((status === 301 || status === 302) && currentMethod !== "GET" && currentMethod !== "HEAD")) {
+          currentMethod = "GET";
+          currentBody = undefined;
+        }
+        // Re-check the caller's per-hop policy (the plugin HTTP surface
+        // re-validates its outboundHosts allowlist here) BEFORE following —
+        // closes the "allowlisted host 302s to an un-allowlisted host" bypass.
+        options.onRedirectHop?.(currentUrl);
         continue;
       }
       break;
