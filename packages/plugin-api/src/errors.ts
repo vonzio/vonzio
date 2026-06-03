@@ -16,6 +16,7 @@ export const REFUSAL_REASONS = [
   "policy_hash_mismatch",
   "policy_capability_drift",
   "policy_outbound_host_drift",
+  "policy_version_mismatch",
   "unapproved_frontend",
   "schema_prefix_invalid",
   "frontend_path_escape",
