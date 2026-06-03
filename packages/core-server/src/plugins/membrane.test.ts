@@ -93,6 +93,20 @@ describe("assembleCore — §7 legibility traps", () => {
     expect(Object.getPrototypeOf(core)).toBeNull();
   });
 
+  it("does not throw on benign protocol keys (await / JSON.stringify / log)", async () => {
+    const violations: CapabilityViolation[] = [];
+    const { core } = assembleCore(makeFullCore(), {
+      pluginName: "p",
+      granted: grant("tasks.submit"),
+      onViolation: (v) => violations.push(v),
+    });
+    // Awaiting core probes `then` (undefined → not thenable → resolves to core).
+    const awaited = await (core as unknown);
+    expect(awaited).toBe(core);
+    expect(() => JSON.stringify(core)).not.toThrow();
+    expect(violations).toEqual([]); // no false capability violations
+  });
+
   it("revoke() makes captured references throw", () => {
     const { core, revoke } = assembleCore(makeFullCore(), {
       pluginName: "p",
@@ -132,27 +146,44 @@ describe("assembleCore — method-level splits", () => {
   });
 });
 
-describe("assembleCore — integrations argument-level masking", () => {
-  it("masked-only clamps opts.decrypt to false", () => {
-    const full = makeFullCore();
-    const spy = vi.spyOn(full.integrations, "get");
-    const { core } = assembleCore(full, {
+describe("assembleCore — integrations masked vs decrypted (fail-closed)", () => {
+  // An integration row whose config carries secret-shaped keys. The masked
+  // path must bullet these regardless of what the underlying method returns
+  // (the real service decrypts unconditionally on most read methods).
+  function coreReturning(row: unknown): PluginCore {
+    const base = makeFullCore() as unknown as { integrations: Record<string, unknown> };
+    for (const m of ["get", "getByUserAndType", "listByType", "listByUserAndType", "findByTypeAndExternalId"]) {
+      base.integrations[m] = async () => (Array.isArray(row) ? row : row);
+    }
+    base.integrations.listByTypeAndExternalId = async () => [row];
+    return base as unknown as PluginCore;
+  }
+  const secretRow = { id: "i1", config: { channel: "C1", bot_token: "xoxb-REAL", api_key: "sk-REAL" } };
+
+  it("masked-only re-redacts secrets even on methods that decrypt unconditionally", async () => {
+    const { core } = assembleCore(coreReturning(secretRow), {
       pluginName: "p",
       granted: grant("integrations.read.masked"),
     });
-    core.integrations.get("id", { decrypt: true });
-    expect(spy).toHaveBeenCalledWith("id", { decrypt: false });
+    const viaGet = (await core.integrations.get("i1")) as { config: Record<string, string> };
+    expect(viaGet.config.bot_token).toBe("••••••••");
+    expect(viaGet.config.api_key).toBe("••••••••");
+    expect(viaGet.config.channel).toBe("C1"); // non-secret preserved
+    // the leaky no-opts method is now also redacted at the membrane
+    const viaList = (await core.integrations.getByUserAndType("u", "slack")) as { config: Record<string, string> };
+    expect(viaList.config.bot_token).toBe("••••••••");
   });
 
-  it("decrypted allows opts.decrypt:true to pass through", () => {
-    const full = makeFullCore();
+  it("decrypted-granted forces get() to decrypt and returns real values", async () => {
+    const full = coreReturning(secretRow);
     const spy = vi.spyOn(full.integrations, "get");
     const { core } = assembleCore(full, {
       pluginName: "p",
       granted: grant("integrations.read.decrypted"),
     });
-    core.integrations.get("id", { decrypt: true });
-    expect(spy).toHaveBeenCalledWith("id", { decrypt: true });
+    const r = (await core.integrations.get("i1")) as { config: Record<string, string> };
+    expect(spy).toHaveBeenCalledWith("i1", { decrypt: true });
+    expect(r.config.bot_token).toBe("xoxb-REAL");
   });
 
   it("write methods require integrations.write", () => {
@@ -163,12 +194,11 @@ describe("assembleCore — integrations argument-level masking", () => {
     expect(() => core.integrations.create("u", "t", {})).toThrow(CapabilityViolationError);
   });
 
-  it("read-only plugin cannot reach a read method? (it can — masked grants reads)", () => {
+  it("write-only plugin cannot reach read methods", () => {
     const { core } = assembleCore(makeFullCore(), {
       pluginName: "p",
       granted: grant("integrations.write"),
     });
-    // write-only: read methods are stubs
     expect(() => core.integrations.get("id")).toThrow(CapabilityViolationError);
     expect(() => core.integrations.create("u", "t", {})).not.toThrow();
   });

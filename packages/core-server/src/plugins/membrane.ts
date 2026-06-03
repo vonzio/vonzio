@@ -32,6 +32,20 @@ export interface CapabilityViolation {
 
 export type OnViolation = (v: CapabilityViolation) => void;
 
+/** Benign JS-runtime protocol string keys the membrane returns `undefined` for
+ *  (rather than throwing) so `await`, JSON.stringify, and logging don't break
+ *  and don't emit false capability violations. */
+const PROTOCOL_KEYS: ReadonlySet<string> = new Set([
+  "then",
+  "catch",
+  "finally",
+  "toJSON",
+  "toString",
+  "valueOf",
+  "constructor",
+  "inspect",
+]);
+
 /** Property-level core surfaces: the whole object is included iff the cap is
  *  granted. (db.scoped/db.access both map to `db`; the loader has already
  *  placed the correctly-scoped handle on fullCore.db.) */
@@ -190,6 +204,12 @@ export function assembleCore(fullCore: PluginCore, opts: AssembleCoreOpts): Asse
     get(t, key, recv) {
       if (typeof key === "symbol") return Reflect.get(t, key, recv);
       if (declaredKeys.has(key)) return Reflect.get(t, key, recv);
+      // Benign JS-runtime protocol keys must NOT throw — otherwise `await core`
+      // (probes `then`), `JSON.stringify(core)` (`toJSON`), and logging
+      // (`toString`/`valueOf`) would blow up and spam false capability
+      // violations. §7 expects JSON.stringify(core) to succeed (and see only
+      // declared surfaces). Return undefined for these.
+      if (PROTOCOL_KEYS.has(key)) return undefined;
       // Undeclared string property: throw at the access site. `key` is a core
       // surface name (e.g. "db"), not a capability, so capability is null.
       onViolation?.({ plugin: pluginName, capability: null, key });
@@ -220,13 +240,34 @@ export function assembleCore(fullCore: PluginCore, opts: AssembleCoreOpts): Asse
   return { core: proxy as unknown as PluginCore, revoke };
 }
 
+/** Secret-shaped config keys the IntegrationService redacts (mirrors
+ *  integration-service.ts mapRow). Masked reads re-apply this AT THE MEMBRANE
+ *  so masking is fail-closed regardless of the underlying method's behaviour. */
+const INTEGRATION_SECRET_KEYS = ["bot_token", "api_key", "secret", "refresh_token", "access_token"];
+const REDACTED = "••••••••";
+
+function redactIntegration(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const row = value as { config?: Record<string, unknown> };
+  if (!row.config || typeof row.config !== "object") return value;
+  const config = { ...row.config };
+  for (const k of INTEGRATION_SECRET_KEYS) {
+    if (config[k] !== undefined) config[k] = REDACTED;
+  }
+  return { ...row, config };
+}
+
 /**
  * Wrap one integration read method to enforce the masked/decrypted split.
- * Masked-only callers have `opts.decrypt` clamped to false, so the service
- * returns config with secret fields still encrypted (opaque) rather than
- * plaintext. (v1 masking = "not decrypted"; sentinel replacement is a cosmetic
- * follow-up — ciphertext is already non-usable. No built-in uses masked-only;
- * this path is corpus-validated.)
+ *
+ * SECURITY (was a bug): the real IntegrationService accepts `opts.decrypt` ONLY
+ * on `get` — `getByUserAndType` / `listByType` / `listByUserAndType` /
+ * `findByTypeAndExternalId` take no opts and DECRYPT unconditionally. An
+ * arg-position clamp therefore failed open for masked-only plugins. So masking
+ * is now enforced HERE, fail-closed: masked-only callers get the result
+ * re-redacted at the membrane (the known secret-shaped keys are bulleted),
+ * independent of what the service returned. Decrypted-granted callers get the
+ * real values (and `get` is forced to decrypt, since it defaults to redacted).
  */
 function wrapIntegrationRead(
   fn: (...args: unknown[]) => unknown,
@@ -235,18 +276,23 @@ function wrapIntegrationRead(
 ): (...args: unknown[]) => unknown {
   // backfillExternalId(id) takes no opts and returns void; pass through.
   if (method === "backfillExternalId") return fn;
-  return (...args: unknown[]) => {
-    if (!allowDecrypt) {
-      // The last arg is the opts object for every read method
-      // (get(id, opts), getByUserAndType(userId, type, opts), ...). Clamp it.
-      const last = args[args.length - 1];
-      if (last && typeof last === "object" && !Array.isArray(last)) {
-        args[args.length - 1] = { ...(last as Record<string, unknown>), decrypt: false };
+  return async (...args: unknown[]): Promise<unknown> => {
+    if (allowDecrypt) {
+      // `get` defaults to redacted unless opts.decrypt is set — force it on so
+      // a decrypted-granted plugin actually receives plaintext.
+      if (method === "get") {
+        const last = args[args.length - 1];
+        if (last && typeof last === "object" && !Array.isArray(last)) {
+          args[args.length - 1] = { ...(last as Record<string, unknown>), decrypt: true };
+        } else {
+          args.push({ decrypt: true });
+        }
       }
-      // If no opts object was passed, the service defaults decrypt to false
-      // already, so nothing to clamp.
+      return fn(...args);
     }
-    return fn(...args);
+    // Masked-only: call the method, then re-redact the result at the boundary.
+    const result = await fn(...args);
+    return Array.isArray(result) ? result.map(redactIntegration) : redactIntegration(result);
   };
 }
 
