@@ -29,6 +29,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "prepare-dist": "node ../../scripts/prepare-sdk-dist.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
