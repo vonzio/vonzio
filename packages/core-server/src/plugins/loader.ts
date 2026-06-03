@@ -398,7 +398,7 @@ const ABSOLUTE_ROUTE_DENYLIST = [
   "/api",
 ];
 
-interface ResolvedPackage {
+export interface ResolvedPackage {
   realRoot: string;
   version: string;
   manifestRaw: unknown;
@@ -407,8 +407,8 @@ interface ResolvedPackage {
 
 /** Resolve a package to its real root + read its package.json. Uses
  *  import.meta.resolve (require.resolve throws on these exports-only
- *  packages — deviation #1). Throws on unresolvable. */
-function resolvePackageRoot(packageName: string): ResolvedPackage {
+ *  packages — deviation #1). Throws on unresolvable. Exported for the CLI. */
+export function resolvePackageRoot(packageName: string): ResolvedPackage {
   const entryUrl = import.meta.resolve(packageName);
   const realResolvedEntry = realpathSync(fileURLToPath(entryUrl));
   let dir = path.dirname(realResolvedEntry);
