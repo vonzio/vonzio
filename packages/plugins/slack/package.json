@@ -70,6 +70,7 @@
   },
   "dependencies": {
     "@vonzio/dashboard": "*",
+    "@vonzio/dashboard-registry": "*",
     "@vonzio/plugin-api": "*",
     "@vonzio/shared": "*",
     "drizzle-orm": "^0.45.1",
