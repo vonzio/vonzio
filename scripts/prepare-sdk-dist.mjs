@@ -52,21 +52,21 @@ const pinDeps = (deps) => {
   return out;
 };
 
-// 4. Generate the publishable dist/package.json.
+// 4. Generate the publishable dist/package.json. Spread the source manifest so
+// any field a future maintainer adds (engines, sideEffects, keywords, peerDeps,
+// …) carries through automatically, then strip the dev-only bits and override
+// the entry points + deps for the built layout. The `files` allowlist keeps the
+// emitted source/declaration maps — which reference the unpublished ./src tree —
+// out of the tarball (npm always ships package.json + README + LICENSE anyway).
+const pinnedDeps = pinDeps(src.dependencies);
+const { private: _private, scripts: _scripts, devDependencies: _devDeps, ...rest } = src;
 const distPkg = {
-  name: src.name,
-  version: src.version,
-  type: src.type,
-  description: src.description,
-  license: src.license,
-  homepage: src.homepage,
-  repository: src.repository,
+  ...rest,
   main: toDist(src.main, "import"),
   types: toDist(src.types, "types"),
   exports: rewriteExports(src.exports),
-  ...(pinDeps(src.dependencies) ? { dependencies: pinDeps(src.dependencies) } : {}),
-  ...(src.peerDependencies ? { peerDependencies: src.peerDependencies } : {}),
-  ...(src.peerDependenciesMeta ? { peerDependenciesMeta: src.peerDependenciesMeta } : {}),
+  ...(pinnedDeps ? { dependencies: pinnedDeps } : {}),
+  files: ["**/*.js", "**/*.d.ts"],
   publishConfig: { access: "public" },
 };
 writeFileSync(path.join(pkgDir, "dist", "package.json"), JSON.stringify(distPkg, null, 2) + "\n");
@@ -76,7 +76,7 @@ const license = path.join(repoRoot, "LICENSE");
 if (existsSync(license)) copyFileSync(license, path.join(pkgDir, "dist", "LICENSE"));
 writeFileSync(
   path.join(pkgDir, "dist", "README.md"),
-  `# ${src.name}\n\n${src.description ?? ""}\n\nPart of [vonzio](https://vonzio.com). See the plugin author guide: https://github.com/vonzio/vonzio/blob/main/docs/PLUGINS.md\n`,
+  `# ${src.name}\n\n${src.description ?? ""}\n\nPart of [vonzio](https://vonzio.com). See the external plugin SDK guide: https://github.com/vonzio/vonzio/blob/main/docs/PLUGIN_SDK.md\n`,
 );
 
 console.log(`prepared ${src.name}@${src.version} in ${path.relative(repoRoot, path.join(pkgDir, "dist"))}/`);
