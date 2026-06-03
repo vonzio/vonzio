@@ -176,6 +176,14 @@ export interface CrossCheckArgs {
   /** "strict" (default) requires version-string equality; "loose" relaxes it
    *  to "hash match is authoritative" (VONZIO_PLUGIN_POLICY_TRACK_VERSIONS). */
   trackVersions?: "strict" | "loose";
+  /**
+   * Source of the plugin. Built-ins are workspace-trusted OSS source, so their
+   * hash + version are NOT enforced — the shipped builtins-policy hash would
+   * otherwise drift on every source edit and break `make dev-oss` (deviation
+   * #9). Capability/host/frontend subset checks still apply. Defaults to
+   * "external" (full enforcement).
+   */
+  source?: PluginSource;
 }
 
 /**
@@ -198,7 +206,11 @@ export function crossCheckPolicy(args: CrossCheckArgs): CrossCheckResult {
     };
   }
 
-  if (entry.approved_hash_sha256 !== installedHash) {
+  // Built-ins skip hash + version enforcement (workspace-trusted source;
+  // see CrossCheckArgs.source). Externals get the full attestation.
+  const enforceHash = (args.source ?? "external") === "external";
+
+  if (enforceHash && entry.approved_hash_sha256 !== installedHash) {
     return {
       ok: false,
       reason: "policy_hash_mismatch",
@@ -208,7 +220,7 @@ export function crossCheckPolicy(args: CrossCheckArgs): CrossCheckResult {
     };
   }
 
-  if (trackVersions === "strict" && entry.version !== installedVersion) {
+  if (enforceHash && trackVersions === "strict" && entry.version !== installedVersion) {
     return {
       ok: false,
       reason: "policy_version_mismatch",

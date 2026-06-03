@@ -157,6 +157,7 @@ export function dryRunValidate(packageName: string, repoRoot: string, operatorPo
       installedVersion: version,
       installedHash: hash,
       trackVersions: process.env.VONZIO_PLUGIN_POLICY_TRACK_VERSIONS === "loose" ? "loose" : "strict",
+      source,
     });
     if (!cc.ok) return { name: packageName, ok: false, source, hash, refusal: { reason: cc.reason, message: cc.message } };
     return {

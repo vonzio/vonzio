@@ -568,7 +568,7 @@ async function preparePlugin(packageName: string, env: PrepareEnv): Promise<Prep
   // 15. hash + 16. policy cross-check
   const installedHash = hashPackageDir(realRoot);
   const entry = policies.entryFor(packageName);
-  const cc = crossCheckPolicy({ packageName, manifest, entry, installedVersion: version, installedHash, trackVersions });
+  const cc = crossCheckPolicy({ packageName, manifest, entry, installedVersion: version, installedHash, trackVersions, source });
   if (!cc.ok) return refuse(cc.reason, cc.message, cc.remediation, cc.detail);
   const granted = new Set<PluginCapability>(cc.grantedCapabilities);
 
@@ -601,9 +601,10 @@ async function preparePlugin(packageName: string, env: PrepareEnv): Promise<Prep
     const candidate = (mod as { default?: unknown }).default;
     assertPluginShape(candidate, packageName);
 
-    // Migrations (prefix-checked for schema-scoped plugins).
+    // Migrations (prefix-checked for db.scoped plugins only — db.access
+    // built-ins are unscoped + trusted, §9).
     if (candidate.migrations && candidate.migrations.length > 0) {
-      if (manifest.schemaPrefix) {
+      if (manifest.schemaPrefix && granted.has("db.scoped")) {
         for (const m of candidate.migrations) {
           const offending = checkMigrationPrefix(m.up, manifest.schemaPrefix);
           if (offending) {

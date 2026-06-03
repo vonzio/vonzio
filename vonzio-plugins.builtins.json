@@ -1,0 +1,83 @@
+{
+  "policy_version": "1",
+  "plugins": {
+    "@vonzio/plugin-slack": {
+      "version": "0.1.0",
+      "approved_hash_sha256": "303eb25f73e122ba9c9c6368f63c67e37c07d4a570fb3ac4f6e0c1ff10291c3d",
+      "approved_capabilities": [
+        "db.access",
+        "encryption.encrypt",
+        "encryption.decrypt",
+        "integrations.read.decrypted",
+        "integrations.write",
+        "profiles.read",
+        "profiles.resolve",
+        "workspaces.read",
+        "auth.gate",
+        "presence.register",
+        "tasks.submit",
+        "sessions.register",
+        "sessions.extend",
+        "sessions.setStatus",
+        "sessions.getConnectedIds",
+        "orchestrator.wake",
+        "events.append",
+        "events.read",
+        "events.subscribe",
+        "dashboard.push",
+        "models.list",
+        "notifications.channel",
+        "mcp.register",
+        "scheduler.run",
+        "http.outbound"
+      ],
+      "approved_outbound_hosts": [
+        "slack.com",
+        "*.slack.com",
+        "api.anthropic.com"
+      ],
+      "approved_frontend": true,
+      "approved_by": "vonzio-oss-build",
+      "approval_reason": "Built-in shipped with vonzio OSS; hash not enforced for builtins (workspace-trusted)."
+    },
+    "@vonzio/plugin-telegram": {
+      "version": "0.1.0",
+      "approved_hash_sha256": "51d210530925066bcd62072ea0a1b50f6359c6b6e2d624d4cb2fefcada0d23e0",
+      "approved_capabilities": [
+        "db.access",
+        "encryption.encrypt",
+        "encryption.decrypt",
+        "integrations.read.decrypted",
+        "integrations.write",
+        "profiles.read",
+        "profiles.resolve",
+        "workspaces.read",
+        "auth.gate",
+        "presence.register",
+        "tasks.submit",
+        "sessions.register",
+        "sessions.extend",
+        "sessions.setStatus",
+        "sessions.getConnectedIds",
+        "orchestrator.wake",
+        "events.append",
+        "events.read",
+        "events.subscribe",
+        "dashboard.push",
+        "images.rewrite",
+        "models.list",
+        "notifications.channel",
+        "mcp.register",
+        "scheduler.run",
+        "http.outbound"
+      ],
+      "approved_outbound_hosts": [
+        "api.telegram.org",
+        "api.anthropic.com"
+      ],
+      "approved_frontend": true,
+      "approved_by": "vonzio-oss-build",
+      "approval_reason": "Built-in shipped with vonzio OSS; hash not enforced for builtins (workspace-trusted)."
+    }
+  }
+}
