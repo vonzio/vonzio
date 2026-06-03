@@ -1,4 +1,4 @@
-.PHONY: install build test dev dev-oss better-auth-migrate plugin setup bootstrap agent-image agent-base-local dashboard clean clean-all help
+.PHONY: install build test dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
 .PHONY: docker-build docker-dev docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
@@ -58,6 +58,11 @@ docker-dev-oss: ## Same as `make docker-dev` but with REGISTRATION_ENABLED=false
 
 plugin: ## Plugin policy CLI. Usage: make plugin ARGS="approve @scope/plugin-x --reason '...'" | "list" | "diff @scope/plugin-x"
 	npx tsx packages/core-server/src/plugins/cli.ts $(ARGS)
+
+publish-sdk-dryrun: ## Build + pack the plugin SDK packages (no publish) to inspect the tarballs
+	cd packages/shared && npm run prepare-dist && cd dist && npm pack
+	cd packages/plugin-api && npm run prepare-dist && cd dist && npm pack
+	@echo "Tarballs written to packages/{shared,plugin-api}/dist/*.tgz — inspect with 'tar tzf <file>'"
 
 test: ## Run all tests
 	npx vitest run
@@ -123,8 +128,8 @@ migrate-to-pg: ## Migrate SQLite data to PostgreSQL. Usage: make migrate-to-pg S
 	npx tsx packages/core-server/src/scripts/migrate-sqlite-to-pg.ts $(SQLITE) $(PG_URL)
 
 clean: ## Remove build artifacts and DB
-	rm -rf packages/shared/dist packages/core-server/dist packages/dashboard/dist packages/widget/dist
-	rm -f packages/shared/tsconfig.tsbuildinfo packages/core-server/tsconfig.tsbuildinfo
+	rm -rf packages/shared/dist packages/plugin-api/dist packages/core-server/dist packages/dashboard/dist packages/widget/dist
+	rm -f packages/*/dist/*.tgz packages/shared/tsconfig.tsbuildinfo packages/core-server/tsconfig.tsbuildinfo
 	rm -f vonzio.db vonzio.db-wal vonzio.db-shm
 
 clean-all: clean ## Remove everything including node_modules
