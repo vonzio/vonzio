@@ -3,7 +3,7 @@
   "plugins": {
     "@vonzio/plugin-slack": {
       "version": "0.1.0",
-      "approved_hash_sha256": "303eb25f73e122ba9c9c6368f63c67e37c07d4a570fb3ac4f6e0c1ff10291c3d",
+      "approved_hash_sha256": "b1653f114cb4eaa7ad7eaefab6ead3ae8602381f27c5e16f015b44a544cb0f6b",
       "approved_capabilities": [
         "db.access",
         "encryption.encrypt",
@@ -42,7 +42,7 @@
     },
     "@vonzio/plugin-telegram": {
       "version": "0.1.0",
-      "approved_hash_sha256": "51d210530925066bcd62072ea0a1b50f6359c6b6e2d624d4cb2fefcada0d23e0",
+      "approved_hash_sha256": "e13acfb0f6f7cb3ad2f6e58e6cb31755a2cddc3def731eab916647b5483b5c4d",
       "approved_capabilities": [
         "db.access",
         "encryption.encrypt",

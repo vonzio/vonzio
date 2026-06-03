@@ -12,6 +12,8 @@
  * service-side surface has settled here.
  */
 
+import type { PluginHttp } from "@vonzio/plugin-api";
+
 export interface TelegramSendMessage {
   chat_id: number | string;
   text: string;
@@ -43,6 +45,25 @@ export interface TelegramFile {
 
 export class TelegramService {
   private base = "https://api.telegram.org";
+
+  // `http` is the audited outbound surface (ctx.http). All plugin
+  // callers thread it through. It's optional only so core-server's
+  // vestigial `new TelegramService()` (a never-invoked
+  // NotificationService dep -- see core server.ts) keeps compiling
+  // during the extraction; that instance never reaches a fetch call.
+  private http: PluginHttp;
+
+  constructor(http?: PluginHttp) {
+    this.http =
+      http ??
+      ({
+        fetch: () => {
+          throw new Error(
+            "TelegramService used without an audited http surface (ctx.http)",
+          );
+        },
+      } as PluginHttp);
+  }
 
   async getMe(botToken: string): Promise<TelegramMe> {
     const data = await this.call<TelegramMe>(botToken, "getMe", {});
@@ -121,7 +142,12 @@ export class TelegramService {
    * The path is what getFile() returned, NOT a user-supplied URL.
    */
   async downloadFile(botToken: string, filePath: string): Promise<Buffer> {
-    const res = await fetch(`${this.base}/file/bot${botToken}/${filePath}`);
+    // Request the audited surface's max response size (5 MiB). Routing through
+    // ctx.http caps downloads — attachments larger than this are rejected (a
+    // v1 limitation of the audited path; raw fetch was unbounded).
+    const res = await this.http.fetch(`${this.base}/file/bot${botToken}/${filePath}`, {
+      maxResponseBytes: 5 * 1024 * 1024,
+    });
     if (!res.ok) {
       throw new Error(`Telegram file download failed: ${res.status} ${res.statusText}`);
     }
@@ -169,7 +195,7 @@ export class TelegramService {
     if (opts?.caption) form.append("caption", opts.caption);
     if (opts?.parse_mode) form.append("parse_mode", opts.parse_mode);
 
-    const res = await fetch(`${this.base}/bot${botToken}/sendDocument`, {
+    const res = await this.http.fetch(`${this.base}/bot${botToken}/sendDocument`, {
       method: "POST",
       body: form,
     });
@@ -184,7 +210,7 @@ export class TelegramService {
     method: string,
     body: Record<string, unknown>,
   ): Promise<T> {
-    const res = await fetch(`${this.base}/bot${botToken}/${method}`, {
+    const res = await this.http.fetch(`${this.base}/bot${botToken}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
