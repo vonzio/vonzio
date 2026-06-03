@@ -192,6 +192,20 @@ function lexSql(sql: string): Tok[] {
       toks.push({ type: "word", value: "''string''" });
       continue;
     }
+    if (c === "$") {
+      // Postgres dollar-quoting: $$...$$ or $tag$...$tag$. Treat the whole
+      // quoted body as opaque so SQL keywords inside a function/DO body are not
+      // mistaken for live DDL. (`$1` positional params don't match — no closing
+      // delimiter — and fall through to the word lexer.)
+      const m = /^\$([A-Za-z_][A-Za-z_0-9]*)?\$/.exec(sql.slice(i));
+      if (m) {
+        const delim = m[0];
+        const end = sql.indexOf(delim, i + delim.length);
+        i = end === -1 ? n : end + delim.length;
+        toks.push({ type: "word", value: "''dollar''" });
+        continue;
+      }
+    }
     if (c === '"') {
       // Quoted identifier: capture its inner text (it IS an identifier).
       i++;
@@ -235,7 +249,14 @@ export function checkMigrationPrefix(sql: string, schemaPrefix: string): string 
   const toks = lexSql(sql);
   for (let i = 0; i < toks.length; i++) {
     if (toks[i].type !== "word") continue;
-    if (!DDL_VERBS.has(toks[i].value.toLowerCase())) continue;
+    const lower = toks[i].value.toLowerCase();
+    // Reject dynamic SQL: a DO block or EXECUTE can create arbitrary,
+    // unprefixed objects at apply time that a static lexer cannot see. For a
+    // db.scoped plugin (no raw SQL anyway) these have no legitimate use.
+    if (lower === "do" || lower === "execute") {
+      return toks[i].value;
+    }
+    if (!DDL_VERBS.has(lower)) continue;
     // Advance past object-type + modifier keywords to the object identifier.
     let j = i + 1;
     while (j < toks.length && toks[j].type === "word" && SKIP_WORDS.has(toks[j].value.toLowerCase())) {

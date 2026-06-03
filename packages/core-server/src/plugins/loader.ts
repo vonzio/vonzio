@@ -566,7 +566,13 @@ async function preparePlugin(packageName: string, env: PrepareEnv): Promise<Prep
   }
 
   // 15. hash + 16. policy cross-check
-  const installedHash = hashPackageDir(realRoot);
+  let installedHash: string;
+  try {
+    installedHash = hashPackageDir(realRoot);
+  } catch (err) {
+    // e.g. a symlink in the package tree (refused for attestation integrity).
+    return refuse("backend_path_escape", msg(err));
+  }
   const entry = policies.entryFor(packageName);
   const cc = crossCheckPolicy({ packageName, manifest, entry, installedVersion: version, installedHash, trackVersions, source });
   if (!cc.ok) return refuse(cc.reason, cc.message, cc.remediation, cc.detail);
@@ -647,7 +653,25 @@ function registerPluginRoutes(server: FastifyInstance, prepared: PreparedPlugin,
   // (the plugin uses its full legacy paths; deviation #4).
   const registerOpts: { prefix?: string } =
     rp.kind === "auto" ? { prefix: `/plugins/${plugin.name}` } : {};
+  // For absolute prefixes the child has no scope, so Fastify won't confine the
+  // plugin's routes. Enforce confinement explicitly: every registered route
+  // must sit under one of the declared (already deny-list-cleared) prefixes —
+  // otherwise an external could declare a benign prefix and still register
+  // /v1/admin/* (§8).
+  const declaredAbsolutePrefixes =
+    rp.kind === "absolute" ? (Array.isArray(rp.prefix) ? rp.prefix : [rp.prefix]) : null;
   void server.register(async (child) => {
+    if (declaredAbsolutePrefixes) {
+      child.addHook("onRoute", (routeOptions) => {
+        const url: string = routeOptions.url ?? "";
+        const ok = declaredAbsolutePrefixes.some((p) => url === p || url.startsWith(p.endsWith("/") ? p : p + "/"));
+        if (!ok) {
+          throw new Error(
+            `plugin "${plugin.name}" registered route "${url}" outside its declared absolute prefix(es) ${declaredAbsolutePrefixes.join(", ")}`,
+          );
+        }
+      });
+    }
     try {
       await runInPluginContext({ plugin: plugin.name, hasHttpOutbound: prepared.hasHttpOutbound }, () =>
         withIntrinsicsCheck(log, plugin.name, () => plugin.init({ ...prepared.context, server: child })),

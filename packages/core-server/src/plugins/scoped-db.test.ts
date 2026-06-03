@@ -81,4 +81,22 @@ describe("checkMigrationPrefix", () => {
     expect(checkMigrationPrefix("CREATE TABLE hello.items (id text);", "hello")).toBeNull();
     expect(checkMigrationPrefix("CREATE TABLE public.users (id text);", "hello")).toBe("users");
   });
+
+  it("rejects dynamic SQL that hides an unprefixed CREATE in a dollar-quoted body", () => {
+    // The classic bypass: dollar-quoting + EXECUTE of a string the static lexer
+    // can't see. Must be refused, not passed.
+    const sql = "DO $$ BEGIN EXECUTE 'CREATE TABLE evil_users (id int)'; END $$;";
+    expect(checkMigrationPrefix(sql, "hello")).not.toBeNull();
+  });
+
+  it("rejects a bare EXECUTE", () => {
+    expect(checkMigrationPrefix("EXECUTE 'CREATE TABLE x (id int)';", "hello")).toBe("EXECUTE");
+  });
+
+  it("treats a dollar-quoted body as opaque (no false DDL match inside)", () => {
+    // A function body mentioning CREATE TABLE in a comment/string must not be
+    // scanned as live DDL — but the DO itself is still rejected (above).
+    const sql = "CREATE TABLE hello_fn_log (id text); -- $$ not a real quote";
+    expect(checkMigrationPrefix(sql, "hello")).toBeNull();
+  });
 });

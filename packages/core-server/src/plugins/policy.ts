@@ -57,13 +57,20 @@ export function hashPackageDir(root: string): string {
     for (const e of entries) {
       if (e.name === "node_modules") continue;
       const abs = path.join(dir, e.name);
+      // REFUSE symlinks rather than silently skipping them. A skipped symlink
+      // is an attestation hole: a symlinked entry (e.g. index.js -> elsewhere
+      // in the package) would be executable yet invisible to the hash. Refusing
+      // is fail-closed; the loader turns this into a per-plugin refusal.
+      if (e.isSymbolicLink()) {
+        throw new Error(
+          `refusing to hash package "${realRoot}": contains a symlink (${path.relative(realRoot, abs)}); symlinks are not allowed in plugin packages`,
+        );
+      }
       if (e.isDirectory()) {
         walk(abs);
       } else if (e.isFile()) {
         files.push(path.relative(realRoot, abs));
       }
-      // symlinks and other types are skipped (a package dir should not rely
-      // on them for its hashed content)
     }
   };
   walk(realRoot);
