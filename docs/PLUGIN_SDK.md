@@ -16,15 +16,26 @@ External plugins consume these from public npm:
 | `@vonzio/plugin-api` | The backend contract: `VonzioPlugin`, `PluginContext`, capability types, `validateManifest`, the error classes. |
 | `@vonzio/plugin-api/policy` | Node-only policy helpers (`hashPackageDir`, `loadPolicies`, …) — only needed by tooling, not by a plugin's runtime. |
 | `@vonzio/plugin-api/frontend` | The `PluginFrontendEntry` type for a plugin's `frontend.tsx`. |
+| `@vonzio/dashboard-registry/api` | The frontend slot API a plugin's `frontend.tsx` calls — `registerIntegrationRow`, `registerSettingsSection`, `registerWorkspaceHeaderSlot`, … plus the slot prop types. `react` + `lucide-react` are peer deps. |
 | `@vonzio/shared` | Shared types (`Profile`, `Workspace`, …) referenced by the contract. Installed transitively. |
 
-> Frontend slot registration (`@vonzio/dashboard-registry`, the
-> `registerIntegrationRow`/etc. API a plugin's `frontend.tsx` imports) is a
-> separate published package — **follow-up; not yet published**. A backend-only
-> external plugin works today; a plugin with dashboard UI needs that package.
-
 ```bash
-npm install @vonzio/plugin-api
+npm install @vonzio/plugin-api                 # backend-only plugin
+npm install @vonzio/dashboard-registry react lucide-react   # + a dashboard frontend
+```
+
+A plugin's `frontend.tsx` default-exports a `PluginFrontendEntry` (`() => void`)
+that calls `register*` from `@vonzio/dashboard-registry/api`:
+
+```tsx
+import type { PluginFrontendEntry } from "@vonzio/plugin-api/frontend";
+import { registerIntegrationRow } from "@vonzio/dashboard-registry/api";
+import { MyRow } from "./MyRow.js";
+
+const register: PluginFrontendEntry = () => {
+  registerIntegrationRow({ id: "my-plugin", component: MyRow, section: "data-sources" });
+};
+export default register;
 ```
 
 Then, on the operator's host: declare it in `VONZIO_PLUGINS`, approve it
@@ -45,7 +56,13 @@ Publishing builds a self-contained package from `dist/`:
   workspace `*` deps pinned to `^version`).
 - **Inspect locally:** `make publish-sdk-dryrun` (builds + `npm pack`, no publish).
 - **Publish:** the `release.yml` `publish-sdk` job runs on a `v*` tag — it builds
-  + `npm publish`es `@vonzio/shared` then `@vonzio/plugin-api`. Each publishes at
-  its own `package.json` version (idempotent: an already-published version is
-  skipped). To ship a new SDK version, bump the package's `version` and push a
-  tag. Requires an `NPM_TOKEN` repo secret. Never `npm publish` locally.
+  + `npm publish`es `@vonzio/shared`, `@vonzio/plugin-api`, then
+  `@vonzio/dashboard-registry`. Each publishes at its own `package.json` version
+  (idempotent: an already-published version is skipped). To ship a new SDK
+  version, bump the package's `version` and push a tag. Requires an `NPM_TOKEN`
+  repo secret. Never `npm publish` locally.
+
+`@vonzio/dashboard-registry` is the same source the dashboard itself uses — the
+dashboard re-exports it under `@vonzio/dashboard/registry` for internal code, and
+the built-in slack/telegram plugins import `@vonzio/dashboard-registry/api`
+exactly as an external plugin would, so the published path is dogfooded.
