@@ -30,6 +30,9 @@ jobs:
       - run: npx tsc --project packages/plugins/slack/tsconfig.json --noEmit
       - run: npx tsc --project packages/core-server/tsconfig.json --noEmit
       - run: npx tsc --project packages/dashboard/tsconfig.json --noEmit
+      # Plugins must route outbound HTTP through the audited ctx.http.fetch (§10).
+      - name: no raw fetch in plugin backends
+        run: node scripts/no-raw-fetch-in-plugins.mjs
 
   test:
     name: test
@@ -84,7 +87,17 @@ jobs:
             packages/core-server/src/orchestrator/retry.test.ts \
             packages/core-server/src/queue/queue.test.ts \
             packages/core-server/src/services/format-message.test.ts \
-            packages/core-server/src/services/scope.test.ts
+            packages/core-server/src/services/scope.test.ts \
+            packages/core-server/src/lib/safe-webhook-fetch.test.ts \
+            packages/core-server/src/plugins/loader.test.ts \
+            packages/core-server/src/plugins/policy.test.ts \
+            packages/core-server/src/plugins/membrane.test.ts \
+            packages/core-server/src/plugins/scoped-db.test.ts \
+            packages/core-server/src/plugins/http.test.ts \
+            packages/core-server/src/plugins/audit.test.ts \
+            packages/core-server/src/plugins/cli.test.ts \
+            packages/core-server/src/plugins/builtins.test.ts \
+            packages/core-server/src/plugins/attack-corpus.test.ts
 
   image-build-and-scan:
     # Builds the agent-base + server images on every PR and scans both

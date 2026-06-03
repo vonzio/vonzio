@@ -1,4 +1,4 @@
-.PHONY: install build test dev dev-oss better-auth-migrate setup bootstrap agent-image agent-base-local dashboard clean clean-all help
+.PHONY: install build test dev dev-oss better-auth-migrate plugin setup bootstrap agent-image agent-base-local dashboard clean clean-all help
 .PHONY: docker-build docker-dev docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
@@ -55,6 +55,9 @@ better-auth-migrate: ## Create Better Auth tables on a fresh DB (run once after 
 
 docker-dev-oss: ## Same as `make docker-dev` but with REGISTRATION_ENABLED=false (OSS single-user mode)
 	REGISTRATION_ENABLED=false $(MAKE) docker-dev
+
+plugin: ## Plugin policy CLI. Usage: make plugin ARGS="approve @scope/plugin-x --reason '...'" | "list" | "diff @scope/plugin-x"
+	npx tsx packages/core-server/src/plugins/cli.ts $(ARGS)
 
 test: ## Run all tests
 	npx vitest run
