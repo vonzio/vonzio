@@ -70,11 +70,14 @@ export const PLUGIN_CAPABILITIES = [
 
   // ── Outbound HTTP ────────────────────────────────────────────────
   "http.outbound",
+
+  // ── Secrets (operator-provisioned material) ──────────────────────
+  "secrets.mtls",
 ] as const;
 
 /**
  * The capability union. Derived from the runtime tuple so there is exactly
- * one place to edit. Total count: 28 (asserted by capabilities.test.ts).
+ * one place to edit. Total count: 31 (asserted by capabilities.test.ts).
  */
 export type PluginCapability = (typeof PLUGIN_CAPABILITIES)[number];
 
@@ -308,12 +311,26 @@ export const CAPABILITY_SURFACE_MAP: Record<PluginCapability, CapabilitySurface>
     kind: "property",
     description: "Use ctx.http.fetch. Requires manifest.outboundHosts populated.",
   },
+  "secrets.mtls": {
+    surface: "ctx.secrets",
+    kind: "property",
+    description:
+      "Use ctx.secrets.mtls(name) to resolve an operator-provisioned mTLS client cert/key " +
+      "(declared in manifest.mtlsSecrets, mapped to host files in policy) into an opaque ref " +
+      "for ctx.http.fetch({ mtls }). The plugin never reads the key bytes.",
+  },
 };
 
 /**
  * Capability pairs that are effectively root and are REFUSED for external
  * plugins at load (§3 step 9, §5). Built-ins are exempt. Each inner array
  * is an AND-set: an external plugin declaring all members is refused.
+ *
+ * `secrets.mtls` is deliberately NOT listed: the cert/key files are
+ * operator-provisioned (policy-declared host paths the plugin can't choose)
+ * and resolve to an OPAQUE ref the plugin can't read, so it can't exfiltrate
+ * the key even alongside `integrations.read.decrypted` — the design-time
+ * guarantee that motivates the combos above doesn't apply here.
  */
 export const ROOT_EQUIVALENT_COMBINATIONS: ReadonlyArray<readonly PluginCapability[]> = [
   ["integrations.read.decrypted", "db.scoped"],

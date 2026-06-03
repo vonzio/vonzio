@@ -49,8 +49,33 @@ export interface PluginManifest {
   /** Required iff `db.scoped` or `db.access` is declared. DB-safe identifier
    *  matching ^[a-z][a-z0-9_]{1,30}$. */
   schemaPrefix?: string;
+  /** Logical mTLS client-cert names the plugin needs (e.g. ["teller-client"]).
+   *  Required + non-empty iff `secrets.mtls` is declared. Each must match
+   *  {@link MTLS_SECRET_NAME_PATTERN}; the operator maps each to host file paths
+   *  via `PolicyEntry.mtls_secrets`. The plugin resolves them with
+   *  `ctx.secrets.mtls(name)`. See §5, §10. */
+  mtlsSecrets?: string[];
   /** Route mounting strategy. Defaults to `{ kind: "auto" }` when absent. */
   routePrefix?: ManifestRoutePrefix;
+}
+
+/**
+ * Operator-provisioned file paths backing one logical mTLS secret name. The
+ * paths point at PEM files on the host (mounted via Docker/k8s secret volumes);
+ * core reads them server-side and never exposes the bytes to the plugin.
+ */
+export interface MtlsSecretFiles {
+  /** Path to the PEM client certificate file on the host. */
+  cert: string;
+  /** Path to the PEM private-key file on the host. */
+  key: string;
+  /** Optional path to a PEM CA bundle to trust the SERVER's certificate. Omit
+   *  for endpoints with a publicly-trusted cert (e.g. api.teller.io); set it
+   *  for private mTLS endpoints that present a private server CA. */
+  ca?: string;
+  /** Optional env var NAME holding the key passphrase (never the passphrase
+   *  itself — the policy file may be committed). */
+  passphraseEnv?: string;
 }
 
 /** Source of a loaded plugin. Drives the external-only validation rules. */
@@ -74,6 +99,10 @@ export interface PolicyEntry {
   /** Operator grant for the plugin's frontend to be bundled into the
    *  dashboard. Default false when absent. */
   approved_frontend?: boolean;
+  /** Maps each `manifest.mtlsSecrets` name the operator provisioned to its host
+   *  PEM file paths. Every name the manifest declares must appear here, else the
+   *  loader refuses (policy_mtls_secret_drift). */
+  mtls_secrets?: Record<string, MtlsSecretFiles>;
   /** ISO-8601 approval timestamp. */
   approved_at?: string;
   /** Operator identity (e.g. email). */
@@ -102,6 +131,7 @@ export const MANIFEST_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "capabilities",
   "outboundHosts",
   "schemaPrefix",
+  "mtlsSecrets",
   "routePrefix",
 ]);
 
@@ -112,6 +142,7 @@ export const POLICY_ENTRY_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "approved_capabilities",
   "approved_outbound_hosts",
   "approved_frontend",
+  "mtls_secrets",
   "approved_at",
   "approved_by",
   "approval_reason",
@@ -119,3 +150,6 @@ export const POLICY_ENTRY_ALLOWED_KEYS: ReadonlySet<string> = new Set([
 
 /** DB-safe schema-prefix identifier pattern (§3 step 14). */
 export const SCHEMA_PREFIX_PATTERN = /^[a-z][a-z0-9_]{1,30}$/;
+
+/** Logical mTLS secret name pattern: lowercase, digits, hyphens; ≤63 chars. */
+export const MTLS_SECRET_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;

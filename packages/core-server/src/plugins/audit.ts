@@ -35,6 +35,8 @@ export interface PluginLoadAudit {
   capabilitiesGranted: readonly string[];
   outboundHostsDeclared: readonly string[];
   outboundHostsGranted: readonly string[];
+  /** Logical mtls secret names the plugin declared + the operator provisioned. */
+  mtlsSecrets: readonly string[];
   schemaPrefix: string | null;
   routePrefix: unknown;
   frontendApproved: boolean;
@@ -73,6 +75,7 @@ export function emitPluginLoaded(
         capabilities_granted: audit.capabilitiesGranted,
         outbound_hosts_declared: audit.outboundHostsDeclared,
         outbound_hosts_granted: audit.outboundHostsGranted,
+        mtls_secrets: audit.mtlsSecrets,
         schema_prefix: audit.schemaPrefix,
         route_prefix: audit.routePrefix,
         frontend_approved: audit.frontendApproved,
@@ -119,12 +122,24 @@ export function emitCapabilityViolation(
 /** Runtime: one outbound HTTP/WS call made through ctx.http. */
 export function emitOutboundCall(
   log: AuditLogger,
-  info: { plugin: string; host: string; method: string; status: number; durationMs: number },
+  info: { plugin: string; host: string; method: string; status: number; durationMs: number; mtls?: string },
 ): void {
   log.info(
-    { plugin: info.plugin, host: info.host, method: info.method, status: info.status, duration_ms: info.durationMs },
+    {
+      plugin: info.plugin,
+      host: info.host,
+      method: info.method,
+      status: info.status,
+      duration_ms: info.durationMs,
+      ...(info.mtls ? { mtls_secret: info.mtls } : {}),
+    },
     "plugin outbound call",
   );
+}
+
+/** Runtime: a plugin resolved an mTLS secret name into an opaque ref. */
+export function emitMtlsResolve(log: AuditLogger, info: { plugin: string; name: string }): void {
+  log.info({ plugin: info.plugin, mtls_secret: info.name }, "plugin mtls secret resolved");
 }
 
 /** Runtime: an outbound call refused by the allowlist. */

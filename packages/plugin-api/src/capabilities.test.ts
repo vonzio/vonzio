@@ -8,11 +8,10 @@ import {
 } from "./capabilities.js";
 
 describe("capability enum", () => {
-  it("has exactly 30 capabilities (the §5 enumerated union)", () => {
-    // NOTE: docs/PLUGIN_LOADER_SPEC.md §5 prose says "Total: 28" but the
-    // enumerated union directly above it lists 30 members. The enumerated
-    // list is authoritative; the "28" is a stale count in the prose.
-    expect(PLUGIN_CAPABILITIES).toHaveLength(30);
+  it("has exactly 31 capabilities (the §5 enumerated union)", () => {
+    // The enumerated union in capabilities.ts is authoritative. If
+    // docs/PLUGIN_LOADER_SPEC.md §5 prose disagrees, the prose is stale.
+    expect(PLUGIN_CAPABILITIES).toHaveLength(31);
   });
 
   it("has no duplicate members", () => {
@@ -55,5 +54,15 @@ describe("root-equivalent + builtin-only sets", () => {
 
   it("db.access is builtin-only", () => {
     expect(BUILTIN_ONLY_CAPABILITIES.has("db.access")).toBe(true);
+  });
+
+  it("secrets.mtls is external-allowed and not root-equivalent", () => {
+    // External plugins (e.g. Teller) must be able to declare it: the opaque-ref
+    // design means the key bytes never reach plugin memory, so it's safe even
+    // alongside integrations.read.decrypted.
+    expect(BUILTIN_ONLY_CAPABILITIES.has("secrets.mtls")).toBe(false);
+    for (const combo of ROOT_EQUIVALENT_COMBINATIONS) {
+      expect(combo).not.toContain("secrets.mtls");
+    }
   });
 });

@@ -13,6 +13,7 @@ import {
   type PluginCore,
   type PluginLogger,
   type PluginManifest,
+  type PluginSecrets,
   type PluginSessionPresenceRegistry,
   type PluginSource,
   type RefusalReason,
@@ -37,10 +38,13 @@ import { assembleCore, throwingSurface, type OnViolation } from "./membrane.js";
 import { scopedDb, checkMigrationPrefix } from "./scoped-db.js";
 import { makePluginHttp, installGlobalFetchGuard, runInPluginContext } from "./http.js";
 import { makePluginStorage } from "./storage.js";
+import { makePluginSecrets } from "./secrets.js";
+import type { MtlsMaterial } from "../lib/safe-webhook-fetch.js";
 import {
   emitPluginLoaded,
   emitPluginRefused,
   emitCapabilityViolation,
+  emitMtlsResolve,
   emitOutboundCall,
   emitOutboundViolation,
   emitRawFetchAnomaly,
@@ -578,6 +582,44 @@ async function preparePlugin(packageName: string, env: PrepareEnv): Promise<Prep
   if (!cc.ok) return refuse(cc.reason, cc.message, cc.remediation, cc.detail);
   const granted = new Set<PluginCapability>(cc.grantedCapabilities);
 
+  // 16b. Load mTLS client-cert material from the operator-provisioned host
+  // files (fail-closed: a declared-but-unreadable cert/key refuses the plugin
+  // rather than silently disabling its mTLS calls). Bytes stay in core memory
+  // and reach the plugin only as an opaque ref via ctx.secrets/ctx.http.
+  const mtlsMaterial = new Map<string, MtlsMaterial>();
+  if (granted.has("secrets.mtls")) {
+    for (const [name, files] of Object.entries(cc.grantedMtlsSecrets)) {
+      let cert: Buffer;
+      let key: Buffer;
+      let ca: Buffer | undefined;
+      try {
+        cert = readFileSync(files.cert);
+        key = readFileSync(files.key);
+        if (files.ca) ca = readFileSync(files.ca);
+      } catch (err) {
+        return refuse(
+          "mtls_secret_unreadable",
+          `mTLS secret "${name}" for "${packageName}" could not be read: ${msg(err)}`,
+          `check the cert/key/ca paths in policy mtls_secrets["${name}"] are mounted + readable`,
+          { name, cert: files.cert, key: files.key, ca: files.ca },
+        );
+      }
+      let passphrase: string | undefined;
+      if (files.passphraseEnv) {
+        passphrase = process.env[files.passphraseEnv];
+        if (!passphrase) {
+          return refuse(
+            "mtls_secret_unreadable",
+            `mTLS secret "${name}" for "${packageName}" references passphrase env "${files.passphraseEnv}" which is unset`,
+            `set ${files.passphraseEnv} in the server environment`,
+            { name, passphraseEnv: files.passphraseEnv },
+          );
+        }
+      }
+      mtlsMaterial.set(name, { cert, key, ...(ca ? { ca } : {}), ...(passphrase ? { passphrase } : {}) });
+    }
+  }
+
   // 17. audit "plugin loaded"
   emitPluginLoaded(
     log,
@@ -592,6 +634,7 @@ async function preparePlugin(packageName: string, env: PrepareEnv): Promise<Prep
       capabilitiesGranted: cc.grantedCapabilities,
       outboundHostsDeclared: manifest.outboundHosts ?? [],
       outboundHostsGranted: cc.grantedOutboundHosts,
+      mtlsSecrets: manifest.mtlsSecrets ?? [],
       schemaPrefix: manifest.schemaPrefix ?? null,
       routePrefix: manifest.routePrefix ?? { kind: "auto" },
       frontendApproved: cc.frontendApproved,
@@ -632,6 +675,7 @@ async function preparePlugin(packageName: string, env: PrepareEnv): Promise<Prep
       manifest,
       granted,
       grantedHosts: cc.grantedOutboundHosts,
+      mtlsMaterial,
       log,
     });
 
@@ -737,9 +781,13 @@ export function buildPluginContext<TConfig>(args: {
   manifest: PluginManifest;
   granted: ReadonlySet<PluginCapability>;
   grantedHosts: readonly string[];
+  /** Pre-loaded mTLS material keyed by logical name (empty unless secrets.mtls
+   *  is granted + provisioned). */
+  mtlsMaterial?: ReadonlyMap<string, MtlsMaterial>;
   log: AuditLogger;
 }): PluginContext<TConfig> {
   const { plugin, parsedConfig, opts, manifest, granted, grantedHosts, log } = args;
+  const mtlsMaterial = args.mtlsMaterial ?? new Map<string, MtlsMaterial>();
 
   const pluginLog = makePluginLogger(opts.server.log, plugin.name);
   const onViolation: OnViolation = (v) => emitCapabilityViolation(log, v);
@@ -851,10 +899,19 @@ export function buildPluginContext<TConfig>(args: {
     ? makePluginHttp({
         pluginName: plugin.name,
         grantedHosts,
+        mtlsMaterial,
         onCall: (l) => emitOutboundCall(log, l),
         onViolation: (i) => emitOutboundViolation(log, i),
       })
     : stub<import("@vonzio/plugin-api").PluginHttp>("http.outbound", "http");
+
+  const secrets = granted.has("secrets.mtls")
+    ? makePluginSecrets({
+        pluginName: plugin.name,
+        declaredNames: new Set(mtlsMaterial.keys()),
+        onResolve: (i) => emitMtlsResolve(log, i),
+      })
+    : stub<PluginSecrets>("secrets.mtls", "secrets");
 
   const notificationBus = granted.has("notifications.channel")
     ? opts.notificationBus
@@ -880,6 +937,7 @@ export function buildPluginContext<TConfig>(args: {
     core,
     storage,
     http,
+    secrets,
     notificationBus,
     mcpRegistry,
     scheduler,
