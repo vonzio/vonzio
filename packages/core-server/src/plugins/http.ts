@@ -10,12 +10,23 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  CapabilityViolationError,
   OutboundHostViolationError,
   matchOutboundHost,
+  type MtlsRef,
   type PluginHttp,
   type PluginHttpInit,
 } from "@vonzio/plugin-api";
-import { safeFetchCore, type SafeFetchInit } from "../lib/safe-webhook-fetch.js";
+import { safeFetchCore, type MtlsMaterial, type SafeFetchInit } from "../lib/safe-webhook-fetch.js";
+
+/** Structural check that an init.mtls value is a genuine MtlsRef (a plugin
+ *  could pass an arbitrary object — we only trust the brand + a string name,
+ *  and the name must still resolve in mtlsMaterial below). */
+function asMtlsRef(value: unknown): MtlsRef | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  return v.__vonzioMtls === true && typeof v.name === "string" ? (v as unknown as MtlsRef) : null;
+}
 
 /** Default + ceiling timeouts / sizes for plugin HTTP (§10). */
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -29,12 +40,18 @@ export interface PluginHttpCallLog {
   method: string;
   status: number;
   durationMs: number;
+  /** Logical mtls secret name, when the call presented a client cert. */
+  mtls?: string;
 }
 
 export interface MakePluginHttpOpts {
   pluginName: string;
   /** The granted (manifest∩policy) outbound host patterns, normalized. */
   grantedHosts: readonly string[];
+  /** Pre-loaded mTLS material keyed by logical name (read from the operator's
+   *  host files at load). A plugin reaches it only by passing the matching
+   *  opaque MtlsRef; the bytes live in this closure, never in plugin memory. */
+  mtlsMaterial?: ReadonlyMap<string, MtlsMaterial>;
   /** Called once per completed call for the audit log. */
   onCall?: (log: PluginHttpCallLog) => void;
   /** Called when a host fails the allowlist (before the request is made). */
@@ -63,11 +80,32 @@ export function makePluginHttp(opts: MakePluginHttpOpts): PluginHttp {
         throw new OutboundHostViolationError({ plugin: pluginName, host });
       }
 
+      // Resolve an mTLS ref (if any) into pre-loaded cert/key material. The ref
+      // carries only a logical name; the bytes come from this closure's map, so
+      // the plugin never holds the key. An unrecognized/unprovisioned name is a
+      // capability violation (defense in depth — the loader already validated).
+      let mtls: MtlsMaterial | undefined;
+      let mtlsName: string | undefined;
+      if (init.mtls !== undefined) {
+        const ref = asMtlsRef(init.mtls);
+        const material = ref ? opts.mtlsMaterial?.get(ref.name) : undefined;
+        if (!ref || !material) {
+          throw new CapabilityViolationError({
+            plugin: pluginName,
+            capability: "secrets.mtls",
+            key: `ctx.http.fetch(mtls:${ref?.name ?? "<invalid>"})`,
+          });
+        }
+        mtls = material;
+        mtlsName = ref.name;
+      }
+
       const method = init.method ?? "GET";
       const coreInit: SafeFetchInit = {
         method,
         headers: init.headers,
         body: init.body,
+        ...(mtls ? { mtls } : {}),
       };
       const timeoutMs = Math.min(init.timeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
       const maxResponseBytes = Math.min(init.maxResponseBytes ?? DEFAULT_MAX_BYTES, MAX_MAX_BYTES);
@@ -94,7 +132,7 @@ export function makePluginHttp(opts: MakePluginHttpOpts): PluginHttp {
       });
       const durationMs = Math.round(performance.now() - startedAt);
 
-      opts.onCall?.({ plugin: pluginName, host, method, status: result.status, durationMs });
+      opts.onCall?.({ plugin: pluginName, host, method, status: result.status, durationMs, ...(mtlsName ? { mtls: mtlsName } : {}) });
 
       // Rebuild a real Response. Drop hop-by-hop / forbidden response headers
       // the Response constructor would reject; keep the rest (content-type etc.).
