@@ -924,6 +924,13 @@ export type {
   OperatorPolicy,
 } from "./manifest.js";
 export {
+  validateManifest,
+  validatePolicy,
+  matchOutboundHost,
+  normalizeHostPattern,
+} from "./manifest-validate.js";
+export type { ManifestValidationResult } from "./manifest-validate.js";
+export {
   CapabilityViolationError,
   OutboundHostViolationError,
   DbScopeViolationError,
