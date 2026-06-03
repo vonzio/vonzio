@@ -32,6 +32,10 @@
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+// Use undici's OWN fetch (not Node's global fetch) so the custom Agent
+// dispatcher below is the same undici version — passing an undici@8 Agent to
+// Node's bundled-undici global fetch fails with "invalid onRequestStart method".
+import { fetch as undiciFetch, Agent } from "undici";
 
 export class SsrfBlockedError extends Error {
   constructor(message: string, public readonly url: string) {
@@ -70,6 +74,30 @@ export interface SafeWebhookFetchOptions {
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BYTES = 1024 * 1024; // 1 MiB
 const DEFAULT_MAX_REDIRECTS = 3;
+
+/**
+ * An undici dispatcher that pins every connection to a PRE-VALIDATED IP via a
+ * custom `lookup`, while leaving the request URL's hostname intact. This closes
+ * the DNS-rebinding window (the connection only ever goes to the IP we
+ * validated) WITHOUT breaking HTTPS: TLS SNI, certificate validation, and the
+ * Host header all still use the real hostname. (The previous approach
+ * substituted the IP literal into the URL, which made TLS validate the cert
+ * against the IP and fail with "does not match certificate's altnames".)
+ */
+function pinnedDispatcher(ip: string, family: 4 | 6): Agent {
+  // net/tls `lookup` shape: (hostname, options, callback). With options.all the
+  // callback wants an array; otherwise (address, family). Typed loosely at this
+  // node/undici interop boundary.
+  const lookup = (
+    _hostname: string,
+    options: { all?: boolean },
+    cb: (...args: unknown[]) => void,
+  ): void => {
+    if (options && options.all) cb(null, [{ address: ip, family }]);
+    else cb(null, ip, family);
+  };
+  return new Agent({ connect: { lookup: lookup as never } });
+}
 
 /**
  * RFC-aligned check for whether an IP is in a range that shouldn't
@@ -329,49 +357,46 @@ export async function safeFetchCore(
   let currentBody: SafeFetchBody | undefined = init.body;
   let redirectCount = 0;
   let lastResponse: Response | null = null;
+  // The dispatcher pinning the CURRENT hop's connection to its validated IP.
+  // Kept open until its response body is read; closed in the outer finally.
+  let currentDispatcher: Agent | undefined;
 
   try {
     while (true) {
       const validated = await validateUrl(currentUrl, allowlist);
 
-      // Note: undici fetch doesn't expose a `lookup` hook. To pin to
-      // the resolved IP, we substitute the hostname in the URL with
-      // the IP literal and set the Host header back to the original
-      // hostname. This closes the DNS-rebinding window between
-      // validate() and connect().
-      let requestUrl: string;
-      if (validated.allowlisted) {
-        requestUrl = validated.url.toString();
-      } else {
-        validated.url.hostname = validated.family === 6
-          ? `[${validated.resolvedIp}]`
-          : validated.resolvedIp;
-        requestUrl = validated.url.toString();
-      }
-
+      // Keep the ORIGINAL hostname in the request URL so TLS SNI + cert
+      // validation + the Host header all use the real host; pin the connection
+      // to the pre-validated IP via the dispatcher's custom lookup (closes the
+      // DNS-rebinding window without breaking HTTPS).
+      const requestUrl = validated.url.toString();
       const headers: Record<string, string> = { ...(init.headers ?? {}) };
-      // Set Host explicitly so TLS SNI + virtual hosts still work
-      // when we connected via the pinned IP.
-      headers["Host"] = `${validated.bareHost}${
-        validated.url.port ? ":" + validated.url.port : ""
-      }`;
 
-      // Release the previous 3xx response body before issuing the
-      // next hop, otherwise undici holds the socket open until GC.
+      // Release the previous 3xx response body + its dispatcher before issuing
+      // the next hop, otherwise undici holds the socket open until GC.
       if (lastResponse) {
         await lastResponse.body?.cancel().catch(() => {});
         lastResponse = null;
       }
+      if (currentDispatcher) {
+        await currentDispatcher.close().catch(() => {});
+        currentDispatcher = undefined;
+      }
+      // Allowlisted hosts skip pinning (the explicit "internal callback" path).
+      if (!validated.allowlisted) {
+        currentDispatcher = pinnedDispatcher(validated.resolvedIp, validated.family);
+      }
 
       try {
-        lastResponse = await fetch(requestUrl, {
+        lastResponse = (await undiciFetch(requestUrl, {
           method: currentMethod,
           headers,
           // string | Uint8Array | FormData are all valid BodyInit at runtime.
-          body: currentBody as BodyInit | undefined,
+          body: currentBody as never,
           redirect: "manual",
           signal: controller.signal,
-        });
+          dispatcher: currentDispatcher,
+        })) as unknown as Response;
       } catch (err) {
         if (controller.signal.aborted) {
           throw new Error(`webhook request timed out after ${timeoutMs}ms`);
@@ -469,6 +494,7 @@ export async function safeFetchCore(
     throw err;
   } finally {
     clearTimeout(timer);
+    if (currentDispatcher) await currentDispatcher.close().catch(() => {});
   }
 }
 
