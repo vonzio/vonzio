@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
+import { serveDashboardIndex } from "./dashboard-csp.js";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -822,30 +823,36 @@ export async function buildServer(deps: ServerDeps) {
     ? resolve(process.env.DASHBOARD_DIST)
     : join(__dirname, "../../dashboard/dist");
   if (existsSync(dashboardDist)) {
+    // Read index.html once at boot. It's served per-request (not statically) so
+    // each response gets a fresh CSP nonce substituted for the build-time
+    // placeholder the dashboard Vite plugin stamped onto every <script> tag.
+    const indexPath = join(dashboardDist, "index.html");
+    const indexTemplate = existsSync(indexPath) ? readFileSync(indexPath, "utf8") : null;
+
     server.register(fastifyStatic, {
       root: dashboardDist,
       prefix: "/",
       wildcard: false,
       cacheControl: false,
-      // Hashed assets ship with content-addressed filenames so they're
-      // immutable for a year; index.html must never be cached because
-      // it references the current bundle's hashes, which change every
-      // deploy.
-      setHeaders: (res, filePath) => {
-        if (filePath.endsWith("index.html")) {
-          res.setHeader("cache-control", "no-cache");
-        } else {
-          res.setHeader("cache-control", "public, max-age=31536000, immutable");
-        }
+      // index.html is served via serveDashboardIndex (per-request nonce), NOT
+      // statically — so the static handler must not auto-serve it at "/".
+      index: false,
+      // Hashed assets ship with content-addressed filenames, immutable for a
+      // year. (index.html no longer flows through here.)
+      setHeaders: (res) => {
+        res.setHeader("cache-control", "public, max-age=31536000, immutable");
       },
     });
-    // SPA fallback: serve index.html for unmatched routes
+    // index.html + SPA fallback: serve with a per-request CSP nonce. "/" and any
+    // non-API unmatched route land here (static index is disabled above).
     server.setNotFoundHandler(async (request, reply) => {
       if (request.url.startsWith("/v1") || request.url.startsWith("/admin/") || request.url.startsWith("/api/") || request.url.startsWith("/preview") || request.url.startsWith("/widget")) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Not found"));
       }
-      reply.header("cache-control", "no-cache");
-      return reply.sendFile("index.html");
+      if (!indexTemplate) {
+        return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Not found"));
+      }
+      return serveDashboardIndex(reply, indexTemplate);
     });
   }
 
