@@ -59,6 +59,18 @@ describe("checkDashboardParity", () => {
     expect(r.errors[0]).toMatch(/hash/);
   });
 
+  it("enforces external hash even if the artifact mislabels it 'builtin'", () => {
+    // Runtime builtinNames is authoritative — a forged source:"builtin" must
+    // NOT skip the hash check for a plugin the runtime treats as external.
+    const r = checkDashboardParity({
+      data: bundled([{ name: "@v/ext", source: "builtin", hash: "FORGED" }]),
+      policies: policies({ "@v/ext": { approved_frontend: true, approved_hash_sha256: "REAL" } }), // not in builtinNames
+      runtimePolicyHash: null,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatch(/hash/);
+  });
+
   it("fails when an approved built-in is missing from the bundle (forgot to rebuild)", () => {
     const r = checkDashboardParity({
       data: bundled([]),

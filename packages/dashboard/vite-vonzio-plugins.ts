@@ -149,6 +149,11 @@ function validateFrontendEntry(root: string, frontendEntry: string): void {
   }
 }
 
+/** §6 plugin-name rule (mirrors loader.ts isValidPluginName). Guards the
+ *  path-join in resolvePackageRootViaNodeModules against `..` traversal from a
+ *  crafted/typo'd policy key. */
+const PLUGIN_NAME_RE = /^(@[\w.-]+\/)?[\w.-]+$/;
+
 export interface ComputeApprovedArgs {
   policy: LoadedFrontendPolicy;
   repoRoot: string;
@@ -172,10 +177,29 @@ export function computeApprovedFrontends(args: ComputeApprovedArgs): ApprovedFro
     const entry = policy.entries.get(name)!;
     if (entry.approved_frontend !== true) continue;
 
+    if (!PLUGIN_NAME_RE.test(name)) {
+      throw new Error(`vonzio-plugins: invalid plugin name "${name}" in policy (rejects path traversal / URL forms)`);
+    }
+
     const root = resolveRoot(repoRoot, name);
     if (!root) {
       throw new Error(`vonzio-plugins: "${name}" is approved for frontend bundling but is not installed (no node_modules/${name}).`);
     }
+
+    const source = classifySource(root, repoRoot, policy.builtinNames, name);
+    // Externals must resolve to a real path WITHIN node_modules/<name> — the
+    // same containment the backend loader enforces (loader.ts), refusing
+    // npm-link / file: installs whose realpath escapes node_modules and could
+    // bundle out-of-tree code into the dashboard origin.
+    if (source === "external") {
+      const expectedSuffix = path.sep + path.join("node_modules", ...name.split("/"));
+      if (!root.endsWith(expectedSuffix)) {
+        throw new Error(
+          `vonzio-plugins: external "${name}" real path "${root}" is not within node_modules/${name} (npm link / file: installs are not trusted as frontends)`,
+        );
+      }
+    }
+
     const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
       vonzio?: { frontendEntry?: string };
     };
@@ -184,7 +208,6 @@ export function computeApprovedFrontends(args: ComputeApprovedArgs): ApprovedFro
 
     validateFrontendEntry(root, frontendEntry);
 
-    const source = classifySource(root, repoRoot, policy.builtinNames, name);
     const installedHash = doHash(root);
     if (source === "external" && entry.approved_hash_sha256 !== installedHash) {
       throw new Error(`vonzio-plugins: "${name}" installed hash does not match the approved hash — re-approve with the CLI before building.`);
@@ -239,7 +262,9 @@ export default function vonzioPlugins(_options: VonzioPluginsOptions = {}): Plug
         // dashboard is served by Vite (HMR, no core-server CSP). ctx.server is
         // present only in the dev server.
         if (!isBuild || ctx.server) return html;
-        return html.replace(/<script(?![^>]*\bnonce=)/g, `<script nonce="${NONCE_PLACEHOLDER}"`);
+        // `\b` so `<scripting>` doesn't match; negative lookahead skips tags
+        // that already carry a nonce (avoids a duplicate attribute).
+        return html.replace(/<script\b(?![^>]*\bnonce=)/gi, `<script nonce="${NONCE_PLACEHOLDER}"`);
       },
     },
 

@@ -55,7 +55,12 @@ export function checkDashboardParity(args: {
       errors.push(`bundled frontend "${p.name}" is not approved_frontend in the runtime policy`);
       continue;
     }
-    if (p.source === "external" && entry.approved_hash_sha256 !== p.hash) {
+    // Classify by the RUNTIME's authoritative builtinNames, NOT the artifact's
+    // self-declared `source` — otherwise a mislabeled "builtin" entry would
+    // skip the hash check. Built-ins are workspace-trusted (hash skipped,
+    // deviation #9); externals must be hash-equal.
+    const isBuiltin = policies.builtinNames.has(p.name);
+    if (!isBuiltin && entry.approved_hash_sha256 !== p.hash) {
       errors.push(
         `bundled frontend "${p.name}" hash ${p.hash.slice(0, 12)} != approved ${entry.approved_hash_sha256.slice(0, 12)}`,
       );
@@ -91,7 +96,21 @@ export function assertDashboardParity(opts: {
   const file = path.join(opts.dashboardDist, ".plugins.json");
   if (!existsSync(file)) return;
 
-  const data = JSON.parse(readFileSync(file, "utf8")) as DashboardPluginsJson;
+  let data: DashboardPluginsJson;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as DashboardPluginsJson;
+    if (!Array.isArray(parsed.plugins)) throw new Error("`plugins` is not an array");
+    for (const p of parsed.plugins) {
+      if (typeof p?.name !== "string" || typeof p?.hash !== "string") {
+        throw new Error("an entry is missing name/hash");
+      }
+    }
+    data = parsed;
+  } catch (err) {
+    throw new Error(
+      `dashboard parity check: ${file} is malformed (${err instanceof Error ? err.message : String(err)}). Rebuild the dashboard (vite build).`,
+    );
+  }
   const repoRoot = opts.repoRoot ?? findRepoRoot();
   const policies = loadPolicies({ repoRoot, operatorPolicyPath: opts.operatorPolicyPath });
   const runtimePolicyHash =

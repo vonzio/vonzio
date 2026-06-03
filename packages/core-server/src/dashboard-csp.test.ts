@@ -64,10 +64,16 @@ describe("serveDashboardIndex", () => {
     expect(a.headers["content-security-policy"]).not.toBe(b.headers["content-security-policy"]);
   });
 
-  it("serves a non-stamped template WITHOUT a strict CSP (don't break downstream builds)", () => {
+  it("serves a non-stamped template with a BASELINE CSP (degraded, not absent)", () => {
     const m = mockReply();
     serveDashboardIndex(m.reply, "<!doctype html><script src=/x.js></script>");
-    expect(m.headers["content-security-policy"]).toBeUndefined();
+    const csp = m.headers["content-security-policy"];
+    // Not the strict nonce policy, but not fail-open either: still locks down
+    // framing/objects/base-uri, relaxes script-src to 'self'.
+    expect(csp).toBeDefined();
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).not.toContain("nonce-");
+    expect(csp).toContain("frame-ancestors 'none'");
     expect(m.sent).toContain("<script src=/x.js>");
   });
 });

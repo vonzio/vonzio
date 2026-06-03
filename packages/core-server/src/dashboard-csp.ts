@@ -43,16 +43,38 @@ export function buildCsp(nonce: string): string {
 }
 
 /**
- * Serve the dashboard index.html with a fresh per-request nonce + CSP header.
- * If the template carries no nonce placeholder (a downstream dashboard build
- * that didn't run the vonzio Vite plugin — e.g. the SaaS cp-dashboard), serve
- * it as-is WITHOUT the strict CSP rather than break it (a strict CSP over
- * un-nonced scripts would blank the page).
+ * Baseline CSP for a dashboard build that did NOT run the vonzio Vite plugin
+ * (no nonce placeholder — e.g. the SaaS cp-dashboard). It can't use the strict
+ * nonce policy (its scripts carry no nonce), but it must NOT fail open to zero
+ * CSP: this keeps frame-ancestors/object-src/base-uri lockdown and only relaxes
+ * script-src to `'self'`.
+ */
+export function buildBaselineCsp(): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "worker-src 'self' blob:",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+  ].join("; ");
+}
+
+/**
+ * Serve the dashboard index.html with a fresh per-request nonce + strict CSP.
+ * A template with no nonce placeholder (a downstream build) gets the baseline
+ * CSP — degraded but not absent, so the most security-sensitive deployment
+ * isn't served with no policy at all.
  */
 export function serveDashboardIndex(reply: FastifyReply, template: string): FastifyReply {
   reply.header("cache-control", "no-cache");
   reply.type("text/html");
   if (!template.includes(NONCE_PLACEHOLDER)) {
+    reply.header("content-security-policy", buildBaselineCsp());
     return reply.send(template);
   }
   const nonce = randomBytes(16).toString("base64url");

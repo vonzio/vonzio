@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -32,11 +32,12 @@ describe("computeApprovedFrontends", () => {
   const pkgDirs: Record<string, string> = {};
 
   function makePkg(name: string, opts: { frontendEntry?: string; builtin?: boolean } = {}): string {
-    // Built-ins must live under <repoRoot>/packages/ so classifySource treats
-    // them as builtin; externals go anywhere (a temp dir).
+    // Built-ins live under <repoRoot>/packages/ (classifySource → builtin);
+    // externals live under <repoRoot>/node_modules/<name> (the containment the
+    // Vite plugin now enforces for externals).
     const dir = opts.builtin
       ? path.join(root, "packages", name.replace(/[@/]/g, "_"))
-      : mkdtempSync(path.join(tmpdir(), "vonzio-pkg-"));
+      : path.join(root, "node_modules", ...name.split("/"));
     const vonzio: Record<string, unknown> = { apiVersion: "1.0", backendEntry: "./index.ts", capabilities: [] };
     mkdirSync(dir, { recursive: true });
     if (opts.frontendEntry) {
@@ -137,5 +138,34 @@ describe("computeApprovedFrontends", () => {
       resolveRoot,
     });
     expect(out).toEqual([]);
+  });
+
+  it("rejects a crafted policy-key name (path traversal)", () => {
+    expect(() =>
+      computeApprovedFrontends({
+        policy: policy({ "../../../evil": { approved_frontend: true } }),
+        repoRoot: root,
+        resolveRoot,
+      }),
+    ).toThrow(/invalid plugin name/);
+  });
+
+  it("refuses an external whose real path escapes node_modules/<name> (npm-link)", () => {
+    // Resolve the external to a dir OUTSIDE node_modules (simulating a symlink
+    // / npm link). Containment must refuse it.
+    const linked = makePkg("@v/linked", { frontendEntry: "./src/frontend.tsx" });
+    const outside = mkdtempSync(path.join(tmpdir(), "vonzio-linked-"));
+    // copy the package.json + frontend so the dir is a valid package
+    mkdirSync(path.join(outside, "src"), { recursive: true });
+    writeFileSync(path.join(outside, "package.json"), readFileSync(path.join(linked, "package.json")));
+    writeFileSync(path.join(outside, "src", "frontend.tsx"), "export default () => {};\n");
+    expect(() =>
+      computeApprovedFrontends({
+        policy: policy({ "@v/linked": { approved_frontend: true, approved_hash_sha256: "x" } }),
+        repoRoot: root,
+        resolveRoot: () => realpathSync(outside),
+      }),
+    ).toThrow(/not within node_modules/);
+    rmSync(outside, { recursive: true, force: true });
   });
 });

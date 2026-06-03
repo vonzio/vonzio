@@ -853,7 +853,10 @@ export async function buildServer(deps: ServerDeps) {
     // index.html + SPA fallback: serve with a per-request CSP nonce. "/" and any
     // non-API unmatched route land here (static index is disabled above).
     server.setNotFoundHandler(async (request, reply) => {
-      if (request.url.startsWith("/v1") || request.url.startsWith("/admin/") || request.url.startsWith("/api/") || request.url.startsWith("/preview") || request.url.startsWith("/widget")) {
+      // API namespaces + /assets (a missing hashed asset must 404, not get the
+      // SPA shell with text/html — which would surface as a confusing MIME
+      // error in the browser).
+      if (request.url.startsWith("/v1") || request.url.startsWith("/admin/") || request.url.startsWith("/api/") || request.url.startsWith("/preview") || request.url.startsWith("/widget") || request.url.startsWith("/assets/")) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Not found"));
       }
       if (!indexTemplate) {
