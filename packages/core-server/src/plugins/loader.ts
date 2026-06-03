@@ -508,11 +508,27 @@ export function buildPluginContext<TConfig>(args: {
   // to events for a feature that's been disabled).
   const sessionEvents = buildSessionEventsFacade(opts.sessionEventEmitter);
 
+  // TODO(C6/C7): `storage` and `http` are wired to real capability-gated
+  // implementations (plugin_storage-backed KV; safeWebhookFetch-backed
+  // audited fetch) when the membrane lands. Until then they are throwing
+  // stubs so the contract type is satisfied without granting access.
+  const storageStub: import("@vonzio/plugin-api").PluginStorageKv = {
+    get: () => { throw new Error("ctx.storage not yet available (pre-membrane build)"); },
+    set: () => { throw new Error("ctx.storage not yet available (pre-membrane build)"); },
+    delete: () => { throw new Error("ctx.storage not yet available (pre-membrane build)"); },
+    list: () => { throw new Error("ctx.storage not yet available (pre-membrane build)"); },
+  };
+  const httpStub: import("@vonzio/plugin-api").PluginHttp = {
+    fetch: () => { throw new Error("ctx.http not yet available (pre-membrane build)"); },
+  };
+
   return {
     server: scopedServer,
     config: parsedConfig,
     log,
     core,
+    storage: storageStub,
+    http: httpStub,
     notificationBus: opts.notificationBus,
     mcpRegistry: opts.mcpRegistry,
     scheduler: opts.scheduler,
