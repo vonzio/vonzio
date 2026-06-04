@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { Send } from "lucide-react";
-import type { WorkspaceHeaderSlotProps } from "@vonzio/dashboard/registry";
+import type { WorkspaceHeaderSlotProps } from "@vonzio/dashboard-registry";
 import { fetchTelegramBotForWorkspace, type TelegramBotForWorkspace } from "./api.js";
 
 export function WorkspaceHeaderTelegramButton({ workspace }: WorkspaceHeaderSlotProps) {

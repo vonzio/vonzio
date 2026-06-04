@@ -2,13 +2,20 @@ import path from "path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import vonzioPlugins from "./vite-vonzio-plugins.js";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), vonzioPlugins()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // Force a single copy of React and the dashboard registry across the app
+    // and every bundled plugin frontend. Duplicate React breaks hooks/context;
+    // a duplicate registry module would split registrations from the readers.
+    // The registry also self-pins to globalThis as a backstop, but deduping
+    // keeps external plugins (resolved from their own node_modules) on one copy.
+    dedupe: ["react", "react-dom", "@vonzio/dashboard-registry"],
   },
   server: {
     port: 5173,

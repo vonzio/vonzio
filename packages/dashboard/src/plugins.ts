@@ -1,42 +1,24 @@
 // Dashboard plugin loader.
 //
-// Imports each registered plugin's frontend entry at build time
-// (vite resolves the imports statically; runtime lazy-loading is
-// deferred until a real plugin needs it) and calls each plugin's
-// default-exported register() function once during bootstrap.
+// The set of plugin frontends bundled here is decided by the OPERATOR POLICY at
+// build time, not by a hardcoded list: the `vonzio-plugins` Vite plugin
+// (../vite-vonzio-plugins.ts) reads vonzio-plugins.builtins.json + the operator
+// policy, bundles a plugin's frontend only when it's approved
+// (`approved_frontend: true`), and exposes the approved set via the virtual
+// module `virtual:vonzio-plugins`. See docs/PLUGIN_LOADER_SPEC.md §16 PR 3J.2.
 //
-// As more plugins extract, add an import + a registerPlugin() call.
-// This is intentionally manual until a 4th-5th plugin justifies
-// auto-discovery. The trade-off vs codegen:
-//   - manual: any plugin author adding a new entry has to remember
-//     this file (the dashboard build fails if the plugin's import
-//     path is wrong, which is the kind of mistake you want loud)
-//   - codegen: more magic, easier to add plugins, hides errors
-//
-// Per-plugin try/catch keeps a broken plugin from blank-screening
-// the whole dashboard.
+// Per-plugin try/catch keeps a broken plugin from blank-screening the dashboard.
 
-import telegramRegister from "@vonzio/plugin-telegram/frontend";
-import slackRegister from "@vonzio/plugin-slack/frontend";
-
-interface PluginEntry {
-  name: string;
-  register: () => void;
-}
-
-const plugins: PluginEntry[] = [
-  { name: "telegram", register: telegramRegister },
-  { name: "slack", register: slackRegister },
-];
+import { pluginFrontends } from "virtual:vonzio-plugins";
 
 /**
- * Called from main.tsx once, BEFORE the React tree mounts. By the
- * time App renders, every plugin's settings sections / nav items /
- * etc. are already in the dashboard registry, so the existing
- * <SettingsLayout> etc. render them naturally.
+ * Called from main.tsx once, BEFORE the React tree mounts. By the time App
+ * renders, every approved plugin's settings sections / nav items / integration
+ * rows are already in the dashboard registry, so the existing <SettingsLayout>
+ * etc. render them naturally.
  */
 export function registerDashboardPlugins(): void {
-  for (const { name, register } of plugins) {
+  for (const { name, register } of pluginFrontends) {
     try {
       register();
     } catch (err) {
