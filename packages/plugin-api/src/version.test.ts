@@ -36,9 +36,11 @@ describe("assertApiCompatible", () => {
     expect(() => assertApiCompatible("1", "1.0.0")).toThrow(/invalid apiVersion/);
   });
 
-  it("defaults coreApiVersion to PLUGIN_API_VERSION (1.0.0)", () => {
-    expect(() => assertApiCompatible("1.0")).not.toThrow();
+  it("defaults coreApiVersion to PLUGIN_API_VERSION (1.1.0)", () => {
+    expect(() => assertApiCompatible("1.0")).not.toThrow(); // older minor still loads
     expect(() => assertApiCompatible("1.0.0")).not.toThrow();
+    expect(() => assertApiCompatible("1.1")).not.toThrow(); // current minor
+    expect(() => assertApiCompatible("1.2")).toThrow(/minor/); // minor ahead of core
     expect(() => assertApiCompatible("2.0.0")).toThrow();
     expect(() => assertApiCompatible("0.1.0")).toThrow();
   });

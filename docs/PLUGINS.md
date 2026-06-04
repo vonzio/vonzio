@@ -255,6 +255,11 @@ Notes:
 - The integration row's `type` is the discriminator. Pick a stable
   short string ("telegram", "slack", "github", etc.) and use it
   consistently.
+- Each row carries `scope` (`"all" | "agents"`) and `profile_ids`
+  (plugin-api ≥ 1.1.0). To honour the user's per-profile visibility when
+  surfacing a row to an agent (e.g. an MCP tool), filter with
+  `scope === "all" || profile_ids.includes(profileId)` — where `profileId`
+  comes from `ctx.mcpSessions.resolve(token)`.
 
 ---
 

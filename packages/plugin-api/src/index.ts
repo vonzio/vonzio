@@ -16,9 +16,10 @@ import type { FastifyInstance } from "fastify";
  * plugins whose major differs or whose minor is ahead of core's (see
  * `assertApiCompatible`). Bumped to 1.0.0 with the external-loader contract
  * (docs/PLUGIN_LOADER_SPEC.md) — the loader surface is now a stability
- * commitment.
+ * commitment. 1.1.0 added `scope`/`profile_ids` to PluginIntegration
+ * (additive; plugins targeting 1.0 are unaffected).
  */
-export const PLUGIN_API_VERSION = "1.0.0";
+export const PLUGIN_API_VERSION = "1.1.0";
 
 /**
  * The shape every plugin's default export must satisfy. Generic over
@@ -225,6 +226,19 @@ export interface PluginIntegration {
   type: string;
   config: Record<string, unknown>;
   enabled: boolean;
+  /**
+   * Visibility scope for agent-facing surfaces (MCP injection, etc.):
+   *  - `"all"`: available to every agent profile the user owns.
+   *  - `"agents"`: restricted to the profiles listed in `profile_ids`.
+   * A plugin gating per-profile (e.g. only surface a bank to the agent the
+   * user scoped it to) filters with:
+   *   `scope === "all" || profile_ids.includes(profileId)`.
+   * Added in plugin-api 1.1.0.
+   */
+  scope: "all" | "agents";
+  /** Profile ids this integration is restricted to when `scope === "agents"`
+   *  (empty otherwise). Added in plugin-api 1.1.0. */
+  profile_ids: string[];
   /**
    * Last-modified timestamp (ISO-8601). Plugins use this for
    * optimistic-locking writes -- see `update({...}, { expectUpdatedAt })`.
