@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -59,8 +59,8 @@ jobs:
       ENCRYPTION_KEY: ci-test-encryption-key-32chars-xx
       BETTER_AUTH_SECRET: ci-test-better-auth-secret-32-chars
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -126,7 +126,7 @@ jobs:
             file: docker/Dockerfile.server
             tag: vonzio-server:ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
       # Daily apt cache-bust. The Dockerfiles run `apt-get upgrade`, but a
       # byte-identical RUN layer is served from the buildx cache forever, so a
@@ -169,6 +169,17 @@ jobs:
         #    bump the package that ships it
         # ignore-unfixed avoids failing on CVEs with no patch available
         # -- we can't act on those at PR time.
+        #
+        # Chromium is REPORT-ONLY (docker/trivy-chromium-ignore.rego): it ships a
+        # continuous stream of browser HIGH/CRITICALs and there's always a window
+        # between disclosure and the bookworm-security fix landing; those aren't
+        # actionable at PR time and the agent runs sandboxed/unprivileged. The
+        # policy drops chromium* from the exit-code gate; TRIVY_SHOW_SUPPRESSED
+        # keeps them printed (reported) so regressions stay visible. Every other
+        # OS/library HIGH/CRITICAL still fails the build.
+        env:
+          TRIVY_IGNORE_POLICY: docker/trivy-chromium-ignore.rego
+          TRIVY_SHOW_SUPPRESSED: "true"
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ${{ matrix.image.tag }}
@@ -199,10 +210,10 @@ jobs:
     # to main, so any secret has to flow through a PR scanned here.
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: trufflesecurity/trufflehog@v3.81.10
+      - uses: trufflesecurity/trufflehog@v3.95.5
         with:
           # Scan only the PR diff (base..head) -- a full-history scan
           # on every PR would be wasteful and produce repeated noise
@@ -228,7 +239,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@2.0.0
         with:
