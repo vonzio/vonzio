@@ -268,6 +268,7 @@ export async function buildServer(deps: ServerDeps) {
     memoryService,
     secretVaultService,
     integrationService,
+    mcpRegistry,
     sessionPresence,
     eventLog,
     vpnTunnelProvider: () => coreDeps.vpnTunnelProvider,

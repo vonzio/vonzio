@@ -98,17 +98,28 @@ describe("NotificationBusImpl", () => {
 describe("McpRegistryImpl", () => {
   it("records registered servers in list()", () => {
     const reg = new McpRegistryImpl();
-    reg.registerServer({ name: "gmail", transport: { type: "http", url: "https://x" } });
+    reg.registerServer({ name: "gmail", transport: { type: "http", url: "/plugins/gmail/mcp" } });
     reg.registerServer({ name: "teller", transport: { type: "stdio", command: "node", args: ["t.js"] } });
     expect(reg.list().map((s) => s.name).sort()).toEqual(["gmail", "teller"]);
   });
 
   it("rejects double-registration of the same name", () => {
     const reg = new McpRegistryImpl();
-    reg.registerServer({ name: "x", transport: { type: "http", url: "http://x" } });
+    reg.registerServer({ name: "x", transport: { type: "http", url: "/plugins/x/mcp" } });
     expect(() =>
-      reg.registerServer({ name: "x", transport: { type: "http", url: "http://y" } }),
+      reg.registerServer({ name: "x", transport: { type: "http", url: "/plugins/x/mcp2" } }),
     ).toThrow(/already registered/);
+  });
+
+  it("rejects http urls that aren't a safe internal path (external token leak)", () => {
+    const reg = new McpRegistryImpl();
+    for (const url of ["https://evil.com/rpc", "//evil.com/rpc", "/plugins/x/../../admin", "mcp"]) {
+      expect(() => reg.registerServer({ name: `s-${url}`, transport: { type: "http", url } })).toThrow(
+        /absolute path under the internal server/,
+      );
+    }
+    // A real path is accepted.
+    expect(() => reg.registerServer({ name: "ok", transport: { type: "http", url: "/plugins/ok/mcp" } })).not.toThrow();
   });
 });
 
