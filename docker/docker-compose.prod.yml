@@ -42,14 +42,8 @@ services:
 
   server:
     image: ${SERVER_IMAGE:-vonzio-server:latest}
-    volumes:
-      # Teller mTLS client cert + key. Host path is /opt/vonzio/secrets/teller/
-      # (override with TELLER_CERT_HOST_DIR in .env if needed). Read-only so
-      # a compromised server can't tamper with the key file. Defaults to a
-      # safe directory that doesn't have to exist — compose creates an
-      # empty mount when missing, and the server treats absent paths as
-      # "Teller not configured" (TELLER_CERT_PATH check at use-time).
-      - ${TELLER_CERT_HOST_DIR:-/opt/vonzio/secrets/teller}:/run/secrets/teller:ro
+    # Teller is now the external @vonzio/plugin-teller plugin — add a volume for
+    # its mTLS cert + the TELLER_* env per that plugin's README when installed.
     environment:
       # Runtime override of the version baked into the image. Lets us retag
       # an image from a previous deploy (when no server source changed) and
@@ -114,17 +108,6 @@ services:
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
       # Ollama Cloud (optional)
       - OLLAMA_ENABLED=${OLLAMA_ENABLED:-}
-      # Teller (optional). Cert + key files are bind-mounted from
-      # /opt/vonzio/secrets/teller/ on the host (see volumes:); the
-      # env vars below tell the server where to find them inside the
-      # container.
-      - TELLER_APP_ID=${TELLER_APP_ID:-}
-      - TELLER_CERT_PATH=${TELLER_CERT_PATH:-/run/secrets/teller/certificate.pem}
-      - TELLER_KEY_PATH=${TELLER_KEY_PATH:-/run/secrets/teller/private_key.pem}
-      - TELLER_API_BASE=${TELLER_API_BASE:-https://api.teller.io}
-      - TELLER_SIGNING_PUBKEY=${TELLER_SIGNING_PUBKEY:-}
-      # sandbox | development | production. See dev compose for notes.
-      - TELLER_ENVIRONMENT=${TELLER_ENVIRONMENT:-sandbox}
     labels:
       - vonzio.managed=true
       - traefik.enable=true

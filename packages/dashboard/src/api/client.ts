@@ -396,30 +396,8 @@ export function getGmailAuthorizeUrl(returnPath?: string): Promise<{ url: string
   return request(`/integrations/gmail/authorize${params}`);
 }
 
-// --- Teller (bank data) ---
-
-export interface TellerConfigInfo {
-  enabled: boolean;
-  application_id: string | null;
-  environment: "sandbox" | "development" | "production";
-}
-
-export function fetchTellerConfig(): Promise<TellerConfigInfo> {
-  return request("/integrations/teller/config");
-}
-
-/** Body shape matches Teller Connect's onSuccess payload. */
-export function submitTellerEnrollment(payload: {
-  accessToken: string;
-  enrollment: { id: string; institution: { id?: string; name?: string } };
-  user?: { id?: string };
-  signature?: string;
-}): Promise<{ id: string; enrollment_id: string; institution_name: string | null }> {
-  return request("/integrations/teller/callback", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
+// Teller (bank data) moved to the external @vonzio/plugin-teller plugin —
+// its frontend talks to /v1/integrations/teller/* directly.
 
 export function fetchIntegrations(): Promise<Integration[]> {
   return request("/integrations");

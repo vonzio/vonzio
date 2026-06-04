@@ -4,7 +4,7 @@ import { Pill } from "@/brand/components.js";
 import { fetchProfileModels, type ProfileModel } from "@/api/client.js";
 import { MODEL_DISPLAY_FALLBACK } from "@/lib/model-display.js";
 import { getWorkspaceHeaderSlots } from "@/registry/index.js";
-import { useEntitlements } from "@/registry/EntitlementContext.js";
+import { useEntitlements } from "@vonzio/dashboard-registry";
 import type { ChatMessage } from "./ChatCore.js";
 
 interface Props {
