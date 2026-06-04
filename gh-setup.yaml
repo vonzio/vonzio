@@ -27,7 +27,7 @@ defaults:
     status_checks:
       - test
       - typecheck
-      - install.sh shellcheck
+      - install.sh lint + test
       # Matrix job names from ci.yml -- the `image-build-and-scan`
       # matrix expands to one check per image. Renaming a matrix leg
       # requires updating these strings AND running `gh-setup apply`.
