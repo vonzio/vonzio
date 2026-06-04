@@ -12,7 +12,7 @@ import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
 import { AgentPicker } from "../components/AgentPicker.js";
 import { getComposerSlots } from "../registry/index.js";
-import { useEntitlements } from "../registry/EntitlementContext.js";
+import { useEntitlements } from "@vonzio/dashboard-registry";
 import { RightPanel, type TabId } from "../components/RightPanel.js";
 import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet.js";
 import { UserMenu } from "../components/UserMenu.js";
