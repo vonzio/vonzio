@@ -636,6 +636,22 @@ const migrations: Migration[] = [
       });
     },
   },
+  {
+    version: 22,
+    description: "Add plugin_storage table backing ctx.storage (PluginStorageKv): per-plugin namespaced key/value store, filtered server-side by plugin_id",
+    up: async (handle) => {
+      await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS plugin_storage (
+        plugin_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value JSONB NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (plugin_id, key)
+      )`);
+      await handle.db.execute(
+        sql`CREATE INDEX IF NOT EXISTS plugin_storage_plugin_idx ON plugin_storage(plugin_id)`,
+      );
+    },
+  },
 ];
 
 /**

@@ -26,7 +26,7 @@ import {
   registerOnboardingStep,
   registerRoute,
   registerSettingsSection,
-} from "./registry.js";
+} from "@vonzio/dashboard-registry";
 
 // No idempotency guard — Map.set in registry.ts already replaces by id,
 // so calling this twice (e.g. after HMR re-evaluates App.tsx) is harmless
