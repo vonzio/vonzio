@@ -1,4 +1,4 @@
-// Attack corpus (docs/PLUGIN_LOADER_SPEC.md §12). Each test is named after a
+// Attack corpus. Each test is named after a
 // corpus case and asserts its DOCUMENTED OUTCOME: a refusal where the gate
 // refuses, the audit/observability signal where the gate is informational, or
 // the documented limitation where the loader cannot prevent the attack. The

@@ -1,7 +1,7 @@
 // Static plugin manifest (the `vonzio` block in a plugin's package.json) and
 // the operator policy file shapes. The loader reads + validates the manifest
 // from disk BEFORE importing the plugin's entry point, and cross-checks it
-// against the operator policy. See docs/PLUGIN_LOADER_SPEC.md §3, §4.
+// against the operator policy.
 //
 // These are the DECLARED shapes (plugin-author request + operator grant).
 // The runtime `VonzioPlugin` default export (name, init, configSchema,

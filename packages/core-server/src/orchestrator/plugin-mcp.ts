@@ -1,7 +1,7 @@
 // Builds the agent-container injection for plugin-contributed MCP servers
 // (ctx.mcpRegistry). Pure + side-effect-free so the URL composition + token
 // minting are unit-testable without the full task path; the orchestrator wires
-// the returned tokens into its per-task token map. See PLUGIN_LOADER_SPEC §10.
+// the returned tokens into its per-task token map.
 
 import type { McpServerSpec } from "@vonzio/plugin-api";
 

@@ -2,8 +2,6 @@
 // `vonzio` block) and the operator policy file, plus the runtime outbound-host
 // matcher. No I/O — the loader reads files and calls these. Strict: unknown
 // fields are rejected so a typo (`capabilites`) can't leave a plugin ungated.
-// See docs/PLUGIN_LOADER_SPEC.md §3 ("Outbound host matching", "Policy file
-// JSON schema"), §4.
 
 import {
   isPluginCapability,

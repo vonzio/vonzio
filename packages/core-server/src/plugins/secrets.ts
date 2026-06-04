@@ -4,7 +4,7 @@
 // OPAQUE reference the plugin passes to `ctx.http.fetch({ mtls })`. The plugin
 // never reads the cert/key bytes through this surface: the bytes are loaded
 // server-side (by the loader, into the HTTP surface's closure) and the ref
-// carries only the logical name. See docs/PLUGIN_LOADER_SPEC.md §5, §10.
+// carries only the logical name.
 
 import { CapabilityViolationError, type MtlsRef, type PluginSecrets } from "@vonzio/plugin-api";
 

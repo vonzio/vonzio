@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // CI lint: forbid raw `fetch(` in BACKEND plugin code. Plugins must route
 // outbound HTTP through the audited `ctx.http.fetch` (SSRF + outboundHosts
-// allowlist + per-call audit) — see docs/PLUGIN_LOADER_SPEC.md §10.
+// allowlist + per-call audit).
 //
 // Scope: packages/plugins/<name>/src/**/*.ts, EXCLUDING:
 //   - any `dashboard/` directory + `frontend.tsx` (browser code; uses the

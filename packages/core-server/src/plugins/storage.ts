@@ -1,7 +1,7 @@
 // PluginStorageKv (`ctx.storage`) implementation. Backed by the core-owned
 // `plugin_storage` table (migration 22). Every read/write is filtered
 // server-side by `plugin_id`, so one plugin has no API path to another's keys.
-// Gated by the `storage.kv` capability. See docs/PLUGIN_LOADER_SPEC.md §5.
+// Gated by the `storage.kv` capability.
 
 import { sql } from "drizzle-orm";
 import type { DB } from "../db/index.js";

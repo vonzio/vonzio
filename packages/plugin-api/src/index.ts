@@ -15,7 +15,7 @@ import type { FastifyInstance } from "fastify";
  * against in their package.json `vonzio.apiVersion`; the loader rejects
  * plugins whose major differs or whose minor is ahead of core's (see
  * `assertApiCompatible`). Bumped to 1.0.0 with the external-loader contract
- * (docs/PLUGIN_LOADER_SPEC.md) — the loader surface is now a stability
+ * — the loader surface is now a stability
  * commitment. 1.1.0 added `scope`/`profile_ids` to PluginIntegration
  * (additive; plugins targeting 1.0 are unaffected).
  */
@@ -154,7 +154,6 @@ export interface PluginContext<TConfig = unknown> {
    * did not declare + get granted throws `CapabilityViolationError` and is
    * audited. The membrane is hygiene against honest mistakes via THIS
    * reference; it is not a sandbox against `require('@vonzio/core-server')`.
-   * See docs/PLUGIN_LOADER_SPEC.md §2, §7.
    */
   core: PluginCore;
 

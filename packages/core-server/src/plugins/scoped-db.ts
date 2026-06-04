@@ -2,7 +2,7 @@
 // table-taking builder methods and refuses any reference outside the plugin's
 // schema prefix; refuses raw SQL entirely.
 //
-// FRAMING (docs/PLUGIN_LOADER_SPEC.md §9): hygiene against honest mistakes via
+// FRAMING: hygiene against honest mistakes via
 // the supplied `ctx.core.db` reference, NOT a containment boundary. A plugin
 // can `require('@vonzio/core-server/db')` or open its own pool from
 // DATABASE_URL. The wrapper catches the typo case (builder pointed at the

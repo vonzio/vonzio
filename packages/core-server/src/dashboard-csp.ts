@@ -1,7 +1,7 @@
 // Dashboard Content-Security-Policy + per-request nonce injection.
 //
 // The dashboard ships with a strict CSP so that BUNDLING is the only path code
-// reaches the dashboard origin (docs/PLUGIN_LOADER_SPEC.md §16): `script-src`
+// reaches the dashboard origin: `script-src`
 // has no `'self'`, only a per-request nonce + `'strict-dynamic'`. The bundled
 // entry script carries the nonce; it loads its chunks via import() (trust
 // propagates under strict-dynamic). Any OTHER script — one served from a
