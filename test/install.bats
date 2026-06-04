@@ -113,3 +113,71 @@ setup() {
   run node_major
   [ "$output" = "18" ]
 }
+
+# ─── --reset-env arg ───────────────────────────────────────────────────
+@test "parse_args: --reset-env sets RESET_ENV" {
+  RESET_ENV=false
+  parse_args --reset-env
+  [ "$RESET_ENV" = true ]
+}
+
+# ─── disk_free_gb ──────────────────────────────────────────────────────
+@test "disk_free_gb: converts df's 1K-blocks to whole GB" {
+  # df -Pk 'Available' column (4th) in 1024-byte blocks; 20 GiB = 20971520.
+  df() { printf "Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/x 100 100 20971520 1%% /\n"; }
+  export -f df
+  run disk_free_gb /whatever
+  [ "$output" = "20" ]
+}
+
+# ─── port_in_use ───────────────────────────────────────────────────────
+@test "port_in_use: reports a busy port via lsof" {
+  require_cmd() { [[ "$1" == "lsof" ]]; }
+  lsof() { return 0; }   # something is listening
+  run port_in_use 5173
+  [ "$status" -eq 0 ]
+}
+
+@test "port_in_use: reports a free port via lsof" {
+  require_cmd() { [[ "$1" == "lsof" ]]; }
+  lsof() { return 1; }   # nothing listening
+  run port_in_use 5173
+  [ "$status" -eq 1 ]
+}
+
+@test "port_in_use: assumes free when no probe tool exists" {
+  require_cmd() { return 1; }   # no lsof, no ss
+  run port_in_use 5173
+  [ "$status" -eq 1 ]
+}
+
+# ─── preflight_deps: the summary + MISSING_DEPS scan ───────────────────
+@test "preflight_deps: all present -> empty MISSING_DEPS, no consent needed" {
+  require_cmd() { return 0; }
+  git()    { echo "git version 2.40.0"; }
+  openssl(){ return 0; }
+  docker() { case "$1" in --version) echo "Docker version 27.0.0, build x";; *) return 0;; esac; }
+  node()   { case "$1" in -e) printf 22;; --version) echo "v22.1.0";; esac; }
+  preflight_deps
+  [ "${#MISSING_DEPS[@]}" -eq 0 ]
+}
+
+@test "preflight_deps: an outdated node lands in MISSING_DEPS and arms the one-shot consent" {
+  ASSUME_YES=true            # stand in for the user saying 'yes' once
+  DEPS_AUTOCONFIRM=false
+  require_cmd() { return 0; }
+  git()    { echo "git version 2.40.0"; }
+  openssl(){ return 0; }
+  docker() { case "$1" in --version) echo "Docker version 27.0.0, build x";; *) return 0;; esac; }
+  node()   { case "$1" in -e) printf 18;; --version) echo "v18.0.0";; esac; }
+  preflight_deps
+  [[ " ${MISSING_DEPS[*]} " == *" node "* ]]
+  [ "$DEPS_AUTOCONFIRM" = true ]
+}
+
+# ─── on_error: friendly failure message ────────────────────────────────
+@test "on_error: prints a re-runnable failure hint" {
+  run on_error 42
+  [[ "$output" == *"Install failed"* ]]
+  [[ "$output" == *"re-running is safe"* ]]
+}
