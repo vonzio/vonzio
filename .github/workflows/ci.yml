@@ -169,6 +169,17 @@ jobs:
         #    bump the package that ships it
         # ignore-unfixed avoids failing on CVEs with no patch available
         # -- we can't act on those at PR time.
+        #
+        # Chromium is REPORT-ONLY (docker/trivy-chromium-ignore.rego): it ships a
+        # continuous stream of browser HIGH/CRITICALs and there's always a window
+        # between disclosure and the bookworm-security fix landing; those aren't
+        # actionable at PR time and the agent runs sandboxed/unprivileged. The
+        # policy drops chromium* from the exit-code gate; TRIVY_SHOW_SUPPRESSED
+        # keeps them printed (reported) so regressions stay visible. Every other
+        # OS/library HIGH/CRITICAL still fails the build.
+        env:
+          TRIVY_IGNORE_POLICY: docker/trivy-chromium-ignore.rego
+          TRIVY_SHOW_SUPPRESSED: "true"
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ${{ matrix.image.tag }}
