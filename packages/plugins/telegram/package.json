@@ -74,6 +74,7 @@
   },
   "dependencies": {
     "@vonzio/dashboard": "*",
+    "@vonzio/dashboard-registry": "*",
     "@vonzio/plugin-api": "*",
     "drizzle-orm": "^0.45.1",
     "qrcode.react": "^4.2.0",
