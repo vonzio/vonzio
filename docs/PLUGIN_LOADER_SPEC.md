@@ -247,6 +247,7 @@ to keep in sync.
 | `capabilities` | yes | Array of `PluginCapability` strings (see §5). |
 | `outboundHosts` | only when `http.outbound` is declared | Array of hostname patterns. Hostname only — schemes (`https://`), ports, paths, and userinfo are rejected by JSON-schema validation. Glob `*` allowed for one subdomain level (`*.slack.com` matches `files.slack.com`, not `a.b.slack.com`). Multi-level wildcards (`**.x.com`) are rejected. See "Outbound host matching" below for the runtime comparison rules. |
 | `schemaPrefix` | only when `db.scoped` or `db.access` is declared | The DB schema prefix the plugin owns (e.g. `slack`). Loader refuses migrations / queries that touch tables outside this prefix. |
+| `mtlsSecrets` | only when `secrets.mtls` is declared | Array of logical mTLS client-cert names (e.g. `["teller-client"]`; each matches `^[a-z][a-z0-9-]{0,62}$`). The operator maps each to host PEM paths via policy `mtls_secrets`. See §5. |
 | `routePrefix` | no | `{kind: "auto"}` (default; mount under `/plugins/<name>`) or `{kind: "absolute", prefix: "/x"}` (logs a warning at load; reserved for legacy URLs the plugin author cannot change). |
 
 Unknown fields in the `vonzio` block are **rejected**. Loader uses
@@ -285,10 +286,11 @@ Required keys per entry: `version`, `approved_hash_sha256`,
 `approved_capabilities` (array of `PluginCapability` strings),
 `approved_outbound_hosts` (array; may be empty when the plugin
 does not declare `http.outbound`). Optional: `approved_frontend`
-(boolean; default false when absent), `approved_at` (ISO 8601),
-`approved_by` (string), `approval_reason` (string, from
-`--reason`). Top-level: `policy_version` is required and pinned
-to `"1"` for v1.
+(boolean; default false when absent), `mtls_secrets` (object mapping
+each `manifest.mtlsSecrets` name to `{ cert, key, ca?, passphraseEnv? }`
+host file paths — see §5), `approved_at` (ISO 8601), `approved_by`
+(string), `approval_reason` (string, from `--reason`). Top-level:
+`policy_version` is required and pinned to `"1"` for v1.
 
 ### Validation order
 
@@ -617,10 +619,64 @@ export type PluginCapability =
 
   // ── Outbound HTTP ──────────────────────────────────────────
   /** Use ctx.http.fetch. Required + manifest.outboundHosts populated. */
-  | "http.outbound";
+  | "http.outbound"
+
+  // ── Secrets (operator-provisioned material) ────────────────
+  /** Resolve an operator-provisioned mTLS client cert/key (declared in
+   *  manifest.mtlsSecrets, mapped to host files in policy) into an opaque
+   *  ref for ctx.http.fetch({ mtls }). The plugin never reads the bytes. */
+  | "secrets.mtls";
 ```
 
-Total: **28 capabilities**.
+Total: **31 capabilities** (the runtime tuple in `capabilities.ts` is
+authoritative; `capabilities.test.ts` asserts the count).
+
+### mTLS client certs (`secrets.mtls` + `ctx.secrets`)
+
+Some upstreams (e.g. the Teller banking API) require **mutual TLS** — the
+client presents a certificate during the handshake. A plugin gets this without
+ever touching the private key:
+
+1. **Manifest** declares logical names: `mtlsSecrets: ["teller-client"]`
+   (required + non-empty iff `secrets.mtls` is declared; names match
+   `^[a-z][a-z0-9-]{0,62}$`).
+2. **Operator policy** maps each name to host PEM file paths:
+   ```jsonc
+   "mtls_secrets": {
+     "teller-client": {
+       "cert": "/run/secrets/teller/cert.pem",
+       "key":  "/run/secrets/teller/key.pem",
+       "ca":   "/run/secrets/teller/ca.pem",   // optional: trust a private server cert
+       "passphraseEnv": "TELLER_KEY_PASS"       // optional: env var NAME, never the value
+     }
+   }
+   ```
+   Every declared name must be provisioned here or the loader refuses the
+   plugin (`policy_mtls_secret_drift`). The cert/key/ca files are read **once at
+   load**; an unreadable file (or an unset passphrase env) refuses the plugin
+   (`mtls_secret_unreadable`) — fail-closed.
+3. **Runtime**: the plugin calls `ctx.secrets.mtls("teller-client")` to get an
+   opaque `MtlsRef` (it carries only the name), then passes it to
+   `ctx.http.fetch(url, { mtls: ref })`. Core resolves the ref to the pre-loaded
+   PEM bytes **server-side** and presents the cert on the undici connection —
+   composing with the existing SSRF IP-pin, so a host stays both pinned and
+   mutually authenticated. The bytes never enter plugin-readable memory, so the
+   plugin can't exfiltrate the key even through an allowed outbound host. This
+   is why `secrets.mtls` is external-allowed and not a root-equivalent combo.
+   Two hardening properties: the ref must have been minted by `ctx.secrets.mtls`
+   (a hand-built ref object is refused, so every use goes through the audited
+   call); and the cert is **bound to the original target host** — a redirect to a
+   different host, even another allowlisted one, does NOT receive the client
+   cert, so the credential can't spill across hosts.
+
+```typescript
+interface MtlsRef { readonly __vonzioMtls: true; readonly name: string }
+interface PluginSecrets { mtls(name: string): MtlsRef }   // ctx.secrets
+// ctx.http.fetch(url, { mtls: ctx.secrets.mtls("teller-client") })
+```
+
+Resolution + each mTLS outbound call are audited (`plugin mtls secret
+resolved`, and `mtls_secret` on the `plugin outbound call` event).
 
 ### Three-tier storage story
 

@@ -12,7 +12,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { validatePolicy } from "./manifest-validate.js";
-import type { OperatorPolicy, PluginManifest, PluginSource, PolicyEntry } from "./manifest.js";
+import type { MtlsSecretFiles, OperatorPolicy, PluginManifest, PluginSource, PolicyEntry } from "./manifest.js";
 import type { PluginCapability } from "./capabilities.js";
 import type { RefusalReason } from "./errors.js";
 
@@ -168,6 +168,9 @@ export type CrossCheckResult =
       ok: true;
       grantedCapabilities: PluginCapability[];
       grantedOutboundHosts: string[];
+      /** name -> host file paths, for each mtls secret the manifest declared
+       *  and the policy provisioned. Empty when the plugin declares no mtls. */
+      grantedMtlsSecrets: Record<string, MtlsSecretFiles>;
       frontendApproved: boolean;
     }
   | { ok: false; reason: RefusalReason; message: string; remediation?: string; detail?: Record<string, unknown> };
@@ -270,10 +273,29 @@ export function crossCheckPolicy(args: CrossCheckArgs): CrossCheckResult {
     };
   }
 
+  // Every mtls secret the manifest declares must be provisioned in policy with
+  // host file paths. A declared-but-unprovisioned name is drift (the operator
+  // hasn't mapped it to a cert/key yet).
+  const declaredMtls = manifest.mtlsSecrets ?? [];
+  const policyMtls = entry.mtls_secrets ?? {};
+  const mtlsDrift = declaredMtls.filter((name) => !(name in policyMtls));
+  if (mtlsDrift.length) {
+    return {
+      ok: false,
+      reason: "policy_mtls_secret_drift",
+      message: `"${packageName}" declares mTLS secrets not provisioned in policy: ${mtlsDrift.join(", ")}`,
+      remediation: `add an mtls_secrets entry (cert/key paths) for each name, then re-approve ${packageName}`,
+      detail: { declared: declaredMtls, provisioned: Object.keys(policyMtls), drift: mtlsDrift },
+    };
+  }
+  const grantedMtlsSecrets: Record<string, MtlsSecretFiles> = {};
+  for (const name of declaredMtls) grantedMtlsSecrets[name] = policyMtls[name];
+
   return {
     ok: true,
     grantedCapabilities: [...manifest.capabilities],
     grantedOutboundHosts: [...(manifest.outboundHosts ?? [])],
+    grantedMtlsSecrets,
     frontendApproved: entry.approved_frontend === true,
   };
 }

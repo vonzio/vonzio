@@ -11,9 +11,11 @@ import {
 } from "./capabilities.js";
 import {
   MANIFEST_ALLOWED_KEYS,
+  MTLS_SECRET_NAME_PATTERN,
   POLICY_ENTRY_ALLOWED_KEYS,
   SCHEMA_PREFIX_PATTERN,
   type ManifestRoutePrefix,
+  type MtlsSecretFiles,
   type OperatorPolicy,
   type PluginManifest,
   type PolicyEntry,
@@ -207,6 +209,28 @@ export function validateManifest(raw: unknown): ManifestValidationResult {
     return fail("manifest declares db.scoped/db.access but schemaPrefix is missing", "schema_prefix_invalid");
   }
 
+  // mtlsSecrets: required + non-empty iff secrets.mtls; names pattern-checked.
+  const declaresMtls = capabilities.includes("secrets.mtls");
+  let mtlsSecrets: string[] | undefined;
+  if (raw.mtlsSecrets !== undefined) {
+    if (!Array.isArray(raw.mtlsSecrets)) return fail("manifest.mtlsSecrets must be an array");
+    const names: string[] = [];
+    for (const n of raw.mtlsSecrets) {
+      if (typeof n !== "string" || !MTLS_SECRET_NAME_PATTERN.test(n)) {
+        return fail(`manifest.mtlsSecrets entry ${JSON.stringify(n)} must match ${MTLS_SECRET_NAME_PATTERN}`);
+      }
+      names.push(n);
+    }
+    if (new Set(names).size !== names.length) return fail("manifest.mtlsSecrets has duplicate names");
+    mtlsSecrets = names;
+  }
+  if (declaresMtls && (!mtlsSecrets || mtlsSecrets.length === 0)) {
+    return fail("manifest declares secrets.mtls but mtlsSecrets is missing or empty");
+  }
+  if (!declaresMtls && mtlsSecrets && mtlsSecrets.length > 0) {
+    return fail("manifest.mtlsSecrets is set but secrets.mtls capability is not declared");
+  }
+
   // routePrefix (optional; default auto).
   let routePrefix: ManifestRoutePrefix | undefined;
   if (raw.routePrefix !== undefined) {
@@ -224,6 +248,7 @@ export function validateManifest(raw: unknown): ManifestValidationResult {
       capabilities,
       ...(outboundHosts !== undefined ? { outboundHosts } : {}),
       ...(schemaPrefix !== undefined ? { schemaPrefix } : {}),
+      ...(mtlsSecrets !== undefined ? { mtlsSecrets } : {}),
       ...(routePrefix !== undefined ? { routePrefix } : {}),
     },
   };
@@ -291,12 +316,44 @@ function validatePolicyEntry(name: string, raw: unknown, sourceLabel: string): P
     if (raw[optStr] !== undefined && typeof raw[optStr] !== "string") bad(`${optStr} must be a string when present`);
   }
 
+  // mtls_secrets: optional map of logical name -> { cert, key, passphraseEnv? }
+  // host file paths. Validated strictly so a malformed mapping fails the whole
+  // policy file rather than silently dropping a cert at runtime.
+  let mtlsSecrets: Record<string, MtlsSecretFiles> | undefined;
+  if (raw.mtls_secrets !== undefined) {
+    if (!isPlainObject(raw.mtls_secrets)) bad("mtls_secrets must be an object keyed by logical name");
+    const out: Record<string, MtlsSecretFiles> = {};
+    for (const [secretName, filesRaw] of Object.entries(raw.mtls_secrets as Record<string, unknown>)) {
+      if (!MTLS_SECRET_NAME_PATTERN.test(secretName)) bad(`mtls_secrets name "${secretName}" must match ${MTLS_SECRET_NAME_PATTERN}`);
+      if (!isPlainObject(filesRaw)) bad(`mtls_secrets["${secretName}"] must be an object`);
+      const files = filesRaw as Record<string, unknown>;
+      const fileUnknown = Object.keys(files).filter((k) => k !== "cert" && k !== "key" && k !== "ca" && k !== "passphraseEnv");
+      if (fileUnknown.length) bad(`mtls_secrets["${secretName}"] has unknown fields: ${fileUnknown.join(", ")}`);
+      if (typeof files.cert !== "string" || !files.cert) bad(`mtls_secrets["${secretName}"].cert must be a non-empty path string`);
+      if (typeof files.key !== "string" || !files.key) bad(`mtls_secrets["${secretName}"].key must be a non-empty path string`);
+      if (files.ca !== undefined && (typeof files.ca !== "string" || !files.ca)) {
+        bad(`mtls_secrets["${secretName}"].ca must be a non-empty path string when present`);
+      }
+      if (files.passphraseEnv !== undefined && (typeof files.passphraseEnv !== "string" || !files.passphraseEnv)) {
+        bad(`mtls_secrets["${secretName}"].passphraseEnv must be a non-empty string when present`);
+      }
+      out[secretName] = {
+        cert: files.cert as string,
+        key: files.key as string,
+        ...(files.ca !== undefined ? { ca: files.ca as string } : {}),
+        ...(files.passphraseEnv !== undefined ? { passphraseEnv: files.passphraseEnv as string } : {}),
+      };
+    }
+    mtlsSecrets = out;
+  }
+
   return {
     version: raw.version as string,
     approved_hash_sha256: raw.approved_hash_sha256 as string,
     approved_capabilities: caps,
     approved_outbound_hosts: hosts,
     ...(raw.approved_frontend !== undefined ? { approved_frontend: raw.approved_frontend as boolean } : {}),
+    ...(mtlsSecrets !== undefined ? { mtls_secrets: mtlsSecrets } : {}),
     ...(raw.approved_at !== undefined ? { approved_at: raw.approved_at as string } : {}),
     ...(raw.approved_by !== undefined ? { approved_by: raw.approved_by as string } : {}),
     ...(raw.approval_reason !== undefined ? { approval_reason: raw.approval_reason as string } : {}),
