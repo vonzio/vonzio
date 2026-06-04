@@ -2,7 +2,6 @@ import { useState, useEffect, type ReactNode } from "react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
   fetchGmailConfig, getGmailAuthorizeUrl,
-  fetchTellerConfig, submitTellerEnrollment, type TellerConfigInfo,
   fetchIntegrations, deleteIntegration, createIntegration, updateIntegration, testIntegration,
   type Integration,
   type SecretScope,
@@ -14,8 +13,6 @@ import {
   Card, Button, Field, Input, Select,
   Pill, Modal,
 } from "../../../brand/components.js";
-import { formatDate } from "../../../lib/utils.js";
-import { openTellerConnect } from "../../../lib/teller-connect.js";
 import { ErrorBanner, ScopePicker } from "./_shared.js";
 import { getIntegrationRows, useEntitlements } from "../../../registry/index.js";
 
@@ -26,11 +23,9 @@ import { getIntegrationRows, useEntitlements } from "../../../registry/index.js"
 export function IntegrationSection() {
   const { data: integrations, loading, refetch } = useApi<Integration[]>(() => fetchIntegrations());
   const { data: gmailConfig } = useApi<{ enabled: boolean }>(() => fetchGmailConfig());
-  const { data: tellerConfig } = useApi<TellerConfigInfo>(() => fetchTellerConfig());
   const { data: agentProfiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
   const [oauthStatus, setOauthStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [connectingGmail, setConnectingGmail] = useState(false);
-  const [connectingTeller, setConnectingTeller] = useState(false);
   // Scope editor: one modal serves every integration row (Bank, Gmail,
   // Slack, Telegram, Email, Webhook). Pre-populated when openScopeEditor
   // is called with the row.
@@ -73,43 +68,6 @@ export function IntegrationSection() {
     setConnectingGmail(true); setError("");
     try { const { url } = await getGmailAuthorizeUrl("/settings"); window.location.href = url; }
     catch (e) { setError(e instanceof Error ? e.message : "Failed to start Gmail OAuth"); setConnectingGmail(false); }
-  };
-  const handleConnectTeller = async () => {
-    if (!tellerConfig?.enabled || !tellerConfig.application_id) {
-      setError("Teller is not configured on this server.");
-      return;
-    }
-    setConnectingTeller(true); setError("");
-    try {
-      await openTellerConnect({
-        applicationId: tellerConfig.application_id,
-        // Server-controlled. Default is "sandbox" (fake banks) so a fresh
-        // deploy can't accidentally pull real data. Set TELLER_ENVIRONMENT
-        // to "development" in the server env to link real personal banks
-        // on Teller's free Developer tier.
-        environment: tellerConfig.environment,
-        selectAccount: "multiple",
-        onSuccess: async (enrollment) => {
-          try {
-            await submitTellerEnrollment(enrollment);
-            setOauthStatus({ type: "success", message: `${enrollment.enrollment.institution.name ?? "Bank"} connected` });
-            refetch();
-          } catch (e) {
-            setError(e instanceof Error ? e.message : "Failed to save enrollment");
-          } finally {
-            setConnectingTeller(false);
-          }
-        },
-        onExit: () => setConnectingTeller(false),
-        onFailure: (f) => {
-          setError(f.message ?? "Teller Connect failed");
-          setConnectingTeller(false);
-        },
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to open Teller Connect");
-      setConnectingTeller(false);
-    }
   };
   const handleDisconnect = async (id: string) => {
     try { await deleteIntegration(id); refetch(); }
@@ -186,7 +144,6 @@ export function IntegrationSection() {
   const gmail = integrations?.find((i) => i.type === "gmail");
   const email = integrations?.find((i) => i.type === "email");
   const webhook = integrations?.find((i) => i.type === "webhook");
-  const tellerEnrollments = integrations?.filter((i) => i.type === "teller") ?? [];
 
   // Plugin-contributed integration rows. Each plugin's frontend.tsx
   // calls registerIntegrationRow with a section ("notifications" |
@@ -351,65 +308,13 @@ export function IntegrationSection() {
                 <span style={{ fontSize: 12, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>not configured by admin</span>
               )
             }
+            // Stay non-last so the bottom seam survives when a plugin adds a
+            // data-sources row below (e.g. @vonzio/plugin-teller); if none
+            // register, the row's bottom border is hidden by Card's own border.
+            isLast={getIntegrationRows("data-sources").length === 0}
           />
-          {tellerEnrollments.length === 0 ? (
-            <IntegrationRow
-              badgeBg="#10131B" badgeChar="$" name="Bank (Teller)"
-              value={tellerConfig?.enabled ? "Not connected" : "Not configured by admin"}
-              connected={false}
-              available={!!tellerConfig?.enabled}
-              actions={
-                tellerConfig?.enabled ? (
-                  <Button size="sm" onClick={handleConnectTeller} disabled={connectingTeller}>
-                    {connectingTeller ? "Opening…" : "Connect bank"}
-                  </Button>
-                ) : (
-                  <span style={{ fontSize: 12, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>not configured by admin</span>
-                )
-              }
-              isLast={getIntegrationRows("data-sources").length === 0}
-            />
-          ) : (
-            <>
-              {tellerEnrollments.map((row) => {
-                const cfg = row.config as Record<string, unknown>;
-                const institutionName = (cfg.institution_name as string | undefined) ?? "Bank";
-                const enrolledAt = cfg.enrolled_at as string | undefined;
-                const valueText = enrolledAt
-                  ? `${institutionName} · linked ${formatDate(enrolledAt)}`
-                  : institutionName;
-                return (
-                  <IntegrationRow
-                    key={row.id}
-                    badgeBg="#10131B" badgeChar="$" name="Bank (Teller)"
-                    value={valueText}
-                    connected
-                    available
-                    actions={
-                      <>
-                        <Button variant="ghost" size="sm" onClick={() => openScopeEditor(row)}>Scope: {scopeSummary(row)}</Button>
-                        <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnect(row.id)}>
-                          Disconnect
-                        </Button>
-                      </>
-                    }
-                  />
-                );
-              })}
-              <IntegrationRow
-                badgeBg="#10131B" badgeChar="+" name="Add bank"
-                value="Link another institution via Teller Connect"
-                connected={false}
-                available
-                actions={
-                  <Button size="sm" variant="ghost" onClick={handleConnectTeller} disabled={connectingTeller}>
-                    {connectingTeller ? "Opening…" : "Add bank"}
-                  </Button>
-                }
-                isLast={getIntegrationRows("data-sources").length === 0}
-              />
-            </>
-          )}
+          {/* Bank (Teller) is contributed by @vonzio/plugin-teller via
+              registerIntegrationRow(section: "data-sources"). */}
           {renderRows("data-sources")}
         </Card>
         </>
