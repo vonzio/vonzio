@@ -6,7 +6,7 @@
 // dashboard's Integration.tsx -- the plugin model now extends to UI
 // placement too.
 
-import { registerIntegrationRow } from "@vonzio/dashboard/registry/api";
+import { registerIntegrationRow } from "@vonzio/dashboard-registry/api";
 import type { PluginFrontendEntry } from "@vonzio/plugin-api/frontend";
 import { SlackIntegrationRow } from "./dashboard/SlackIntegrationRow.js";
 

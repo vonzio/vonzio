@@ -55,7 +55,7 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
       "telegram plugin init",
     );
 
-    const telegramService = new TelegramService();
+    const telegramService = new TelegramService(ctx.http);
     // PlatformBotService is now plugin-local; construct + kick off
     // init() (fire-and-forget -- failure logs and disables the
     // feature without blocking boot).
@@ -131,6 +131,7 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
       platformBotService,
       modelListService: ctx.core.modelList,
       sessionEvents: ctx.sessionEvents,
+      http: ctx.http,
     });
 
     // Real notification handler -- resolves req.recipient (integration

@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useApi } from "@vonzio/dashboard/hooks/useApi";
 import { Button } from "@vonzio/dashboard/brand/components";
-import type { IntegrationRowSlotProps } from "@vonzio/dashboard/registry";
+import type { IntegrationRowSlotProps } from "@vonzio/dashboard-registry";
 import { fetchSlackConfig, getSlackAuthorizeUrl } from "./api.js";
 
 export function SlackIntegrationRow({

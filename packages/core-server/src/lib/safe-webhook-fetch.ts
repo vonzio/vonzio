@@ -32,6 +32,10 @@
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+// Use undici's OWN fetch (not Node's global fetch) so the custom Agent
+// dispatcher below is the same undici version — passing an undici@8 Agent to
+// Node's bundled-undici global fetch fails with "invalid onRequestStart method".
+import { fetch as undiciFetch, Agent } from "undici";
 
 export class SsrfBlockedError extends Error {
   constructor(message: string, public readonly url: string) {
@@ -57,11 +61,75 @@ export interface SafeWebhookFetchOptions {
   /** Comma-separated host suffixes that bypass the IP block (read from
    *  WEBHOOK_URL_ALLOWLIST env when not supplied). Empty = no exceptions. */
   allowlist?: string[];
+  /**
+   * Called with the resolved target URL of every REDIRECT hop, before it is
+   * followed. Throw to abort (e.g. the plugin HTTP surface re-checks its
+   * outboundHosts allowlist here so a 302 to an un-allowlisted host cannot
+   * bypass the per-plugin allowlist). The initial URL is the caller's
+   * responsibility; this fires only for redirect targets.
+   */
+  onRedirectHop?: (url: string) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BYTES = 1024 * 1024; // 1 MiB
 const DEFAULT_MAX_REDIRECTS = 3;
+
+/**
+ * An undici dispatcher that pins every connection to a PRE-VALIDATED IP via a
+ * custom `lookup`, while leaving the request URL's hostname intact. This closes
+ * the DNS-rebinding window (the connection only ever goes to the IP we
+ * validated) WITHOUT breaking HTTPS: TLS SNI, certificate validation, and the
+ * Host header all still use the real hostname. (The previous approach
+ * substituted the IP literal into the URL, which made TLS validate the cert
+ * against the IP and fail with "does not match certificate's altnames".)
+ */
+/** Client-cert material for a mutual-TLS connection (PEM bytes, already read
+ *  from the operator-provisioned files by the caller). */
+export interface MtlsMaterial {
+  cert: string | Buffer;
+  key: string | Buffer;
+  /** PEM CA bundle to trust the server cert (private mTLS endpoints). */
+  ca?: string | Buffer;
+  passphrase?: string;
+}
+
+/**
+ * Build an undici dispatcher with two independent, composable `connect`
+ * options:
+ *  - `pin`: a custom `lookup` that forces the connection to a pre-validated IP
+ *    (DNS-rebind defense) while leaving the request URL hostname intact, so TLS
+ *    SNI + cert validation + the Host header still use the real hostname.
+ *  - `mtls`: a client certificate + key presented during the TLS handshake.
+ * Both live on the same `connect` object and coexist without interference.
+ */
+function makeConnectDispatcher(opts: {
+  pin?: { ip: string; family: 4 | 6 };
+  mtls?: MtlsMaterial;
+}): Agent {
+  const connect: Record<string, unknown> = {};
+  if (opts.pin) {
+    const { ip, family } = opts.pin;
+    // net/tls `lookup` shape: (hostname, options, callback). With options.all the
+    // callback wants an array; otherwise (address, family). Typed loosely at this
+    // node/undici interop boundary.
+    connect.lookup = ((
+      _hostname: string,
+      options: { all?: boolean },
+      cb: (...args: unknown[]) => void,
+    ): void => {
+      if (options && options.all) cb(null, [{ address: ip, family }]);
+      else cb(null, ip, family);
+    }) as never;
+  }
+  if (opts.mtls) {
+    connect.cert = opts.mtls.cert;
+    connect.key = opts.mtls.key;
+    if (opts.mtls.ca) connect.ca = opts.mtls.ca;
+    if (opts.mtls.passphrase) connect.passphrase = opts.mtls.passphrase;
+  }
+  return new Agent({ connect });
+}
 
 /**
  * RFC-aligned check for whether an IP is in a range that shouldn't
@@ -256,19 +324,56 @@ async function validateUrl(
   };
 }
 
+/** Body shapes accepted by the safe fetch helpers. `string` is the original
+ *  contract; `Uint8Array` / `FormData` are additive (binary uploads, multipart
+ *  — used by the plugin HTTP surface, e.g. Telegram sendDocument). */
+export type SafeFetchBody = string | Uint8Array | FormData;
+
+export interface SafeFetchInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: SafeFetchBody;
+  /** Present a client certificate for mutual TLS. The cert/key bytes are read
+   *  server-side (never by plugin code). Composes with the IP pin. */
+  mtls?: MtlsMaterial;
+}
+
+/** Raw result of {@link safeFetchCore}: bytes + headers preserved so callers
+ *  can build a WHATWG Response (text OR binary) without re-decoding. */
+export interface SafeFetchResult {
+  status: number;
+  statusText: string;
+  /** ArrayBuffer-backed (not SharedArrayBuffer) so it is a valid BodyInit. */
+  bytes: Uint8Array<ArrayBuffer>;
+  headers: Headers;
+}
+
 /**
- * Safe fetch for user-supplied webhook URLs. See file header for the
- * full enforcement list.
+ * Safe fetch for user-supplied webhook URLs. Returns the body as a UTF-8
+ * string (the original contract — existing callers unchanged). Internally
+ * delegates to {@link safeFetchCore}.
  */
 export async function safeWebhookFetch(
   initialUrl: string,
-  init: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-  },
+  init: SafeFetchInit,
   options: SafeWebhookFetchOptions = {},
 ): Promise<{ status: number; statusText: string; body: string }> {
+  const { status, statusText, bytes } = await safeFetchCore(initialUrl, init, options);
+  return { status, statusText, body: new TextDecoder("utf-8").decode(bytes) };
+}
+
+/**
+ * SSRF-resistant fetch returning the raw response bytes + headers. Same
+ * enforcement as {@link safeWebhookFetch} (scheme, IP block, DNS-rebind pin,
+ * manual redirects, timeout, size cap). The plugin HTTP surface (§10) wraps
+ * the result in a real Response so plugins keep `.json()` / `.ok` /
+ * `.arrayBuffer()`.
+ */
+export async function safeFetchCore(
+  initialUrl: string,
+  init: SafeFetchInit,
+  options: SafeWebhookFetchOptions = {},
+): Promise<SafeFetchResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxResponseBytes ?? DEFAULT_MAX_BYTES;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
@@ -283,50 +388,67 @@ export async function safeWebhookFetch(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let currentUrl = initialUrl;
+  let currentMethod = init.method ?? "POST";
+  let currentBody: SafeFetchBody | undefined = init.body;
   let redirectCount = 0;
+  // Host the mTLS client cert is bound to (the ORIGINAL target). The cert is
+  // presented only to this host; a redirect to a different host — even another
+  // allowlisted one — does NOT get the client cert, so the credential can't
+  // spill across hosts. Captured on the first validated hop.
+  let mtlsHost: string | undefined;
   let lastResponse: Response | null = null;
+  // The dispatcher pinning the CURRENT hop's connection to its validated IP.
+  // Kept open until its response body is read; closed in the outer finally.
+  let currentDispatcher: Agent | undefined;
 
   try {
     while (true) {
       const validated = await validateUrl(currentUrl, allowlist);
 
-      // Note: undici fetch doesn't expose a `lookup` hook. To pin to
-      // the resolved IP, we substitute the hostname in the URL with
-      // the IP literal and set the Host header back to the original
-      // hostname. This closes the DNS-rebinding window between
-      // validate() and connect().
-      let requestUrl: string;
-      if (validated.allowlisted) {
-        requestUrl = validated.url.toString();
-      } else {
-        validated.url.hostname = validated.family === 6
-          ? `[${validated.resolvedIp}]`
-          : validated.resolvedIp;
-        requestUrl = validated.url.toString();
-      }
-
+      // Keep the ORIGINAL hostname in the request URL so TLS SNI + cert
+      // validation + the Host header all use the real host; pin the connection
+      // to the pre-validated IP via the dispatcher's custom lookup (closes the
+      // DNS-rebinding window without breaking HTTPS).
+      const requestUrl = validated.url.toString();
       const headers: Record<string, string> = { ...(init.headers ?? {}) };
-      // Set Host explicitly so TLS SNI + virtual hosts still work
-      // when we connected via the pinned IP.
-      headers["Host"] = `${validated.bareHost}${
-        validated.url.port ? ":" + validated.url.port : ""
-      }`;
 
-      // Release the previous 3xx response body before issuing the
-      // next hop, otherwise undici holds the socket open until GC.
+      // Release the previous 3xx response body + its dispatcher before issuing
+      // the next hop, otherwise undici holds the socket open until GC.
       if (lastResponse) {
         await lastResponse.body?.cancel().catch(() => {});
         lastResponse = null;
       }
+      if (currentDispatcher) {
+        await currentDispatcher.close().catch(() => {});
+        currentDispatcher = undefined;
+      }
+      // Bind the client cert to the original target host: present it only when
+      // this hop's host matches the first hop's. A cross-host redirect drops the
+      // cert (and likely fails at the new host, which is the safe outcome).
+      if (mtlsHost === undefined) mtlsHost = validated.bareHost;
+      const hopMtls = init.mtls && validated.bareHost === mtlsHost ? init.mtls : undefined;
+
+      // Allowlisted hosts skip IP pinning (the explicit "internal callback"
+      // path). A dispatcher is still needed when this call carries an mTLS
+      // client cert, so build one whenever pinning OR mTLS applies.
+      const needPin = !validated.allowlisted;
+      if (needPin || hopMtls) {
+        currentDispatcher = makeConnectDispatcher({
+          pin: needPin ? { ip: validated.resolvedIp, family: validated.family } : undefined,
+          mtls: hopMtls,
+        });
+      }
 
       try {
-        lastResponse = await fetch(requestUrl, {
-          method: init.method ?? "POST",
+        lastResponse = (await undiciFetch(requestUrl, {
+          method: currentMethod,
           headers,
-          body: init.body,
+          // string | Uint8Array | FormData are all valid BodyInit at runtime.
+          body: currentBody as never,
           redirect: "manual",
           signal: controller.signal,
-        });
+          dispatcher: currentDispatcher,
+        })) as unknown as Response;
       } catch (err) {
         if (controller.signal.aborted) {
           throw new Error(`webhook request timed out after ${timeoutMs}ms`);
@@ -345,7 +467,20 @@ export async function safeWebhookFetch(
             currentUrl,
           );
         }
+        const status = lastResponse.status;
         currentUrl = new URL(location, currentUrl).toString();
+        // Per the fetch spec, 303 (and, as browsers do, 301/302 for a
+        // non-idempotent method) drops the request body and switches to GET —
+        // this also stops a secret-bearing POST body being forwarded to the
+        // redirect target.
+        if (status === 303 || ((status === 301 || status === 302) && currentMethod !== "GET" && currentMethod !== "HEAD")) {
+          currentMethod = "GET";
+          currentBody = undefined;
+        }
+        // Re-check the caller's per-hop policy (the plugin HTTP surface
+        // re-validates its outboundHosts allowlist here) BEFORE following —
+        // closes the "allowlisted host 302s to an un-allowlisted host" bypass.
+        options.onRedirectHop?.(currentUrl);
         continue;
       }
       break;
@@ -353,14 +488,15 @@ export async function safeWebhookFetch(
 
     if (!lastResponse) throw new Error("no response received");
 
-    // Read up to maxBytes of the body. The reader's lock + underlying
-    // socket are released on EVERY exit path via the inner finally —
-    // including read() throwing mid-stream and the size-cap throw.
+    // Read up to maxBytes of the body as raw bytes. The reader's lock +
+    // underlying socket are released on EVERY exit path via the inner finally —
+    // including read() throwing mid-stream and the size-cap throw. Raw bytes
+    // (not incremental string decode) so binary downloads are not corrupted;
+    // safeWebhookFetch decodes to UTF-8 for its text callers.
     const reader = lastResponse.body?.getReader();
-    let body = "";
+    const chunks: Uint8Array[] = [];
+    let total = 0;
     if (reader) {
-      const decoder = new TextDecoder("utf-8");
-      let bytes = 0;
       let truncated = false;
       try {
         while (true) {
@@ -368,14 +504,13 @@ export async function safeWebhookFetch(
           if (done) break;
           // Cap BEFORE accumulating so an oversized chunk can't sit
           // in memory next to the already-buffered body.
-          if (bytes + value.byteLength > maxBytes) {
+          if (total + value.byteLength > maxBytes) {
             truncated = true;
             break;
           }
-          bytes += value.byteLength;
-          body += decoder.decode(value, { stream: true });
+          total += value.byteLength;
+          chunks.push(value);
         }
-        body += decoder.decode();
       } finally {
         // releaseLock alone wouldn't close the socket on early exit;
         // cancel does. Safe to call after a successful drain too.
@@ -386,10 +521,18 @@ export async function safeWebhookFetch(
       }
     }
 
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      merged.set(c, offset);
+      offset += c.byteLength;
+    }
+
     return {
       status: lastResponse.status,
       statusText: lastResponse.statusText,
-      body,
+      bytes: merged,
+      headers: lastResponse.headers,
     };
   } catch (err) {
     // If we throw partway through the redirect loop, the in-flight
@@ -403,6 +546,7 @@ export async function safeWebhookFetch(
     throw err;
   } finally {
     clearTimeout(timer);
+    if (currentDispatcher) await currentDispatcher.close().catch(() => {});
   }
 }
 
