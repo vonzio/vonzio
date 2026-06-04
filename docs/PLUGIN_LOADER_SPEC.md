@@ -18,8 +18,8 @@ Today, vonzio's two plugins (`@vonzio/plugin-slack`,
 `@vonzio/plugin-telegram`) ship as workspace packages and are
 statically imported by core-server at boot. We need an additional
 loading path for plugins that live **outside the OSS workspace** —
-extracted built-ins (`@vonzio/plugin-gmail`, `@vonzio/plugin-teller`)
-and third-party packages.
+extracted built-ins (`@vonzio/plugin-teller`) and third-party
+packages (e.g. `@acme/plugin-mailbox`).
 
 The loader is **additive**. Built-ins continue to load via their
 workspace symlink. External plugins are discovered via the
@@ -356,7 +356,7 @@ path override via `VONZIO_PLUGIN_POLICY=/path/to/file.json`):
 {
   "policy_version": "1",
   "plugins": {
-    "@vonzio/plugin-gmail": {
+    "@acme/plugin-mailbox": {
       "version": "0.3.1",
       "approved_hash_sha256": "9a7f4e2b...",
       "approved_capabilities": [
@@ -420,8 +420,8 @@ A loader-shipped tool generates the policy entry from a plugin
 that's already installed:
 
 ```bash
-$ vonzio plugin approve @vonzio/plugin-gmail
-@vonzio/plugin-gmail@0.3.1
+$ vonzio plugin approve @acme/plugin-mailbox
+@acme/plugin-mailbox@0.3.1
   hash:         sha256:9a7f4e2b...
   capabilities: storage.kv, http.outbound, integrations.read.masked,
                 integrations.write, notifications.channel
@@ -450,7 +450,7 @@ bundled it has full same-origin power.
 Approve frontend bundling? [y/N] y
 
 ✓ Added entry (approved_frontend: true).
-  Re-run vonzio with VONZIO_PLUGINS=@vonzio/plugin-gmail.
+  Re-run vonzio with VONZIO_PLUGINS=@acme/plugin-mailbox.
   IMPORTANT: rebuild the dashboard so the frontend is picked up —
   the server's parity check will refuse to boot until the build
   artifact matches this policy entry.
@@ -460,15 +460,15 @@ On re-approval of an existing entry (version bump, hash change,
 new capability requested), the prompt shows a diff:
 
 ```bash
-$ vonzio plugin approve @vonzio/plugin-gmail
-@vonzio/plugin-gmail: changes since last approval (2026-06-15)
+$ vonzio plugin approve @acme/plugin-mailbox
+@acme/plugin-mailbox: changes since last approval (2026-06-15)
   version:      0.3.1  →  0.4.0
   hash:         9a7f...  →  c2b1... (changed: src/index.ts, src/oauth.ts)
   capabilities: + scheduler.run    (NEW — review what this enables)
                 - integrations.read.masked  (removed)
   outbound:     + accounts.google.com  (NEW host — review purpose)
 
-Run `vonzio plugin diff @vonzio/plugin-gmail --files` to see the
+Run `vonzio plugin diff @acme/plugin-mailbox --files` to see the
 file-level changes that affect the bundle.
 
 Approve all changes? [y/N]
@@ -759,7 +759,7 @@ External plugins are listed in the `VONZIO_PLUGINS` env var, comma-
 separated:
 
 ```bash
-VONZIO_PLUGINS=@vonzio/plugin-gmail,@vonzio/plugin-teller,my-custom-plugin
+VONZIO_PLUGINS=@acme/plugin-mailbox,@vonzio/plugin-teller,my-custom-plugin
 ```
 
 ### Name validation
