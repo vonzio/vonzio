@@ -99,9 +99,14 @@ repos:
     # already tuned and gated on by branch protection above.
 
 governance:
-  contributing: true
-  code_of_conduct: true
-  security_policy: true
+  # false = gh-setup does NOT manage these (not "absent"). SECURITY.md,
+  # CONTRIBUTING.md, and CODE_OF_CONDUCT.md are hand-written and curated at the
+  # repo root. gh-setup would otherwise generate generic templates under
+  # .github/ that shadow the root files — leave the curated ones as the source
+  # of truth.
+  contributing: false
+  code_of_conduct: false
+  security_policy: false
 
 security:
   # false = gh-setup does NOT manage Dependabot (not "disabled"). The
