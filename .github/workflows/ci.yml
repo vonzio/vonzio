@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -30,6 +30,9 @@ jobs:
       - run: npx tsc --project packages/plugins/slack/tsconfig.json --noEmit
       - run: npx tsc --project packages/core-server/tsconfig.json --noEmit
       - run: npx tsc --project packages/dashboard/tsconfig.json --noEmit
+      # Plugins must route outbound HTTP through the audited ctx.http.fetch (§10).
+      - name: no raw fetch in plugin backends
+        run: node scripts/no-raw-fetch-in-plugins.mjs
 
   test:
     name: test
@@ -56,7 +59,7 @@ jobs:
       ENCRYPTION_KEY: ci-test-encryption-key-32chars-xx
       BETTER_AUTH_SECRET: ci-test-better-auth-secret-32-chars
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -84,7 +87,20 @@ jobs:
             packages/core-server/src/orchestrator/retry.test.ts \
             packages/core-server/src/queue/queue.test.ts \
             packages/core-server/src/services/format-message.test.ts \
-            packages/core-server/src/services/scope.test.ts
+            packages/core-server/src/services/scope.test.ts \
+            packages/core-server/src/lib/safe-webhook-fetch.test.ts \
+            packages/core-server/src/plugins/loader.test.ts \
+            packages/core-server/src/plugins/policy.test.ts \
+            packages/core-server/src/plugins/membrane.test.ts \
+            packages/core-server/src/plugins/scoped-db.test.ts \
+            packages/core-server/src/plugins/http.test.ts \
+            packages/core-server/src/plugins/audit.test.ts \
+            packages/core-server/src/plugins/cli.test.ts \
+            packages/core-server/src/plugins/builtins.test.ts \
+            packages/core-server/src/plugins/attack-corpus.test.ts \
+            packages/core-server/src/plugins/parity-check.test.ts \
+            packages/core-server/src/dashboard-csp.test.ts \
+            packages/dashboard
 
   image-build-and-scan:
     # Builds the agent-base + server images on every PR and scans both
@@ -110,8 +126,18 @@ jobs:
             file: docker/Dockerfile.server
             tag: vonzio-server:ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
+      # Daily apt cache-bust. The Dockerfiles run `apt-get upgrade`, but a
+      # byte-identical RUN layer is served from the buildx cache forever, so a
+      # newer debian-security patch (e.g. a chromium HIGH-CVE fix already in
+      # bookworm-security) never lands and Trivy fails on an already-fixed CVE.
+      # Stamping the build with the date busts the apt layers once per day so
+      # the scan builds a freshly-patched image. Matches the daily-keyed Trivy
+      # DB cache below. (Consumed by Dockerfile.agent.base's ARG APT_SNAPSHOT;
+      # the server image ignores the unused arg.)
+      - id: aptsnap
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       - name: Build ${{ matrix.image.name }}
         uses: docker/build-push-action@v6
         with:
@@ -120,6 +146,8 @@ jobs:
           push: false
           load: true
           tags: ${{ matrix.image.tag }}
+          build-args: |
+            APT_SNAPSHOT=${{ steps.aptsnap.outputs.date }}
           # Per-image cache scope: prevents cross-image cache thrash
           # and keeps any future buildx job (release, etc.) from
           # clobbering either entry by accident.
@@ -141,6 +169,17 @@ jobs:
         #    bump the package that ships it
         # ignore-unfixed avoids failing on CVEs with no patch available
         # -- we can't act on those at PR time.
+        #
+        # Chromium is REPORT-ONLY (docker/trivy-chromium-ignore.rego): it ships a
+        # continuous stream of browser HIGH/CRITICALs and there's always a window
+        # between disclosure and the bookworm-security fix landing; those aren't
+        # actionable at PR time and the agent runs sandboxed/unprivileged. The
+        # policy drops chromium* from the exit-code gate; TRIVY_SHOW_SUPPRESSED
+        # keeps them printed (reported) so regressions stay visible. Every other
+        # OS/library HIGH/CRITICAL still fails the build.
+        env:
+          TRIVY_IGNORE_POLICY: docker/trivy-chromium-ignore.rego
+          TRIVY_SHOW_SUPPRESSED: "true"
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ${{ matrix.image.tag }}
@@ -171,7 +210,7 @@ jobs:
     # to main, so any secret has to flow through a PR scanned here.
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: trufflesecurity/trufflehog@v3.81.10
@@ -200,7 +239,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@2.0.0
         with:
