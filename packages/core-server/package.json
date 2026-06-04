@@ -64,7 +64,7 @@
     "zod": "^3.24.4"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.2",
+    "@types/bcrypt": "^6.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/dockerode": "^3.3.38",
     "@types/pg": "^8.15.4",
