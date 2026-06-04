@@ -46,7 +46,7 @@
     "bcrypt": "^6.0.0",
     "better-auth": "^1.6.10",
     "cron-parser": "^5.5.0",
-    "dockerode": "^4.0.7",
+    "dockerode": "^5.0.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.1",
     "fastify": "^5.8.5",
@@ -55,7 +55,7 @@
     "nanoid": "^5.1.11",
     "p-limit": "^7.3.0",
     "pg": "^8.16.0",
-    "pino": "^9.6.0",
+    "pino": "^10.3.1",
     "resend": "^6.12.3",
     "slackify-markdown": "^5.0.0",
     "tsx": "^4.19.4",
@@ -64,12 +64,12 @@
     "zod": "^3.24.4"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.2",
+    "@types/bcrypt": "^6.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/dockerode": "^4.0.1",
     "@types/pg": "^8.15.4",
     "@types/ws": "^8.18.1",
-    "better-sqlite3": "^11.9.1",
+    "better-sqlite3": "^12.10.0",
     "drizzle-kit": "^0.31.10"
   }
 }
