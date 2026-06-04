@@ -28,6 +28,7 @@
 #   --dir <path>        Install location for the curl-piped case (default: ~/vonzio).
 #   --yes, -y           Auto-confirm all "install missing dep?" prompts.
 #   --no-start          Set everything up but don't start the stack.
+#   --reset-env         Back up an existing .env and regenerate it.
 #
 # Env knobs (mostly for CI/automation):
 #   VONZIO_NO_OPEN=1    Don't open a browser when the stack is ready.
@@ -38,21 +39,29 @@
 # `source` this file to unit-test individual functions without running the
 # installer. See test/install.bats.
 
-set -euo pipefail
+# -E (errtrace) so the ERR trap fires inside functions too.
+set -Eeuo pipefail
 
-readonly INSTALLER_VERSION="0.1.2"
+readonly INSTALLER_VERSION="0.1.3"
 readonly REPO_URL="https://github.com/vonzio/vonzio.git"
 readonly DEFAULT_INSTALL_DIR="${HOME}/vonzio"
 readonly NODE_MIN_MAJOR=22
 # How long to poll /health before falling back to a "watch the logs" hint.
 readonly HEALTH_TIMEOUT_SECS="${VONZIO_HEALTH_TIMEOUT:-240}"
+# Pre-flight disk guidance: the agent base image + node_modules + pg volume.
+readonly RECOMMENDED_DISK_GB="${VONZIO_MIN_DISK_GB:-10}"
 
 # ─── Args (assigned by parse_args) ─────────────────────────────────────
 INSTALL_DIR=""
 TARGET_TAG="${VONZIO_VERSION:-}"
 ASSUME_YES=false
 NO_START=false
+RESET_ENV=false
 ACTION="install"
+
+# ─── Pre-flight state ──────────────────────────────────────────────────
+MISSING_DEPS=()          # populated by preflight_deps
+DEPS_AUTOCONFIRM=false   # user consented once in the pre-flight summary
 
 # ─── Platform (assigned by detect_platform / detect_mode) ──────────────
 OS=""
@@ -345,6 +354,100 @@ ensure_node() {
   ok "Node v$(node --version | sed 's/^v//')"
 }
 
+# ─── Pre-flight checks ─────────────────────────────────────────────────
+on_error() {
+  local code=$? line="${1:-?}"
+  err "Install failed (exit ${code}, near line ${line})."
+  err "  Fix the error above and re-run — re-running is safe (it picks up where it left off)."
+}
+
+# Best-effort "is something LISTENing on this TCP port?" across lsof/ss.
+# Returns 1 (assume free) when we have no tool to check with.
+port_in_use() {
+  local p="$1"
+  if require_cmd lsof; then lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; return; fi
+  if require_cmd ss;   then ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":${p}\$"; return; fi
+  return 1
+}
+
+# Free whole-GB on the filesystem backing $1 (or $HOME). Echoes an integer.
+disk_free_gb() {
+  df -Pk "${1:-$HOME}" 2>/dev/null | awk 'NR==2 { printf "%d", int($4/1024/1024) }'
+}
+
+_dep_ok()   { printf "    %s✓%s %-9s %s\n" "$C_OK"  "$C_RESET" "$1" "${2:-}"; }
+_dep_miss() { printf "    %s✗%s %-9s %s%s%s\n" "$C_ERR" "$C_RESET" "$1" "$C_DIM" "${2:-will install}" "$C_RESET"; }
+
+# Read-only scan of every prerequisite. Builds MISSING_DEPS, prints a
+# summary, and asks ONCE to install whatever's missing (instead of a
+# prompt per dep). Sets DEPS_AUTOCONFIRM so check_prereqs won't re-ask.
+preflight_deps() {
+  MISSING_DEPS=()
+  log "  Prerequisites:"
+  if require_cmd git;     then _dep_ok git "$(git --version | awk '{print $3}')"; else _dep_miss git; MISSING_DEPS+=(git); fi
+  if require_cmd make;    then _dep_ok make; else _dep_miss make; MISSING_DEPS+=(make); fi
+  if require_cmd openssl; then _dep_ok openssl; else _dep_miss openssl; MISSING_DEPS+=(openssl); fi
+  if require_cmd docker && docker info >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+      _dep_ok docker "$(docker --version | awk '{print $3}' | tr -d ',') + compose v2"
+    else
+      _dep_miss docker "Compose v2 missing"; MISSING_DEPS+=(docker)
+    fi
+  else
+    _dep_miss docker; MISSING_DEPS+=(docker)
+  fi
+  local nv=0; require_cmd node && nv="$(node_major 2>/dev/null || echo 0)"
+  if (( nv >= NODE_MIN_MAJOR )); then _dep_ok node "v$(node --version | sed 's/^v//')"; else _dep_miss node "need ${NODE_MIN_MAJOR}+"; MISSING_DEPS+=(node); fi
+
+  if (( ${#MISSING_DEPS[@]} == 0 )); then
+    ok "All prerequisites present."
+    return 0
+  fi
+  warn "Missing / outdated: ${MISSING_DEPS[*]}"
+  if confirm "Install the missing prerequisite(s) and continue?" "default-yes"; then
+    DEPS_AUTOCONFIRM=true
+  else
+    err "Can't continue without: ${MISSING_DEPS[*]}"
+    exit 1
+  fi
+}
+
+preflight_ports() {
+  local dash_port="${DASHBOARD_PORT:-5173}" conflicts=()
+  port_in_use "$dash_port" && conflicts+=("${dash_port} (dashboard)")
+  port_in_use 3000 && conflicts+=("3000 (API)")
+  if (( ${#conflicts[@]} > 0 )); then
+    warn "Port(s) already in use: ${conflicts[*]}"
+    log  "  The stack binds these — a conflict makes it fail to start. Stop whatever's using"
+    log  "  them, or set ${C_DIM}DASHBOARD_PORT${C_RESET} in .env to a free port."
+    confirm "Continue anyway?" "default-no" || { err "Aborting on port conflict."; exit 1; }
+  else
+    ok "Ports ${dash_port} + 3000 are free."
+  fi
+}
+
+preflight_disk() {
+  local target="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}" free
+  # In curl mode the dir doesn't exist yet — measure the nearest parent.
+  while [[ ! -d "$target" && "$target" != "/" ]]; do target="$(dirname "$target")"; done
+  free="$(disk_free_gb "$target")"
+  [[ -z "$free" ]] && return 0   # couldn't measure → skip silently
+  if (( free < RECOMMENDED_DISK_GB )); then
+    warn "Low disk: ~${free} GB free where vonzio installs. Recommended: ${RECOMMENDED_DISK_GB} GB+"
+    log  "  (the agent base image alone is multi-GB, plus node_modules + the postgres volume)."
+    confirm "Continue anyway?" "default-no" || { err "Aborting on low disk."; exit 1; }
+  else
+    ok "Disk: ~${free} GB free."
+  fi
+}
+
+preflight() {
+  step "[1/6] Pre-flight"
+  preflight_deps
+  preflight_ports
+  preflight_disk
+}
+
 # ─── Arg parsing ───────────────────────────────────────────────────────
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -358,13 +461,14 @@ parse_args() {
       --tag=*) TARGET_TAG="${1#*=}"; shift ;;
       --yes|-y) ASSUME_YES=true; shift ;;
       --no-start) NO_START=true; shift ;;
+      --reset-env) RESET_ENV=true; shift ;;
       *) echo "Unknown arg: $1 (try --help)" >&2; exit 2 ;;
     esac
   done
 }
 
 show_help() {
-  sed -n '/^# vonzio core/,/^set -euo/p' "$0" 2>/dev/null | sed -e 's/^# \{0,1\}//' -e '/^set -euo/d'
+  sed -n '/^# vonzio core/,/^set -/p' "$0" 2>/dev/null | sed -e 's/^# \{0,1\}//' -e '/^set -/d'
 }
 
 print_banner() {
@@ -442,16 +546,23 @@ do_uninstall() {
 }
 
 check_prereqs() {
-  step "[1/5] Checking prerequisites"
-  ensure_git
-  ensure_make
-  ensure_openssl
-  ensure_docker
-  ensure_node
+  step "[2/6] Prerequisites"
+  if (( ${#MISSING_DEPS[@]} == 0 )); then
+    ok "Nothing to install — all present."
+    return 0
+  fi
+  # The single pre-flight consent stands in for the per-dep prompts.
+  local saved_yes=$ASSUME_YES
+  $DEPS_AUTOCONFIRM && ASSUME_YES=true
+  local dep
+  for dep in "${MISSING_DEPS[@]}"; do
+    "ensure_${dep}"
+  done
+  ASSUME_YES=$saved_yes
 }
 
 setup_source_tree() {
-  step "[2/5] Source tree"
+  step "[3/6] Source tree"
   if ! $IN_CLONE; then
     if [[ -z "$INSTALL_DIR" ]]; then
       if $ASSUME_YES; then
@@ -510,13 +621,20 @@ setup_source_tree() {
 }
 
 setup_env() {
-  step "[3/5] Configuration"
-  if [[ -f .env ]]; then
-    ok ".env exists — keeping it (delete it manually to regenerate)."
+  step "[4/6] Configuration"
+  if [[ -f .env ]] && ! $RESET_ENV; then
+    ok ".env exists — keeping it (re-run with --reset-env to regenerate)."
   else
     if [[ ! -f .env.example ]]; then
       err "No .env.example in $INSTALL_DIR — is this a vonzio checkout?"
       exit 1
+    fi
+    if [[ -f .env ]]; then
+      # --reset-env: never silently clobber secrets — back the old file up.
+      local backup
+      backup=".env.backup.$(date +%Y%m%d-%H%M%S)"
+      cp .env "$backup"
+      warn "Backed up existing .env → ${backup} (it has your OLD ENCRYPTION_KEY — keep it if you have encrypted data)."
     fi
     info "Generating .env from .env.example with fresh secrets…"
     cp .env.example .env
@@ -543,7 +661,7 @@ setup_npm() {
 }
 
 setup_database() {
-  step "[4/5] Database"
+  step "[5/6] Database"
   # docker-dev-oss brings up its OWN postgres inside the compose network.
   # The Better Auth schema migration is part of the dev container's startup
   # wrapper (scripts/start-dev.sh) so it runs against the compose pg
@@ -577,7 +695,7 @@ wait_for_health() {
 }
 
 start_stack() {
-  step "[5/5] Stack"
+  step "[6/6] Stack"
   if $NO_START; then
     log ""
     ok "Setup complete (stack not started — --no-start was passed)."
@@ -621,6 +739,12 @@ main() {
     exit 0
   fi
 
+  # Friendly failure message on any unexpected error from here on. The
+  # deliberate `exit N` paths above (missing deps, bad checkout) print
+  # their own guidance and aren't surfaced as crashes.
+  trap 'on_error $LINENO' ERR
+
+  preflight
   check_prereqs
   setup_source_tree
   setup_env
