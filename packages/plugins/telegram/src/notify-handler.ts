@@ -40,7 +40,7 @@ interface TelegramNotifyMetadata {
  * Called from init().
  */
 export function buildTelegramNotifyHandler(ctx: PluginContext): NotificationHandler {
-  const telegramService = new TelegramService();
+  const telegramService = new TelegramService(ctx.http);
 
   return async function notifyTelegram(req) {
     const meta = (req.metadata ?? {}) as TelegramNotifyMetadata;
