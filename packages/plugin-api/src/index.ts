@@ -11,11 +11,15 @@
 import type { FastifyInstance } from "fastify";
 
 /**
- * Current plugin-api version. Plugins encode the version they were
- * built against in `VonzioPlugin.apiVersion`; the loader rejects plugins
- * whose major version exceeds core's (see `assertApiCompatible`).
+ * Current plugin-api version. Plugins encode the version they were built
+ * against in their package.json `vonzio.apiVersion`; the loader rejects
+ * plugins whose major differs or whose minor is ahead of core's (see
+ * `assertApiCompatible`). Bumped to 1.0.0 with the external-loader contract
+ * (docs/PLUGIN_LOADER_SPEC.md) — the loader surface is now a stability
+ * commitment. 1.1.0 added `scope`/`profile_ids` to PluginIntegration
+ * (additive; plugins targeting 1.0 are unaffected).
  */
-export const PLUGIN_API_VERSION = "0.1.0";
+export const PLUGIN_API_VERSION = "1.1.0";
 
 /**
  * The shape every plugin's default export must satisfy. Generic over
@@ -144,14 +148,45 @@ export interface PluginContext<TConfig = unknown> {
   /** Logger pre-tagged with `{ plugin: name }`. */
   log: PluginLogger;
 
-  /** Versioned access to core services. */
+  /**
+   * Versioned access to core services. At runtime this is a capability
+   * MEMBRANE (a revocable Proxy) — accessing a `core` surface the plugin
+   * did not declare + get granted throws `CapabilityViolationError` and is
+   * audited. The membrane is hygiene against honest mistakes via THIS
+   * reference; it is not a sandbox against `require('@vonzio/core-server')`.
+   * See docs/PLUGIN_LOADER_SPEC.md §2, §7.
+   */
   core: PluginCore;
+
+  /**
+   * Per-plugin namespaced key/value store. Present only when the plugin
+   * declared `storage.kv` and the operator granted it; otherwise accessing
+   * it throws `CapabilityViolationError`. Preferred over `db.*` for new
+   * plugins (§5).
+   */
+  storage: PluginStorageKv;
+
+  /**
+   * Audited outbound HTTP. Present only when the plugin declared
+   * `http.outbound` (with a non-empty `outboundHosts`) and the operator
+   * granted it. Every call is SSRF-checked, allowlist-checked against
+   * manifest∩policy hosts, and logged. See §10.
+   */
+  http: PluginHttp;
 
   /** Where the plugin claims a notification channel kind. */
   notificationBus: NotificationBus;
 
   /** Where the plugin contributes an MCP server. */
   mcpRegistry: McpRegistry;
+
+  /**
+   * Resolve the per-task bearer token core attaches when it injects this
+   * plugin's MCP server into an agent container. Present only when the plugin
+   * declared `mcp.register` and the operator granted it; otherwise accessing it
+   * throws `CapabilityViolationError`. See §10.
+   */
+  mcpSessions: McpSessions;
 
   /** Where the plugin schedules background work. */
   scheduler: Scheduler;
@@ -162,6 +197,15 @@ export interface PluginContext<TConfig = unknown> {
    * surfaces (e.g. Telegram chat, Slack thread).
    */
   sessionEvents: SessionEvents;
+
+  /**
+   * Resolve operator-provisioned secret material into opaque references.
+   * Present only when the plugin declared `secrets.mtls` (with a non-empty
+   * `manifest.mtlsSecrets`) and the operator both granted it and provisioned
+   * the cert/key files in policy; otherwise accessing it throws
+   * `CapabilityViolationError`. v1 covers mTLS client certs only. See §5, §10.
+   */
+  secrets: PluginSecrets;
 }
 
 /**
@@ -182,6 +226,19 @@ export interface PluginIntegration {
   type: string;
   config: Record<string, unknown>;
   enabled: boolean;
+  /**
+   * Visibility scope for agent-facing surfaces (MCP injection, etc.):
+   *  - `"all"`: available to every agent profile the user owns.
+   *  - `"agents"`: restricted to the profiles listed in `profile_ids`.
+   * A plugin gating per-profile (e.g. only surface a bank to the agent the
+   * user scoped it to) filters with:
+   *   `scope === "all" || profile_ids.includes(profileId)`.
+   * Added in plugin-api 1.1.0.
+   */
+  scope: "all" | "agents";
+  /** Profile ids this integration is restricted to when `scope === "agents"`
+   *  (empty otherwise). Added in plugin-api 1.1.0. */
+  profile_ids: string[];
   /**
    * Last-modified timestamp (ISO-8601). Plugins use this for
    * optimistic-locking writes -- see `update({...}, { expectUpdatedAt })`.
@@ -782,6 +839,14 @@ export interface McpServerSpec {
   /**
    * How agents reach the server. `stdio` = spawn a process per agent
    * session; `http` = a single endpoint reachable by all sessions.
+   *
+   * For `http`, `url` MUST be an absolute PATH (e.g. `/plugins/teller/mcp`) — the
+   * plugin serves its MCP route via `ctx.server` and core resolves the path
+   * against its internal server URL at injection time, so the plugin needn't
+   * know the internal host. External / protocol-relative / traversing urls are
+   * REFUSED at `registerServer`: core attaches a per-task bearer token and that
+   * token must never leave the deployment. Core adds the `Authorization` header
+   * itself; the plugin's route resolves it via {@link McpSessions.resolve}.
    */
   transport:
     | {
@@ -795,6 +860,17 @@ export interface McpServerSpec {
 
 export interface McpRegistry {
   registerServer(spec: McpServerSpec): void;
+}
+
+/**
+ * Identity behind a per-task token core minted when it injected the plugin's
+ * MCP server into an agent container. The plugin's MCP HTTP route reads the
+ * `Authorization: Bearer <token>` header and resolves it here to scope the
+ * call to the right user / profile / tenant. Gated by `mcp.register`.
+ */
+export interface McpSessions {
+  /** Resolve a per-task MCP token, or null if unknown/expired. */
+  resolve(token: string): { userId: string; profileId: string; orgId: string | null } | null;
 }
 
 /**
@@ -837,6 +913,119 @@ export interface AuthUser {
   role: string;
   feature_flags?: string;
 }
+
+/**
+ * Per-plugin key/value store (`ctx.storage`). Backed by the core-owned
+ * `plugin_storage` table; every read/write is filtered server-side by the
+ * plugin's id, so one plugin cannot read another's keys via this surface.
+ * Gated by the `storage.kv` capability. See §5.
+ */
+export interface PluginStorageKv {
+  get<T>(key: string): Promise<T | null>;
+  set<T>(key: string, value: T): Promise<void>;
+  delete(key: string): Promise<void>;
+  list(prefix?: string): Promise<Array<{ key: string; value: unknown }>>;
+}
+
+/**
+ * Audited outbound HTTP/WS surface (`ctx.http`). Gated by `http.outbound`.
+ * Every call resolves the hostname, blocks SSRF targets (private/link-local
+ * IPs, DNS rebinding), and requires the host to match the manifest∩policy
+ * `outboundHosts` allowlist. See §10.
+ *
+ * `fetch` returns a real WHATWG `Response`, so existing `.json()` / `.ok` /
+ * `.text()` / `.arrayBuffer()` call sites keep working — binary downloads use
+ * `.arrayBuffer()` and are not corrupted (the bytes are preserved end to end).
+ */
+export interface PluginHttpInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | Uint8Array | FormData;
+  /** Per-call timeout override (ms), capped at 30s. */
+  timeoutMs?: number;
+  /** Per-call max response size override (bytes), capped at 5 MiB. */
+  maxResponseBytes?: number;
+  /**
+   * Present a client certificate for mutual TLS on this call. Pass an
+   * {@link MtlsRef} obtained from `ctx.secrets.mtls(name)` — core reads the
+   * operator-provisioned cert/key files server-side at request time; the cert
+   * material never passes through plugin code. Gated by `secrets.mtls`. See §10.
+   */
+  mtls?: MtlsRef;
+}
+
+export interface PluginHttp {
+  fetch(url: string, init?: PluginHttpInit): Promise<Response>;
+}
+
+/**
+ * Opaque handle to operator-provisioned mTLS client material, resolved from a
+ * logical name the plugin declared in `manifest.mtlsSecrets`. The plugin CANNOT
+ * read the cert/key bytes through this object — it carries only the logical
+ * `name`. The cert/key files are read server-side when the ref is passed to
+ * `ctx.http.fetch({ mtls })`. See §5, §10.
+ */
+export interface MtlsRef {
+  /** Brand: lets the HTTP surface recognize a genuine ref and keeps the type
+   *  nominal to plugin authors. */
+  readonly __vonzioMtls: true;
+  /** The logical secret name — the only field a plugin can observe. */
+  readonly name: string;
+}
+
+/**
+ * Secret-material resolution surface (`ctx.secrets`). Gated by `secrets.mtls`.
+ * v1 exposes only mTLS client certs as opaque {@link MtlsRef}s; the bytes are
+ * never readable through this surface (the operator provisions them as host
+ * files in policy and core loads them server-side at request time).
+ */
+export interface PluginSecrets {
+  /**
+   * Resolve a declared mTLS secret `name` (from `manifest.mtlsSecrets`) into an
+   * opaque ref for `ctx.http.fetch({ mtls })`. Throws `CapabilityViolationError`
+   * if the name was not declared + provisioned.
+   */
+  mtls(name: string): MtlsRef;
+}
+
+export {
+  PLUGIN_CAPABILITIES,
+  CAPABILITY_SURFACE_MAP,
+  ROOT_EQUIVALENT_COMBINATIONS,
+  BUILTIN_ONLY_CAPABILITIES,
+  isPluginCapability,
+} from "./capabilities.js";
+export type { PluginCapability, CapabilitySurface, SurfaceKind } from "./capabilities.js";
+export {
+  MANIFEST_ALLOWED_KEYS,
+  POLICY_ENTRY_ALLOWED_KEYS,
+  SCHEMA_PREFIX_PATTERN,
+  MTLS_SECRET_NAME_PATTERN,
+} from "./manifest.js";
+export type {
+  PluginManifest,
+  ManifestRoutePrefix,
+  MtlsSecretFiles,
+  PluginSource,
+  PolicyEntry,
+  OperatorPolicy,
+} from "./manifest.js";
+export {
+  validateManifest,
+  validatePolicy,
+  matchOutboundHost,
+  normalizeHostPattern,
+} from "./manifest-validate.js";
+export type { ManifestValidationResult } from "./manifest-validate.js";
+export {
+  CapabilityViolationError,
+  OutboundHostViolationError,
+  DbScopeViolationError,
+  PluginRefusedError,
+  PolicyViolationError,
+  REFUSAL_REASONS,
+} from "./errors.js";
+export type { RefusalReason } from "./errors.js";
 
 export { assertApiCompatible } from "./version.js";
 
