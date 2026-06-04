@@ -104,6 +104,11 @@ governance:
   security_policy: true
 
 security:
-  dependabot: true
+  # false = gh-setup does NOT manage Dependabot (not "disabled"). The
+  # version-update config (.github/dependabot.yml) is hand-maintained — a
+  # custom multi-ecosystem setup with grouping, labels, and SDK allow-lists
+  # that gh-setup's generic template would clobber on `apply`. Dependabot
+  # alerts + security updates stay enabled at the repo level independently.
+  dependabot: false
   secret_scanning: true
   code_scanning: true
