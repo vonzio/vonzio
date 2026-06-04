@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -59,7 +59,7 @@ jobs:
       ENCRYPTION_KEY: ci-test-encryption-key-32chars-xx
       BETTER_AUTH_SECRET: ci-test-better-auth-secret-32-chars
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -126,7 +126,7 @@ jobs:
             file: docker/Dockerfile.server
             tag: vonzio-server:ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
       # Daily apt cache-bust. The Dockerfiles run `apt-get upgrade`, but a
       # byte-identical RUN layer is served from the buildx cache forever, so a
@@ -199,7 +199,7 @@ jobs:
     # to main, so any secret has to flow through a PR scanned here.
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: trufflesecurity/trufflehog@v3.81.10
@@ -228,7 +228,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@2.0.0
         with:
