@@ -52,7 +52,6 @@ import { adminRoutes } from "./routes/admin.js";
 import { previewRoutes, setupHostnamePreviewProxy, setupPreviewWebSocketProxy } from "./routes/preview.js";
 import { gitOAuthRoutes, gitOAuthCallbackRoute } from "./routes/git-oauth.js";
 import { gmailOAuthRoutes, gmailOAuthCallbackRoute } from "./routes/gmail-oauth.js";
-import { tellerConnectRoutes } from "./routes/teller-connect.js";
 // telegramSetupRoutes + resyncTelegramBotCommands now live in
 // @vonzio/plugin-telegram. The plugin's init() registers the same
 import { integrationRoutes } from "./routes/integrations.js";
@@ -74,8 +73,6 @@ import { memoryRoutes } from "./routes/memories.js";
 import { memoryMcpPlugin } from "./mcp/memory-mcp.js";
 import { notifyMcpPlugin } from "./mcp/notify-mcp.js";
 import { gmailMcpPlugin } from "./mcp/gmail-mcp.js";
-import { tellerMcpPlugin } from "./mcp/teller-mcp.js";
-import { TellerClient } from "./services/teller-client.js";
 import { platformMcpPlugin } from "./mcp/platform-mcp.js";
 import { ErrorCodes, errorResponse } from "./errors.js";
 import { NotificationBusImpl } from "./plugins/notification-bus.js";
@@ -227,7 +224,6 @@ export async function buildServer(deps: ServerDeps) {
   // dep -- never called there. Will be removed when notification-service.ts
   // drops its now-unused telegramService field.
   const telegramService = new TelegramService();
-  const tellerClient = new TellerClient(config);
 
   containerPool.setSessionRegistry(sessionRegistry, (containerId) => {
     server.log.info({ containerId }, "Orphan container removed");
@@ -640,7 +636,6 @@ export async function buildServer(deps: ServerDeps) {
     // /v1/integrations/slack/* + /v1/integrations/telegram/* routes
     // moved to their respective plugins (registered via init()).
     v1.register(gmailOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
-    v1.register(tellerConnectRoutes, { config, integrationService });
     v1.register(integrationRoutes, { integrationService, notificationService, profileService });
     v1.register(memoryRoutes, { memoryService });
     v1.register(playbookRoutes, { playbookService, chainRunner, playbookScheduler });
@@ -708,16 +703,6 @@ export async function buildServer(deps: ServerDeps) {
     resolveSession: (token: string) => {
       const session = orchestrator.resolveGmailToken(token);
       return session ? { userId: session.userId } : null;
-    },
-  });
-
-  // Teller MCP endpoint (token-based auth — used by agent containers)
-  server.register(tellerMcpPlugin, {
-    integrationService,
-    tellerClient,
-    resolveSession: (token: string) => {
-      const session = orchestrator.resolveTellerToken(token);
-      return session ? { userId: session.userId, profileId: session.profileId } : null;
     },
   });
 

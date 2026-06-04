@@ -48,20 +48,6 @@ export interface TelegramConfig {
   is_platform_owned?: boolean;
 }
 
-export interface TellerConfig {
-  /** Teller's stable identifier for this enrollment (one bank linkage). */
-  enrollment_id: string;
-  /** Per-enrollment access token returned by Teller Connect — stored encrypted. */
-  access_token: string;
-  /** Institution display name (e.g. "PNC", "Chase") for the UI. */
-  institution_name?: string;
-  /** Institution's stable Teller id (e.g. "pnc"); useful for grouping/filters. */
-  institution_id?: string;
-  /** Teller-side user id (one per enrollment; same person can have many). */
-  teller_user_id?: string;
-  /** Wall-clock when this enrollment was first linked. */
-  enrolled_at?: string;
-}
 
 export interface Integration {
   id: string;
