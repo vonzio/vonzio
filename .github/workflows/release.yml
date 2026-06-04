@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # need full history for release-notes generation
 
@@ -55,3 +55,46 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes-file "$notes_file" \
             --generate-notes
+
+  publish-sdk:
+    # Publish the plugin SDK packages to npm so external plugins (separate
+    # repos) can `npm install @vonzio/plugin-api` + `@vonzio/dashboard-registry`.
+    # Each package publishes at its
+    # own package.json version, independent of the v* app tag — idempotent: a
+    # version already on npm is skipped, so app releases that didn't bump the SDK
+    # are no-ops. Bumping an SDK package.json version + pushing a v* tag ships it.
+    name: publish plugin SDK to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      - name: Build + publish @vonzio/shared then @vonzio/plugin-api
+        env:
+          # Set NPM_TOKEN in the repo's Actions secrets (an npm automation token).
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          publish_pkg() {
+            local dir="$1"
+            ( cd "$dir" && npm run prepare-dist )
+            local name version
+            name="$(node -p "require('./$dir/dist/package.json').name")"
+            version="$(node -p "require('./$dir/dist/package.json').version")"
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "::notice::$name@$version already on npm — skipping"
+            else
+              echo "publishing $name@$version"
+              ( cd "$dir/dist" && npm publish --access public )
+            fi
+          }
+          # Order matters: shared is a dependency of plugin-api. dashboard-
+          # registry has no @vonzio deps (only react/lucide-react peers).
+          publish_pkg packages/shared
+          publish_pkg packages/plugin-api
+          publish_pkg packages/dashboard-registry

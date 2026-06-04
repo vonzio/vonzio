@@ -9,13 +9,25 @@
 
 FROM node:22-slim
 
+# Cache-bust for the apt layers below. `apt-get upgrade` only pulls new
+# debian-security patches when this RUN layer actually executes -- but a
+# byte-identical RUN string is served from the buildx layer cache
+# indefinitely, so once a layer is cached the upgrade never re-runs and the
+# image freezes at whatever package versions it was first built with. A new
+# chromium HIGH CVE then fails the Trivy gate even though the fix is already in
+# bookworm-security. Referencing APT_SNAPSHOT in the RUN ties this layer's
+# cache key to the value CI bumps daily (see .github/workflows/ci.yml), forcing
+# a fresh apt pull. Defaults to a constant so non-CI builds are unaffected.
+ARG APT_SNAPSHOT=0
+
 # Pull the latest debian security patches into every rebuild. The
 # node:22-slim base lags upstream by days-to-weeks; `apt-get upgrade`
 # brings libgnutls30, linux-libc-dev, and friends current with whatever
 # the security tracker has on the date of build. This is what makes the
 # Trivy CI gate satisfiable -- without this step the base image carries
 # whatever CVEs accumulated since node:22-slim was last rebuilt.
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+RUN echo "apt snapshot ${APT_SNAPSHOT}" \
+    && apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # The bundled npm in node:22-slim ships an older picomatch (HIGH ReDoS).
 # Upgrade npm globally so its dependency tree is patched. agent-runner
