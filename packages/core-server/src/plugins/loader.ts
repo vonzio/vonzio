@@ -237,9 +237,9 @@ export interface SessionRegistryLike {
 }
 
 /**
- * Structural shape of Orchestrator's plugin-facing surface. Just
- * wakeWorkspaceContainer for now -- the events surface goes through
- * sessionEventEmitter (see SessionEventEmitterLike).
+ * Structural shape of Orchestrator's plugin-facing surface
+ * (wakeWorkspaceContainer + per-task MCP token resolution). The events surface
+ * goes through sessionEventEmitter (see SessionEventEmitterLike).
  */
 export interface OrchestratorLike {
   wakeWorkspaceContainer(

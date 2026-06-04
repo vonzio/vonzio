@@ -826,12 +826,13 @@ export interface McpServerSpec {
    * How agents reach the server. `stdio` = spawn a process per agent
    * session; `http` = a single endpoint reachable by all sessions.
    *
-   * For `http`, a `url` beginning with `/` is treated as a PATH and resolved
-   * against core's internal server URL at injection time — so a plugin serving
-   * its MCP route via `ctx.server` (e.g. `/plugins/teller/mcp`) doesn't need to
-   * know the internal host. An absolute `http(s)://` url is used as-is. Core
-   * mints a per-task bearer token and adds the `Authorization` header itself;
-   * the plugin's route resolves it via {@link McpSessions.resolve}.
+   * For `http`, `url` MUST be an absolute PATH (e.g. `/plugins/teller/mcp`) — the
+   * plugin serves its MCP route via `ctx.server` and core resolves the path
+   * against its internal server URL at injection time, so the plugin needn't
+   * know the internal host. External / protocol-relative / traversing urls are
+   * REFUSED at `registerServer`: core attaches a per-task bearer token and that
+   * token must never leave the deployment. Core adds the `Authorization` header
+   * itself; the plugin's route resolves it via {@link McpSessions.resolve}.
    */
   transport:
     | {
