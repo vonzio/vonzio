@@ -162,7 +162,6 @@ export class Orchestrator extends EventEmitter {
   private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
-  private tellerTokens = new Map<string, { userId: string; profileId: string }>();
   private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   // Per-task tokens for plugin-contributed MCP servers (ctx.mcpRegistry).
   private pluginMcpTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
@@ -197,14 +196,6 @@ export class Orchestrator extends EventEmitter {
 
   clearGmailToken(token: string): void {
     this.gmailTokens.delete(token);
-  }
-
-  resolveTellerToken(token: string): { userId: string; profileId: string } | undefined {
-    return this.tellerTokens.get(token);
-  }
-
-  clearTellerToken(token: string): void {
-    this.tellerTokens.delete(token);
   }
 
   resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null } | undefined {
@@ -839,7 +830,7 @@ export class Orchestrator extends EventEmitter {
     // Users can still add chrome-devtools MCP manually per profile if needed.
 
     // MCP tokens to clean up after task completes
-    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "gmail" | "teller" | "platform" | "plugin"; token: string }> = [];
+    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "gmail" | "platform" | "plugin"; token: string }> = [];
 
     // Memory integration: inject MCP server and build memory section for system prompt
     const userId = profile.user_id ?? "";
@@ -899,27 +890,6 @@ export class Orchestrator extends EventEmitter {
           type: "http",
           url: gmailMcpUrl,
           headers: { Authorization: `Bearer ${gmailToken}` },
-        });
-      }
-    }
-
-    // Teller integration: inject MCP server when the user has ≥1 connected
-    // bank enrollment that is scope-granted to the running profile. The MCP
-    // re-filters at call time too, so a multi-bank user where only one row
-    // is scoped to this profile sees just that bank's enrollments.
-    if (this.deps.config.internalServerUrl && userId && this.deps.integrationService) {
-      const tellerRows = await this.deps.integrationService.listForProfile(userId, "teller", profile.id);
-      const hasEnabledTeller = tellerRows.length > 0;
-      if (hasEnabledTeller) {
-        const tellerToken = `teller_${nanoid()}`;
-        this.tellerTokens.set(tellerToken, { userId, profileId: profile.id });
-        mcpTokensToClean.push({ type: "teller", token: tellerToken });
-        const tellerMcpUrl = `${this.deps.config.internalServerUrl}/mcp/teller`;
-        nonSdkServers.push({
-          name: "teller",
-          type: "http",
-          url: tellerMcpUrl,
-          headers: { Authorization: `Bearer ${tellerToken}` },
         });
       }
     }
@@ -1200,7 +1170,6 @@ export class Orchestrator extends EventEmitter {
         if (type === "memory") this.memoryTokens.delete(token);
         else if (type === "notify") this.notifyTokens.delete(token);
         else if (type === "gmail") this.gmailTokens.delete(token);
-        else if (type === "teller") this.tellerTokens.delete(token);
         else if (type === "platform") this.platformTokens.delete(token);
         else if (type === "plugin") this.pluginMcpTokens.delete(token);
       }

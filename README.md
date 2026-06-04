@@ -28,7 +28,7 @@ vonzio runs agents in fresh Docker containers — one per conversation. You brin
 - **Integrations** — GitHub, GitLab, Bitbucket, Slack, Telegram, Gmail, Teller
 - **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria
 - **Memory and skills** — persistent agent memories, reusable skill snippets, custom subagents
-- **MCP runtime** — bring your own MCP servers, or use the built-ins (memory, notify, gmail, teller, platform)
+- **MCP runtime** — bring your own MCP servers, or use the built-ins (memory, notify, gmail, platform)
 
 ## Who this is for
 
@@ -125,7 +125,7 @@ Three processes on your host, one fresh Docker container per conversation.
 - **Profile** — the agent recipe: model + system prompt + tool allowlist + MCP servers + container image + budget caps. Members can have many; admins can mark some as shared.
 - **Workspace** — the per-conversation directory the agent reads and writes. Survives across messages; lives at `data/workspaces/<session_id>/` on the host.
 - **Container pool** — warm containers are reused across conversations of the same profile; cold ones are torn down after a configurable idle window.
-- **MCP runtime** — first-class support for stdio + HTTP MCP servers, scoped per profile. Built-ins: `memory`, `notify`, `gmail`, `teller`, `platform`.
+- **MCP runtime** — first-class support for stdio + HTTP MCP servers, scoped per profile. Built-ins: `memory`, `notify`, `gmail`, `platform`.
 - **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria; runs are first-class observable workspaces.
 - **Integrations** — GitHub / GitLab / Bitbucket / Slack / Telegram / Gmail / Teller — OAuth on the dashboard, credentials flow into the container at launch.
 
