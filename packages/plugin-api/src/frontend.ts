@@ -1,7 +1,7 @@
 // Frontend half of the plugin contract. v0.1 is intentionally minimal:
 // a plugin's frontend entry is just a default-exported function called
 // once at dashboard boot. The plugin registers whatever UI it needs by
-// importing from `@vonzio/dashboard/registry` directly -- that registry
+// importing from `@vonzio/dashboard-registry/api` directly -- that registry
 // already supports settings sections, nav items, topbar slots, composer
 // slots, workspace header slots, onboarding steps, and routes, so
 // plugins don't need a separate slot taxonomy.
@@ -17,7 +17,7 @@
  * The shape a plugin's frontend entry point must default-export from
  * its `/frontend` module. Called once during dashboard boot. The
  * plugin imports the dashboard registry directly (e.g.
- * `import { registerSettingsSection } from "@vonzio/dashboard/registry"`)
+ * `import { registerSettingsSection } from "@vonzio/dashboard-registry/api"`)
  * and calls whichever register* methods it needs.
  *
  * Errors thrown here are caught by the dashboard's plugin loader and

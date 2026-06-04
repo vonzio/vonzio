@@ -27,7 +27,7 @@ function toSlackMrkdwn(markdown: string): string {
  * from init().
  */
 export function buildSlackNotifyHandler(ctx: PluginContext): NotificationHandler {
-  const slackService = new SlackService();
+  const slackService = new SlackService(ctx.http);
 
   return async function notifySlack(req) {
     const meta = (req.metadata ?? {}) as SlackNotifyMetadata;
@@ -61,7 +61,7 @@ export function buildSlackNotifyHandler(ctx: PluginContext): NotificationHandler
     // Open a DM channel with the authed user (Slack's conversations.open
     // is idempotent -- returns the existing DM if one exists).
     try {
-      const res = await fetch("https://slack.com/api/conversations.open", {
+      const res = await ctx.http.fetch("https://slack.com/api/conversations.open", {
         method: "POST",
         headers: { Authorization: `Bearer ${config.bot_token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ users: config.authed_user_id }),
