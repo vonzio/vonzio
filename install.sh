@@ -16,7 +16,7 @@
 #   4. Generates a fresh .env with secure random secrets (or keeps existing).
 #   5. Starts a postgres container, runs Better Auth's schema migrations.
 #   6. Brings the stack up via `make docker-dev-oss`.
-#   7. Waits for /health and prints the URL to visit.
+#   7. Polls /health and prints (and opens) the URL once it's serving.
 #
 # Flags:
 #   --help, -h          Show this header and exit.
@@ -28,35 +28,37 @@
 #   --dir <path>        Install location for the curl-piped case (default: ~/vonzio).
 #   --yes, -y           Auto-confirm all "install missing dep?" prompts.
 #   --no-start          Set everything up but don't start the stack.
+#
+# Env knobs (mostly for CI/automation):
+#   VONZIO_NO_OPEN=1    Don't open a browser when the stack is ready.
+#   NO_COLOR=1          Disable ANSI colors.
+#
+# Testability: every routine lives in a function and execution is gated on
+# the `BASH_SOURCE == $0` guard at the bottom, so a test harness can
+# `source` this file to unit-test individual functions without running the
+# installer. See test/install.bats.
 
 set -euo pipefail
 
-readonly INSTALLER_VERSION="0.1.1"
+readonly INSTALLER_VERSION="0.1.2"
 readonly REPO_URL="https://github.com/vonzio/vonzio.git"
 readonly DEFAULT_INSTALL_DIR="${HOME}/vonzio"
 readonly NODE_MIN_MAJOR=22
+# How long to poll /health before falling back to a "watch the logs" hint.
+readonly HEALTH_TIMEOUT_SECS="${VONZIO_HEALTH_TIMEOUT:-240}"
 
-# ─── Args ──────────────────────────────────────────────────────────────
+# ─── Args (assigned by parse_args) ─────────────────────────────────────
 INSTALL_DIR=""
 TARGET_TAG="${VONZIO_VERSION:-}"
 ASSUME_YES=false
 NO_START=false
 ACTION="install"
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --help|-h) ACTION="help"; shift ;;
-    --version) ACTION="version"; shift ;;
-    --uninstall) ACTION="uninstall"; shift ;;
-    --dir) INSTALL_DIR="$2"; shift 2 ;;
-    --dir=*) INSTALL_DIR="${1#*=}"; shift ;;
-    --tag) TARGET_TAG="$2"; shift 2 ;;
-    --tag=*) TARGET_TAG="${1#*=}"; shift ;;
-    --yes|-y) ASSUME_YES=true; shift ;;
-    --no-start) NO_START=true; shift ;;
-    *) echo "Unknown arg: $1 (try --help)" >&2; exit 2 ;;
-  esac
-done
+# ─── Platform (assigned by detect_platform / detect_mode) ──────────────
+OS=""
+DISTRO=""
+IN_CLONE=false
+SCRIPT_DIR=""
 
 # ─── Output helpers ────────────────────────────────────────────────────
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
@@ -107,90 +109,21 @@ resolve_target_tag() {
   printf '%s' "$latest"
 }
 
-# ─── --help / --version ────────────────────────────────────────────────
-case "$ACTION" in
-  help)
-    sed -n '/^# vonzio core/,/^set -euo/p' "$0" 2>/dev/null | sed -e 's/^# \{0,1\}//' -e '/^set -euo/d'
-    exit 0
-    ;;
-  version) log "vonzio installer v${INSTALLER_VERSION}"; exit 0 ;;
-esac
+gen_secret() { openssl rand -base64 32 | tr -d '/+=' | cut -c1-32; }
 
-# ─── Banner ────────────────────────────────────────────────────────────
-log ""
-log "${C_BOLD}vonzio core${C_RESET} installer ${C_DIM}v${INSTALLER_VERSION}${C_RESET}"
-log "${C_DIM}https://github.com/vonzio/vonzio${C_RESET}"
-log ""
+sed_inplace() {
+  # macOS sed needs '' after -i; GNU sed doesn't. Detect by trying --version.
+  if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi
+}
 
-# ─── Detect platform ───────────────────────────────────────────────────
-OS=""
-DISTRO=""
-case "$(uname -s)" in
-  Darwin) OS="macos" ;;
-  Linux)
-    OS="linux"
-    if grep -qiE "(microsoft|wsl)" /proc/version 2>/dev/null; then
-      OS="wsl"
-    fi
-    if [[ -f /etc/os-release ]]; then
-      # shellcheck disable=SC1091
-      DISTRO="$(. /etc/os-release && echo "$ID")"
-    fi
-    ;;
-  MINGW*|MSYS*|CYGWIN*)
-    err "Native Windows isn't supported. Use WSL (Ubuntu, Debian) instead."
-    err "  See: https://learn.microsoft.com/en-us/windows/wsl/install"
-    exit 1
-    ;;
-  *)
-    err "Unsupported OS: $(uname -s)"
-    exit 1
-    ;;
-esac
-info "Platform: ${OS}${DISTRO:+ ($DISTRO)}"
-
-# ─── Detect invocation mode ────────────────────────────────────────────
-# If BASH_SOURCE[0] resolves to a file under a checkout that already has
-# packages/core-server/, we're running from inside a clone. Otherwise the
-# script was piped from curl and we need to git-clone first.
-IN_CLONE=false
-SCRIPT_DIR=""
-if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ -f "${BASH_SOURCE[0]:-}" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [[ -d "$SCRIPT_DIR/packages/core-server" ]]; then
-    IN_CLONE=true
-    INSTALL_DIR="$SCRIPT_DIR"
+open_browser() {
+  # Best-effort: open the dashboard once it's up. Silenced + never fatal.
+  local url="$1"
+  [[ -n "${VONZIO_NO_OPEN:-}" ]] && return 0
+  if   require_cmd open;     then open "$url" >/dev/null 2>&1 || true       # macOS
+  elif require_cmd xdg-open; then xdg-open "$url" >/dev/null 2>&1 || true   # Linux
   fi
-fi
-
-if ! $IN_CLONE; then
-  info "Running in one-shot mode (piped from curl)."
-fi
-
-# ─── --uninstall ───────────────────────────────────────────────────────
-if [[ "$ACTION" == "uninstall" ]]; then
-  step "Uninstalling vonzio core"
-  target="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-  if [[ ! -d "$target/docker" ]]; then
-    warn "Couldn't find a vonzio install at $target. Pass --dir <path> if it lives elsewhere."
-    exit 1
-  fi
-  cd "$target"
-  info "Stopping containers…"
-  (cd docker && docker compose -f docker-compose.yml -f docker-compose.dev.yml down 2>&1 | tail -3) || true
-  # Legacy standalone postgres from older installer versions. Today the
-  # compose stack brings its own postgres up; this remove is a no-op
-  # for fresh installs.
-  docker rm -f vonzio-pg 2>/dev/null && info "Removed legacy standalone postgres" || true
-  if confirm "Remove postgres volume + agent session volumes? (irreversible)" "default-no"; then
-    docker volume rm docker_pgdata 2>/dev/null || true
-    docker volume ls -q | grep -E "^vonzio-(ws|sdk)-" | xargs -r docker volume rm 2>/dev/null || true
-    ok "Volumes removed."
-  fi
-  log ""
-  ok "Uninstalled. The vonzio/vonzio checkout at $target was kept — delete it manually if you want."
-  exit 0
-fi
+}
 
 # ─── Dep checks ────────────────────────────────────────────────────────
 require_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -254,6 +187,41 @@ ensure_openssl() {
   esac
 }
 
+# Distinguish the three ways `docker info` can fail so the guidance is
+# actionable instead of a blanket "daemon isn't reachable":
+#   - permission denied  → user not in the docker group yet (needs re-login)
+#   - anything else       → daemon not started
+docker_unreachable_reason() {
+  local out
+  out="$(docker info 2>&1 >/dev/null || true)"
+  if printf '%s' "$out" | grep -qi "permission denied"; then
+    printf 'permission'
+  else
+    printf 'daemon'
+  fi
+}
+
+install_docker_linux() {
+  curl -fsSL https://get.docker.com | sh
+  sudo usermod -aG docker "$USER" 2>/dev/null || true
+  # systemd on most distros; `service` on WSL/sysvinit.
+  sudo systemctl start docker 2>/dev/null || sudo service docker start 2>/dev/null || true
+  if docker info >/dev/null 2>&1; then
+    ok "Docker installed and running."
+    return 0
+  fi
+  # Installed but our session can't reach it yet — say *why*, precisely.
+  if [[ "$(docker_unreachable_reason)" == "permission" ]]; then
+    warn "Docker is installed, and you've been added to the 'docker' group — but that group"
+    warn "isn't active in this shell yet, so Docker still can't be reached."
+    log  "  ${C_BOLD}Log out and back in${C_RESET} (or run ${C_DIM}newgrp docker${C_RESET}), then re-run this script."
+  else
+    warn "Docker is installed but the daemon isn't running."
+    log  "  Start it (${C_DIM}sudo systemctl start docker${C_RESET} or ${C_DIM}sudo service docker start${C_RESET}) and re-run."
+  fi
+  exit 1
+}
+
 ensure_docker() {
   if require_cmd docker && docker info >/dev/null 2>&1; then
     ok "Docker $(docker --version | awk '{print $3}' | tr -d ',') (running)"
@@ -267,24 +235,49 @@ ensure_docker() {
     fi
     return
   fi
-  warn "Docker not running (or not installed)."
+
+  # Docker is present but unusable — installed-but-stopped or a permission gap.
+  if require_cmd docker; then
+    if [[ "$(docker_unreachable_reason)" == "permission" ]]; then
+      warn "Docker is installed but you don't have permission to use it (not in the 'docker' group)."
+      log  "  Fix: ${C_DIM}sudo usermod -aG docker \$USER${C_RESET}, then ${C_BOLD}log out and back in${C_RESET}"
+      log  "       (or run ${C_DIM}newgrp docker${C_RESET}), and re-run this script."
+      exit 1
+    fi
+    warn "Docker is installed but the daemon isn't running."
+    case "$OS" in
+      macos) log "  Start Docker Desktop, wait until it's ready, then re-run." ;;
+      wsl)   log "  Start it with ${C_DIM}sudo service docker start${C_RESET} (or enable Docker Desktop's WSL integration), then re-run." ;;
+      *)     log "  Start it with ${C_DIM}sudo systemctl start docker${C_RESET}, then re-run." ;;
+    esac
+    exit 1
+  fi
+
+  # Docker is not installed at all.
+  warn "Docker not found."
   case "$OS" in
     macos)
+      if require_cmd brew && confirm "Install Docker Desktop via Homebrew (brew install --cask docker)?" "default-yes"; then
+        brew install --cask docker
+        log "  Installed. ${C_BOLD}Start Docker Desktop${C_RESET}, wait until it's ready, then re-run this script."
+        exit 1
+      fi
       log "  Install Docker Desktop: ${C_DIM}https://docs.docker.com/desktop/install/mac-install/${C_RESET}"
-      log "  Then start Docker Desktop and re-run this script."
+      log "  Then start it and re-run this script."
       exit 1
       ;;
-    linux|wsl)
+    wsl)
+      log "  On WSL the smoothest path is Docker Desktop with WSL2 integration:"
+      log "    ${C_DIM}https://docs.docker.com/desktop/wsl/${C_RESET}"
+      if confirm "Install the Docker engine in-distro via get-docker.sh instead?" "default-no"; then
+        install_docker_linux
+      else
+        err "Docker is required."; exit 1
+      fi
+      ;;
+    linux)
       if confirm "Install Docker via the official get-docker.sh script?" "default-yes"; then
-        curl -fsSL https://get.docker.com | sh
-        sudo usermod -aG docker "$USER" 2>/dev/null || true
-        warn "Added you to the 'docker' group. You may need to log out and back in for it to take effect."
-        info "Trying to start Docker daemon…"
-        sudo systemctl start docker 2>/dev/null || true
-        if ! docker info >/dev/null 2>&1; then
-          err "Docker daemon isn't reachable. Start it (e.g. \`sudo systemctl start docker\`) and re-run."
-          exit 1
-        fi
+        install_docker_linux
       else
         err "Docker is required."; exit 1
       fi
@@ -292,10 +285,28 @@ ensure_docker() {
   esac
 }
 
+node_major() { node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))'; }
+
+install_node_linux() {
+  # NodeSource ships SEPARATE setup scripts for deb- vs rpm-based distros;
+  # using the deb script on Fedora/RHEL silently no-ops and leaves you on
+  # whatever (often too-old) nodejs the base repo has.
+  if require_cmd apt-get; then
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x" | sudo -E bash -
+    sudo apt-get install -y nodejs
+  elif require_cmd dnf || require_cmd yum; then
+    curl -fsSL "https://rpm.nodesource.com/setup_${NODE_MIN_MAJOR}.x" | sudo -E bash -
+    sudo_install nodejs
+  else
+    # apk (Alpine) / pacman (Arch): the distro package tracks current Node.
+    sudo_install nodejs
+  fi
+}
+
 ensure_node() {
   local current_major=""
   if require_cmd node; then
-    current_major="$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')"
+    current_major="$(node_major)"
     if (( current_major >= NODE_MIN_MAJOR )); then
       ok "Node v$(node --version | sed 's/^v//')"
       return
@@ -314,164 +325,313 @@ ensure_node() {
           err "Node ${NODE_MIN_MAJOR}+ is required."; exit 1
         fi
       else
-        err "  Install Homebrew (${C_DIM}https://brew.sh${C_RESET}) then re-run, or install Node v${NODE_MIN_MAJOR}+ manually."
+        err "  Install Homebrew (${C_DIM}https://brew.sh${C_RESET}) then re-run, or install Node v${NODE_MIN_MAJOR}+ manually"
+        err "  (e.g. via nvm: ${C_DIM}https://github.com/nvm-sh/nvm${C_RESET})."
         exit 1
       fi
       ;;
     linux|wsl)
       if confirm "Install Node ${NODE_MIN_MAJOR} via NodeSource?" "default-yes"; then
-        curl -fsSL "https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x" | sudo -E bash -
-        sudo_install nodejs
+        install_node_linux
       else
         err "Node ${NODE_MIN_MAJOR}+ is required."; exit 1
       fi
       ;;
   esac
-  if ! require_cmd node || (( $(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))') < NODE_MIN_MAJOR )); then
+  if ! require_cmd node || (( $(node_major) < NODE_MIN_MAJOR )); then
     err "Node install didn't take. Install Node v${NODE_MIN_MAJOR}+ manually and re-run."
     exit 1
   fi
   ok "Node v$(node --version | sed 's/^v//')"
 }
 
-# ─── Run dep checks ────────────────────────────────────────────────────
-step "[1/5] Checking prerequisites"
-ensure_git
-ensure_make
-ensure_openssl
-ensure_docker
-ensure_node
-
-# ─── Clone if running from curl ────────────────────────────────────────
-step "[2/5] Source tree"
-if ! $IN_CLONE; then
-  if [[ -z "$INSTALL_DIR" ]]; then
-    if $ASSUME_YES; then
-      INSTALL_DIR="$DEFAULT_INSTALL_DIR"
-    else
-      printf "  Install location [%s]: " "$DEFAULT_INSTALL_DIR"
-      if [[ -t 0 ]]; then read -r INSTALL_DIR || INSTALL_DIR=""
-      else read -r INSTALL_DIR < /dev/tty || INSTALL_DIR=""
-      fi
-      INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-    fi
-  fi
-
-  # Resolve target release tag. Default = latest v* on the remote. Falls
-  # back to main HEAD only if the remote has no tags — fresh empty repo
-  # case during early bootstrap. Otherwise we pin so every install is
-  # reproducible: a curl-piped run at 2026-07-01 lands on the same code
-  # as the same command on 2026-09-01 until a newer tag exists.
-  TARGET_REF="$(resolve_target_tag)"
-  if [[ -z "$TARGET_REF" ]]; then
-    warn "Couldn't resolve a release tag from $REPO_URL — falling back to main HEAD."
-    TARGET_REF="main"
-  fi
-  info "Target version: ${TARGET_REF}"
-
-  if [[ -d "$INSTALL_DIR/.git" ]]; then
-    info "Existing checkout at $INSTALL_DIR — fetching and switching to ${TARGET_REF}."
-    if ! (cd "$INSTALL_DIR" && git fetch --tags --quiet origin && git checkout --quiet "$TARGET_REF"); then
-      err "Failed to switch $INSTALL_DIR to ${TARGET_REF}."
-      err "  If you have local commits or uncommitted changes there, stash or move them and re-run."
-      exit 1
-    fi
-  else
-    info "Cloning vonzio/vonzio @ ${TARGET_REF} → $INSTALL_DIR"
-    git clone --quiet --branch "$TARGET_REF" --depth 1 "$REPO_URL" "$INSTALL_DIR"
-  fi
-  cd "$INSTALL_DIR"
-else
-  cd "$INSTALL_DIR"
-  ok "Using existing checkout at $INSTALL_DIR"
-  # In-clone mode: never touch the user's tree. If they're on a non-tag
-  # commit (e.g. main, a feature branch) and a newer release exists,
-  # print a hint so they know reproducible installs are available.
-  if [[ -n "$TARGET_TAG" ]]; then
-    warn "--tag / VONZIO_VERSION is ignored when running from an existing checkout."
-    warn "  To install a specific tag here, run: git fetch --tags && git checkout ${TARGET_TAG}"
-  else
-    LATEST_TAG="$(resolve_target_tag || true)"
-    CURRENT_REF="$(git -C "$INSTALL_DIR" describe --tags --exact-match 2>/dev/null || true)"
-    if [[ -n "$LATEST_TAG" && "$CURRENT_REF" != "$LATEST_TAG" ]]; then
-      info "Latest release: ${LATEST_TAG} (you're on $(git -C "$INSTALL_DIR" describe --always --dirty 2>/dev/null || echo unknown))."
-      info "  Curl-piped installs default to the latest release — re-run via curl or 'git checkout ${LATEST_TAG}' to pin."
-    fi
-  fi
-fi
-
-# ─── Generate .env ─────────────────────────────────────────────────────
-step "[3/5] Configuration"
-gen_secret() { openssl rand -base64 32 | tr -d '/+=' | cut -c1-32; }
-sed_inplace() {
-  # macOS sed needs '' after -i; GNU sed doesn't. Detect by trying --version.
-  if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi
+# ─── Arg parsing ───────────────────────────────────────────────────────
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h) ACTION="help"; shift ;;
+      --version) ACTION="version"; shift ;;
+      --uninstall) ACTION="uninstall"; shift ;;
+      --dir) INSTALL_DIR="$2"; shift 2 ;;
+      --dir=*) INSTALL_DIR="${1#*=}"; shift ;;
+      --tag) TARGET_TAG="$2"; shift 2 ;;
+      --tag=*) TARGET_TAG="${1#*=}"; shift ;;
+      --yes|-y) ASSUME_YES=true; shift ;;
+      --no-start) NO_START=true; shift ;;
+      *) echo "Unknown arg: $1 (try --help)" >&2; exit 2 ;;
+    esac
+  done
 }
 
-if [[ -f .env ]]; then
-  ok ".env exists — keeping it (delete it manually to regenerate)."
-else
-  if [[ ! -f .env.example ]]; then
-    err "No .env.example in $INSTALL_DIR — is this a vonzio checkout?"
+show_help() {
+  sed -n '/^# vonzio core/,/^set -euo/p' "$0" 2>/dev/null | sed -e 's/^# \{0,1\}//' -e '/^set -euo/d'
+}
+
+print_banner() {
+  log ""
+  log "${C_BOLD}vonzio core${C_RESET} installer ${C_DIM}v${INSTALLER_VERSION}${C_RESET}"
+  log "${C_DIM}https://github.com/vonzio/vonzio${C_RESET}"
+  log ""
+}
+
+detect_platform() {
+  case "$(uname -s)" in
+    Darwin) OS="macos" ;;
+    Linux)
+      OS="linux"
+      if grep -qiE "(microsoft|wsl)" /proc/version 2>/dev/null; then
+        OS="wsl"
+      fi
+      if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        DISTRO="$(. /etc/os-release && echo "$ID")"
+      fi
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      err "Native Windows isn't supported. Use WSL (Ubuntu, Debian) instead."
+      err "  See: https://learn.microsoft.com/en-us/windows/wsl/install"
+      exit 1
+      ;;
+    *)
+      err "Unsupported OS: $(uname -s)"
+      exit 1
+      ;;
+  esac
+  info "Platform: ${OS}${DISTRO:+ ($DISTRO)}"
+}
+
+detect_mode() {
+  # If BASH_SOURCE[0] resolves to a file under a checkout that already has
+  # packages/core-server/, we're running from inside a clone. Otherwise the
+  # script was piped from curl and we need to git-clone first.
+  IN_CLONE=false
+  SCRIPT_DIR=""
+  if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -d "$SCRIPT_DIR/packages/core-server" ]]; then
+      IN_CLONE=true
+      INSTALL_DIR="$SCRIPT_DIR"
+    fi
+  fi
+  if ! $IN_CLONE; then
+    info "Running in one-shot mode (piped from curl)."
+  fi
+}
+
+do_uninstall() {
+  step "Uninstalling vonzio core"
+  local target="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+  if [[ ! -d "$target/docker" ]]; then
+    warn "Couldn't find a vonzio install at $target. Pass --dir <path> if it lives elsewhere."
     exit 1
   fi
-  info "Generating .env from .env.example with fresh secrets…"
-  cp .env.example .env
-  ENC_KEY="$(gen_secret)"
-  AUTH_KEY="$(gen_secret)"
-  PG_PASS="$(openssl rand -hex 16)"
-  sed_inplace "s|^ENCRYPTION_KEY=$|ENCRYPTION_KEY=${ENC_KEY}|" .env
-  sed_inplace "s|^BETTER_AUTH_SECRET=$|BETTER_AUTH_SECRET=${AUTH_KEY}|" .env
-  sed_inplace "s|^POSTGRES_PASSWORD=$|POSTGRES_PASSWORD=${PG_PASS}|" .env
-  ok ".env created (random ENCRYPTION_KEY + BETTER_AUTH_SECRET + POSTGRES_PASSWORD)."
-  warn "Back up .env now — losing ENCRYPTION_KEY bricks your credential vault."
-fi
-
-# ─── npm install ───────────────────────────────────────────────────────
-if [[ ! -d node_modules ]]; then
-  info "Installing npm dependencies (one-time, ~1 min)…"
-  npm install --silent
-  ok "npm install complete."
-else
-  ok "node_modules present — skipping npm install."
-fi
-
-# ─── Database (handled by compose) ─────────────────────────────────────
-step "[4/5] Database"
-# docker-dev-oss brings up its OWN postgres inside the compose network
-# (container name docker-postgres-1). The Better Auth schema migration
-# is part of the dev container's startup wrapper (scripts/start-dev.sh)
-# so it runs against the compose pg automatically. We don't start a
-# standalone vonzio-pg here — that was a remnant of the host-mode dev
-# workflow and caused split-brain when docker-dev-oss came up.
-ok "Database setup is automatic — compose brings up postgres and the server runs Better Auth migrate on startup."
-
-# ─── Start stack ───────────────────────────────────────────────────────
-step "[5/5] Stack"
-if $NO_START; then
+  cd "$target"
+  info "Stopping containers…"
+  (cd docker && docker compose -f docker-compose.yml -f docker-compose.dev.yml down 2>&1 | tail -3) || true
+  # Legacy standalone postgres from older installer versions. Today the
+  # compose stack brings its own postgres up; this remove is a no-op
+  # for fresh installs.
+  docker rm -f vonzio-pg 2>/dev/null && info "Removed legacy standalone postgres" || true
+  if confirm "Remove postgres volume + agent session volumes? (irreversible)" "default-no"; then
+    docker volume rm docker_pgdata 2>/dev/null || true
+    docker volume ls -q | grep -E "^vonzio-(ws|sdk)-" | xargs -r docker volume rm 2>/dev/null || true
+    ok "Volumes removed."
+  fi
   log ""
-  ok "Setup complete (stack not started — --no-start was passed)."
+  ok "Uninstalled. The vonzio/vonzio checkout at $target was kept — delete it manually if you want."
+}
+
+check_prereqs() {
+  step "[1/5] Checking prerequisites"
+  ensure_git
+  ensure_make
+  ensure_openssl
+  ensure_docker
+  ensure_node
+}
+
+setup_source_tree() {
+  step "[2/5] Source tree"
+  if ! $IN_CLONE; then
+    if [[ -z "$INSTALL_DIR" ]]; then
+      if $ASSUME_YES; then
+        INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+      else
+        printf "  Install location [%s]: " "$DEFAULT_INSTALL_DIR"
+        if [[ -t 0 ]]; then read -r INSTALL_DIR || INSTALL_DIR=""
+        else read -r INSTALL_DIR < /dev/tty || INSTALL_DIR=""
+        fi
+        INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+      fi
+    fi
+
+    # Resolve target release tag. Default = latest v* on the remote. Falls
+    # back to main HEAD only if the remote has no tags — fresh empty repo
+    # case during early bootstrap. Otherwise we pin so every install is
+    # reproducible.
+    local target_ref
+    target_ref="$(resolve_target_tag)"
+    if [[ -z "$target_ref" ]]; then
+      warn "Couldn't resolve a release tag from $REPO_URL — falling back to main HEAD."
+      target_ref="main"
+    fi
+    info "Target version: ${target_ref}"
+
+    if [[ -d "$INSTALL_DIR/.git" ]]; then
+      info "Existing checkout at $INSTALL_DIR — fetching and switching to ${target_ref}."
+      if ! (cd "$INSTALL_DIR" && git fetch --tags --quiet origin && git checkout --quiet "$target_ref"); then
+        err "Failed to switch $INSTALL_DIR to ${target_ref}."
+        err "  If you have local commits or uncommitted changes there, stash or move them and re-run."
+        exit 1
+      fi
+    else
+      info "Cloning vonzio/vonzio @ ${target_ref} → $INSTALL_DIR"
+      git clone --quiet --branch "$target_ref" --depth 1 "$REPO_URL" "$INSTALL_DIR"
+    fi
+    cd "$INSTALL_DIR"
+  else
+    cd "$INSTALL_DIR"
+    ok "Using existing checkout at $INSTALL_DIR"
+    # In-clone mode: never touch the user's tree. If they're on a non-tag
+    # commit and a newer release exists, print a hint.
+    if [[ -n "$TARGET_TAG" ]]; then
+      warn "--tag / VONZIO_VERSION is ignored when running from an existing checkout."
+      warn "  To install a specific tag here, run: git fetch --tags && git checkout ${TARGET_TAG}"
+    else
+      local latest_tag current_ref
+      latest_tag="$(resolve_target_tag || true)"
+      current_ref="$(git -C "$INSTALL_DIR" describe --tags --exact-match 2>/dev/null || true)"
+      if [[ -n "$latest_tag" && "$current_ref" != "$latest_tag" ]]; then
+        info "Latest release: ${latest_tag} (you're on $(git -C "$INSTALL_DIR" describe --always --dirty 2>/dev/null || echo unknown))."
+        info "  Curl-piped installs default to the latest release — re-run via curl or 'git checkout ${latest_tag}' to pin."
+      fi
+    fi
+  fi
+}
+
+setup_env() {
+  step "[3/5] Configuration"
+  if [[ -f .env ]]; then
+    ok ".env exists — keeping it (delete it manually to regenerate)."
+  else
+    if [[ ! -f .env.example ]]; then
+      err "No .env.example in $INSTALL_DIR — is this a vonzio checkout?"
+      exit 1
+    fi
+    info "Generating .env from .env.example with fresh secrets…"
+    cp .env.example .env
+    local enc_key auth_key pg_pass
+    enc_key="$(gen_secret)"
+    auth_key="$(gen_secret)"
+    pg_pass="$(openssl rand -hex 16)"
+    sed_inplace "s|^ENCRYPTION_KEY=$|ENCRYPTION_KEY=${enc_key}|" .env
+    sed_inplace "s|^BETTER_AUTH_SECRET=$|BETTER_AUTH_SECRET=${auth_key}|" .env
+    sed_inplace "s|^POSTGRES_PASSWORD=$|POSTGRES_PASSWORD=${pg_pass}|" .env
+    ok ".env created (random ENCRYPTION_KEY + BETTER_AUTH_SECRET + POSTGRES_PASSWORD)."
+    warn "Back up .env now — losing ENCRYPTION_KEY bricks your credential vault."
+  fi
+}
+
+setup_npm() {
+  if [[ ! -d node_modules ]]; then
+    info "Installing npm dependencies (one-time, ~1 min)…"
+    npm install --silent
+    ok "npm install complete."
+  else
+    ok "node_modules present — skipping npm install."
+  fi
+}
+
+setup_database() {
+  step "[4/5] Database"
+  # docker-dev-oss brings up its OWN postgres inside the compose network.
+  # The Better Auth schema migration is part of the dev container's startup
+  # wrapper (scripts/start-dev.sh) so it runs against the compose pg
+  # automatically.
+  ok "Database setup is automatic — compose brings up postgres and the server runs Better Auth migrate on startup."
+}
+
+# Poll the dashboard's /health (which proxies to the API) until the stack
+# is actually serving, then print + open the URL. Runs concurrently with
+# the foreground `make` (which is what brings the stack up), so it has to
+# tolerate the port being unreachable for the whole cold-build window.
+wait_for_health() {
+  local port="${DASHBOARD_PORT:-5173}" url deadline now
+  url="http://localhost:${port}"
+  now="$(date +%s)"
+  deadline=$(( now + HEALTH_TIMEOUT_SECS ))
+  while (( $(date +%s) < deadline )); do
+    if require_cmd curl && curl -fsS -o /dev/null "${url}/health" 2>/dev/null; then
+      log ""
+      ok "vonzio is up. Open: ${C_BOLD}${url}${C_RESET}"
+      log "  First visit lands on /setup — create your admin account, then onboarding."
+      open_browser "$url"
+      return 0
+    fi
+    sleep 2
+  done
   log ""
-  log "Next:"
-  log "  cd $INSTALL_DIR"
-  log "  make docker-dev-oss   ${C_DIM}# full Docker stack with Traefik${C_RESET}"
-  log "  ${C_DIM}# OR${C_RESET}"
-  log "  make dev-oss          ${C_DIM}# host-mode (faster iteration, needs the postgres above)${C_RESET}"
-  exit 0
+  warn "Still waiting on /health after ${HEALTH_TIMEOUT_SECS}s (cold builds can take longer)."
+  warn "  Once you see 'Server listening' in the logs, open: ${C_BOLD}${url}${C_RESET}"
+  return 0
+}
+
+start_stack() {
+  step "[5/5] Stack"
+  if $NO_START; then
+    log ""
+    ok "Setup complete (stack not started — --no-start was passed)."
+    log ""
+    log "Next:"
+    log "  cd $INSTALL_DIR"
+    log "  make docker-dev-oss   ${C_DIM}# full Docker stack with Traefik${C_RESET}"
+    log "  ${C_DIM}# OR${C_RESET}"
+    log "  make dev-oss          ${C_DIM}# host-mode (faster iteration, needs the postgres above)${C_RESET}"
+    exit 0
+  fi
+
+  info "Starting the vonzio stack in OSS mode…"
+  log "  ${C_DIM}First boot builds the agent base image (~3 min cold on Apple Silicon).${C_RESET}"
+  log "  ${C_DIM}Logs streaming below. Ctrl-C stops the stack cleanly.${C_RESET}"
+  log ""
+
+  # Background poller watches /health and announces the URL the moment the
+  # stack is actually serving (replaces a fixed sleep that fired ~2.5 min
+  # before the server was ready on a cold build).
+  ( wait_for_health ) &
+
+  exec make docker-dev-oss
+}
+
+# ─── Orchestration ─────────────────────────────────────────────────────
+main() {
+  parse_args "$@"
+
+  case "$ACTION" in
+    help)    show_help; exit 0 ;;
+    version) log "vonzio installer v${INSTALLER_VERSION}"; exit 0 ;;
+  esac
+
+  print_banner
+  detect_platform
+  detect_mode
+
+  if [[ "$ACTION" == "uninstall" ]]; then
+    do_uninstall
+    exit 0
+  fi
+
+  check_prereqs
+  setup_source_tree
+  setup_env
+  setup_npm
+  setup_database
+  start_stack
+}
+
+# Only run when executed, not when sourced (so tests can load the
+# functions in isolation). "${BASH_SOURCE[0]:-$0}" handles `bash install.sh`,
+# `./install.sh`, and `curl ... | bash` (where BASH_SOURCE is empty).
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
+  main "$@"
 fi
-
-info "Starting the vonzio stack in OSS mode…"
-log "  ${C_DIM}First boot builds the agent base image (~3 min cold on Apple Silicon).${C_RESET}"
-log "  ${C_DIM}Logs streaming below. Ctrl-C stops the stack cleanly.${C_RESET}"
-log ""
-
-# Print the "open this URL" hint after a few seconds so it appears
-# alongside the early boot logs and isn't lost above the build output.
-( sleep 10
-  log ""
-  ok "When you see 'Server listening' below, open:"
-  log "    ${C_BOLD}http://localhost:5173${C_RESET}"
-  log "  First visit lands on /setup — create your admin account, then onboarding."
-  log "" ) &
-
-exec make docker-dev-oss
