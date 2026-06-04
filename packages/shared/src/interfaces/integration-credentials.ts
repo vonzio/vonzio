@@ -1,6 +1,7 @@
 /**
  * A user's connected integration with its credentials already decrypted.
- * `config` shape depends on `type` (slack, gmail, telegram, teller).
+ * `config` shape depends on `type` (slack, gmail, telegram, and
+ * plugin-provided types such as teller — shape defined by the plugin).
  */
 export interface ResolvedIntegration {
   id: string;
