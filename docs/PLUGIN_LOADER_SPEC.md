@@ -696,8 +696,10 @@ per-user filtering and returns nothing when the user has no relevant data; this
 trades the built-in MCPs' "inject only if the user has a row" optimization for a
 far smaller contract). For each, core:
 
-- resolves a leading-`/` `url` against its internal server URL (so the plugin
-  needn't know the internal host; an absolute `http(s)://` url passes through),
+- resolves the spec's `url` (an absolute PATH, e.g. `/plugins/teller/mcp`)
+  against its internal server URL so the plugin needn't know the internal host.
+  External / protocol-relative / traversing urls are refused at `registerServer`
+  — core attaches a token, which must never leave the deployment,
 - mints a per-task bearer token and attaches it as the `Authorization` header,
 - tears the token down when the task finishes.
 

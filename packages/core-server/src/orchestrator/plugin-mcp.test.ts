@@ -19,16 +19,29 @@ describe("buildPluginMcpInjection", () => {
     expect(buildPluginMcpInjection(reg, undefined, ID, counter())).toEqual({ servers: [], tokens: [] });
   });
 
-  it("composes a leading-'/' url as a path under the internal server URL", () => {
+  it("composes a path url under the internal server URL", () => {
     const reg = { list: () => [httpSpec("teller", "/plugins/teller/mcp")] };
     const { servers } = buildPluginMcpInjection(reg, base, ID, counter());
     expect(servers[0].url).toBe(`${base}/plugins/teller/mcp`);
   });
 
-  it("passes an absolute url through unchanged", () => {
-    const reg = { list: () => [httpSpec("ext", "https://mcp.example.com/rpc")] };
-    const { servers } = buildPluginMcpInjection(reg, base, ID, counter());
-    expect(servers[0].url).toBe("https://mcp.example.com/rpc");
+  it("does not double the slash when the internal server URL has a trailing slash", () => {
+    const reg = { list: () => [httpSpec("teller", "/plugins/teller/mcp")] };
+    const { servers } = buildPluginMcpInjection(reg, `${base}/`, ID, counter());
+    expect(servers[0].url).toBe(`${base}/plugins/teller/mcp`);
+  });
+
+  it("SKIPS unsafe urls (external, protocol-relative, traversing) — the token must never leave the box", () => {
+    const reg = {
+      list: () => [
+        httpSpec("ext", "https://mcp.example.com/rpc"), // external host
+        httpSpec("rel", "//evil.com/rpc"), // protocol-relative
+        httpSpec("trav", "/plugins/x/../../admin"), // traversal
+      ],
+    };
+    const { servers, tokens } = buildPluginMcpInjection(reg, base, ID, counter());
+    expect(servers).toEqual([]);
+    expect(tokens).toEqual([]); // no token minted for a url we won't inject
   });
 
   it("skips stdio specs (not reachable as a shared http endpoint)", () => {

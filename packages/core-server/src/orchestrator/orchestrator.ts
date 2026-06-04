@@ -944,6 +944,12 @@ export class Orchestrator extends EventEmitter {
     // relevant data. Each gets a per-task token the plugin resolves via
     // ctx.mcpSessions. A leading-"/" url is a path under the internal server.
     if (userId) {
+      // All tokens minted here carry the SAME identity (this task's user /
+      // profile / tenant). That invariant is what makes the single shared
+      // pluginMcpTokens map safe despite ctx.mcpSessions.resolve not scoping by
+      // plugin: even if one plugin obtained another's token, resolve yields the
+      // identity it already has. Do NOT vary identity per server without adding
+      // per-plugin token scoping.
       const pluginMcp = buildPluginMcpInjection(
         this.deps.mcpRegistry,
         this.deps.config.internalServerUrl,
