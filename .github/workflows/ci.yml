@@ -232,10 +232,10 @@ jobs:
           # Drops `unverified` (long-tail high-entropy false positives).
           extra_args: --results=verified,unknown
 
-  install-script-shellcheck:
-    # Lint install.sh so we catch shell footguns before community users hit
-    # them. shellcheck is the standard for bash quality.
-    name: install.sh shellcheck
+  install-script:
+    # Lint install.sh (shellcheck) AND unit-test it (bats) so we catch shell
+    # footguns + dep-handling regressions before community users hit them.
+    name: install.sh lint + test
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -246,3 +246,7 @@ jobs:
           severity: warning
           scandir: "./"
           additional_files: "install.sh scripts/start-dev.sh"
+      - name: Install bats
+        run: sudo apt-get update -y && sudo apt-get install -y bats
+      - name: Unit-test install.sh
+        run: bats test/install.bats
