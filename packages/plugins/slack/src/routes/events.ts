@@ -31,6 +31,7 @@ import type {
   PluginEventLog,
   PluginImageRewriter,
   PluginModelList,
+  PluginHttp,
   SessionEvents,
 } from "@vonzio/plugin-api";
 import type { SlackService } from "../services/slack-service.js";
@@ -95,6 +96,9 @@ export interface SlackEventsRoutesOptions {
   eventLog: PluginEventLog;
   imageRewriterService: PluginImageRewriter;
   modelListService: PluginModelList;
+  // Audited outbound HTTP (ctx.http). Used for the best-effort
+  // Anthropic title-generation call in generateWorkspaceTitle.
+  http: PluginHttp;
   // Typed facade over orchestrator's EventEmitter (Phase 3D.1a/#76).
   // Replaces the direct orchestrator.on(...) calls the file used to
   // do; same 5 task:* event names.
@@ -732,7 +736,7 @@ function setupSlackRelay(
   opts: SlackEventsRoutesOptions,
   server: FastifyInstance,
 ) {
-  const { orchestrator, db, integrationService, slackService, profileService, workspaceService, eventLog, imageRewriterService, sessionEvents } = opts;
+  const { orchestrator, db, integrationService, slackService, profileService, workspaceService, eventLog, imageRewriterService, sessionEvents, http } = opts;
 
   // Helper: get Slack context for a session
   async function getSlackContext(sessionId: string) {
@@ -909,7 +913,7 @@ function setupSlackRelay(
     if (!apiKey) return;
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await http.fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

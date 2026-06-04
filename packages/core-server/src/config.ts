@@ -170,30 +170,8 @@ const configSchema = z.object({
   METRICS_RETENTION_DAYS: z.coerce.number().default(7),
   OLLAMA_ENABLED: z.string().transform((v) => v === "true").default("false"),
 
-  // Teller (optional) — mTLS client cert + key for the Teller API.
-  // Cert + key are bind-mounted into /run/secrets/teller in dev/prod
-  // compose; APP_ID is the cert's CN. All five optional so the server
-  // boots fine without Teller wired.
-  TELLER_APP_ID: z.string().optional(),
-  TELLER_CERT_PATH: z.string().optional(),
-  TELLER_KEY_PATH: z.string().optional(),
-  // .url() so a typo (e.g. "htps://api.teller.io") fails fast at boot
-  // instead of at first API call.
-  TELLER_API_BASE: z.string().url().default("https://api.teller.io"),
-  // Ed25519 PUBLIC key (base64) that Teller uses to sign enrollment
-  // JWTs returned by Teller Connect. Used at the Connect callback to
-  // verify the token wasn't forged by a malicious frontend. Not secret
-  // by design — env var only so a Teller-side rotation is config, not
-  // code.
-  TELLER_SIGNING_PUBKEY: z.string().optional(),
-  // Which Teller Connect environment the dashboard should open:
-  //   sandbox     — fake test institutions, no real bank linkage
-  //   development — real banks, free-tier Developer limits (100 connections)
-  //   production  — real banks, per-call billing
-  // Defaults to sandbox so a misconfigured deploy can't accidentally pull
-  // real account data. Set to "development" to link real personal banks
-  // on the free tier.
-  TELLER_ENVIRONMENT: z.enum(["sandbox", "development", "production"]).default("sandbox"),
+  // Teller config moved to the external @vonzio/plugin-teller plugin (its own
+  // TELLER_* env schema + mtls_secrets policy entry). Core no longer reads it.
 });
 
 export type Config = z.infer<typeof configSchema>;

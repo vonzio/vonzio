@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { useApi } from "@vonzio/dashboard/hooks/useApi";
 import { Button, Modal } from "@vonzio/dashboard/brand/components";
-import type { IntegrationRowSlotProps } from "@vonzio/dashboard/registry";
+import type { IntegrationRowSlotProps } from "@vonzio/dashboard-registry";
 import { fetchTelegramBots, fetchTelegramConfig, type TelegramBot, type TelegramConfigInfo } from "./api.js";
 import { TelegramSettings } from "./TelegramSettings.js";
 

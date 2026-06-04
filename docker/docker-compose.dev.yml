@@ -22,26 +22,26 @@ services:
       - ../packages/dashboard/public:/app/packages/dashboard/public
       - ../packages/dashboard/index.html:/app/packages/dashboard/index.html
       - ../packages/dashboard/vite.config.ts:/app/packages/dashboard/vite.config.ts
+      # vite.config.ts imports this; without the mount the dev container's
+      # vite config loader fails with "Could not resolve ./vite-vonzio-plugins.js".
+      - ../packages/dashboard/vite-vonzio-plugins.ts:/app/packages/dashboard/vite-vonzio-plugins.ts
       - ../packages/widget/src:/app/packages/widget/src
       - ../agent-runner/src:/app/agent-runner/src
       - ../config:/app/config
       - ../tools:/app/tools
       - ../tsconfig.base.json:/app/tsconfig.base.json
+      # Built-in plugin policy: read by BOTH the backend loader (so slack +
+      # telegram classify as builtin, not external) and the dashboard Vite
+      # plugin (so their frontends get bundled). Without it the built-ins are
+      # refused at load and produce no frontend.
+      - ../vonzio-plugins.builtins.json:/app/vonzio-plugins.builtins.json
       # Startup wrapper (Better Auth migrate → server) + auth.ts the CLI
       # reads. Mounted instead of COPY'd so script edits don't require an
       # image rebuild.
       - ../scripts/start-dev.sh:/app/scripts/start-dev.sh:ro
       - ../auth.ts:/app/auth.ts:ro
-      # Teller mTLS client cert + key. Lives at $HOME/.config/vonzio/teller/
-      # on the dev host (out of the repo) and is bind-mounted read-only.
-      # The server reads paths from TELLER_CERT_PATH + TELLER_KEY_PATH below.
-      #
-      # Default uses ${HOME} explicitly because Docker Compose does NOT
-      # expand `~` in variable substitutions — it only "works" on Docker
-      # Desktop because the CLI happens to expand it. On plain Linux
-      # Docker / CI runners, `~` would bind a literal directory named
-      # "~" inside the compose project. ${HOME} expands portably.
-      - ${TELLER_CERT_HOST_DIR:-${HOME}/.config/vonzio/teller}:/run/secrets/teller:ro
+      # Teller is now the external @vonzio/plugin-teller plugin — mount its mTLS
+      # cert + set TELLER_* per that plugin's README when you install it.
     # Override: run Better Auth schema migration, then API (watch) +
     # dashboard (vite) with hot reload. The wrapper script makes the
     # Better Auth step a precondition for the stack — without it,
@@ -119,18 +119,6 @@ services:
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
       # Ollama Cloud (optional)
       - OLLAMA_ENABLED=${OLLAMA_ENABLED:-}
-      # Teller (optional) — mTLS client cert + key bind-mounted above.
-      # APP_ID is the cert's CN; TELLER_API_BASE defaults to Teller's
-      # production API (Connect can issue against sandbox or real banks).
-      - TELLER_APP_ID=${TELLER_APP_ID:-}
-      - TELLER_CERT_PATH=${TELLER_CERT_PATH:-/run/secrets/teller/certificate.pem}
-      - TELLER_KEY_PATH=${TELLER_KEY_PATH:-/run/secrets/teller/private_key.pem}
-      - TELLER_API_BASE=${TELLER_API_BASE:-https://api.teller.io}
-      - TELLER_SIGNING_PUBKEY=${TELLER_SIGNING_PUBKEY:-}
-      # sandbox | development | production. Defaults to sandbox so a fresh
-      # checkout can't accidentally pull live bank data. Set to
-      # `development` in .env to link real banks on Teller's free tier.
-      - TELLER_ENVIRONMENT=${TELLER_ENVIRONMENT:-sandbox}
 
   # Marketing site + public docs moved to the vonzio/web repo and deploys
   # to Cloudflare Pages. To work on it locally, clone vonzio/web and run

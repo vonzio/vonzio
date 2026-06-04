@@ -49,7 +49,7 @@ const plugin: VonzioPlugin<SlackPluginConfig> = {
       "slack plugin init",
     );
 
-    const slackService = new SlackService();
+    const slackService = new SlackService(ctx.http);
 
     // Auth-gated OAuth routes (/v1/integrations/slack/config + authorize).
     // Wrap in an explicit child scope so the addHook("onRequest",
@@ -65,6 +65,7 @@ const plugin: VonzioPlugin<SlackPluginConfig> = {
         },
         integrationService: ctx.core.integrations,
         encryption: ctx.core.encryption,
+        http: ctx.http,
         authHook: ctx.core.authHook,
       });
     });
@@ -80,6 +81,7 @@ const plugin: VonzioPlugin<SlackPluginConfig> = {
       },
       integrationService: ctx.core.integrations,
       encryption: ctx.core.encryption,
+      http: ctx.http,
     });
 
     // /api/slack/events + the 5 orchestrator-event subscriptions.
@@ -104,6 +106,7 @@ const plugin: VonzioPlugin<SlackPluginConfig> = {
       imageRewriterService: ctx.core.imageRewriter,
       modelListService: ctx.core.modelList,
       sessionEvents: ctx.sessionEvents,
+      http: ctx.http,
     });
 
     // Bus-inverted notify handler (kind = "slack"). Same pattern as
