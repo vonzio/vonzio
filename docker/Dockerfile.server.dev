@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:26-slim
 
 # Build tools for native modules (better-sqlite3, bcrypt) +
 # procps so `tsx watch` can call `ps` to enumerate child PIDs on reload —
