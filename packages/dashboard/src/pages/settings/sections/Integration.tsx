@@ -308,6 +308,10 @@ export function IntegrationSection() {
                 <span style={{ fontSize: 12, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>not configured by admin</span>
               )
             }
+            // Stay non-last so the bottom seam survives when a plugin adds a
+            // data-sources row below (e.g. @vonzio/plugin-teller); if none
+            // register, the row's bottom border is hidden by Card's own border.
+            isLast={getIntegrationRows("data-sources").length === 0}
           />
           {/* Bank (Teller) is contributed by @vonzio/plugin-teller via
               registerIntegrationRow(section: "data-sources"). */}
