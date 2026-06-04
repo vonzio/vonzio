@@ -246,6 +246,10 @@ export interface OrchestratorLike {
     sessionId: string,
     profile: import("@vonzio/shared").ResolvedProfile,
   ): Promise<string | null>;
+  /** Resolve a per-task plugin-MCP bearer token to its session identity. */
+  resolvePluginMcpToken(
+    token: string,
+  ): { userId: string; profileId: string; orgId: string | null } | null;
 }
 
 export interface EventLogLike {
@@ -927,6 +931,10 @@ export function buildPluginContext<TConfig>(args: {
     ? opts.mcpRegistry
     : stub<McpRegistryImpl>("mcp.register", "mcpRegistry");
 
+  const mcpSessions: import("@vonzio/plugin-api").McpSessions = granted.has("mcp.register")
+    ? { resolve: (token) => opts.orchestrator.resolvePluginMcpToken(token) }
+    : stub<import("@vonzio/plugin-api").McpSessions>("mcp.register", "mcpSessions");
+
   const scheduler = granted.has("scheduler.run")
     ? opts.scheduler
     : stub<SchedulerImpl>("scheduler.run", "scheduler");
@@ -946,6 +954,7 @@ export function buildPluginContext<TConfig>(args: {
     secrets,
     notificationBus,
     mcpRegistry,
+    mcpSessions,
     scheduler,
     sessionEvents,
   };
