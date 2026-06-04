@@ -187,10 +187,11 @@ export class DockerManager implements ContainerManager {
         }
       }
 
-      // Fallback to top-level IP
-      if (info.NetworkSettings?.IPAddress) {
-        return info.NetworkSettings.IPAddress;
-      }
+      // Fallback to top-level IP. @types/dockerode 4 dropped IPAddress from the
+      // NetworkSettings type, but the Docker API still returns it for containers
+      // on the default bridge network — read it through a cast to keep the fallback.
+      const topLevelIp = (info.NetworkSettings as { IPAddress?: string } | undefined)?.IPAddress;
+      if (topLevelIp) return topLevelIp;
 
       return null;
     } catch {
