@@ -1,6 +1,5 @@
 // Structured audit logging for the plugin loader + the runtime membrane/HTTP
-// surfaces, and the best-effort intrinsics tamper snapshot. See
-// docs/PLUGIN_LOADER_SPEC.md §11, §14.
+// surfaces, and the best-effort intrinsics tamper snapshot.
 //
 // All events flow to the same pino logger as core's security events; operators
 // tail this channel during plugin onboarding. None of this REFUSES anything at

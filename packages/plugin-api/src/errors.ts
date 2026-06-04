@@ -1,6 +1,6 @@
 // Error types thrown by the loader + the runtime membrane/wrappers. Exported
 // from @vonzio/plugin-api so plugin authors and the attack corpus can assert
-// on them by class. See docs/PLUGIN_LOADER_SPEC.md §7, §9, §10, §11.
+// on them by class.
 
 /**
  * Refusal reason codes emitted in the audit "plugin refused" event (§11).

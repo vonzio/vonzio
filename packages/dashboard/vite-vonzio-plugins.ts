@@ -5,8 +5,6 @@
 // every <script> tag (core-server injects the real nonce at serve time) and
 // emits `dist/.plugins.json` so the server can verify build↔runtime parity.
 //
-// See docs/PLUGIN_LOADER_SPEC.md §16 PR 3J.2.
-//
 // WHY THIS FILE INLINES hashPackageDir / findRepoRoot / classifySource instead
 // of importing them from @vonzio/plugin-api/policy (which core-server uses):
 // Vite loads this config through esbuild's config bundler, which EXTERNALIZES

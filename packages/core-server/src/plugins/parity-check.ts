@@ -2,7 +2,7 @@
 // server verifies that the frontends the dashboard ACTUALLY bundled (recorded
 // in dist/.plugins.json by the Vite plugin) agree with the backend's runtime
 // policy — so an operator can't end up serving a frontend the policy doesn't
-// approve, or a stale bundle after a policy change. See PLUGIN_LOADER_SPEC §16.
+// approve, or a stale bundle after a policy change.
 //
 // Honest scope: this catches OPERATOR DRIFT (rebuild forgotten, policy edited
 // after build). It assumes dist/.plugins.json is protected by the same

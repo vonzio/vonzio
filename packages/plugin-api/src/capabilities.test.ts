@@ -9,8 +9,7 @@ import {
 
 describe("capability enum", () => {
   it("has exactly 31 capabilities (the §5 enumerated union)", () => {
-    // The enumerated union in capabilities.ts is authoritative. If
-    // docs/PLUGIN_LOADER_SPEC.md §5 prose disagrees, the prose is stale.
+    // The enumerated union in capabilities.ts is authoritative.
     expect(PLUGIN_CAPABILITIES).toHaveLength(31);
   });
 
