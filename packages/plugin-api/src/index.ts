@@ -179,6 +179,14 @@ export interface PluginContext<TConfig = unknown> {
   /** Where the plugin contributes an MCP server. */
   mcpRegistry: McpRegistry;
 
+  /**
+   * Resolve the per-task bearer token core attaches when it injects this
+   * plugin's MCP server into an agent container. Present only when the plugin
+   * declared `mcp.register` and the operator granted it; otherwise accessing it
+   * throws `CapabilityViolationError`. See §10.
+   */
+  mcpSessions: McpSessions;
+
   /** Where the plugin schedules background work. */
   scheduler: Scheduler;
 
@@ -817,6 +825,14 @@ export interface McpServerSpec {
   /**
    * How agents reach the server. `stdio` = spawn a process per agent
    * session; `http` = a single endpoint reachable by all sessions.
+   *
+   * For `http`, `url` MUST be an absolute PATH (e.g. `/plugins/teller/mcp`) — the
+   * plugin serves its MCP route via `ctx.server` and core resolves the path
+   * against its internal server URL at injection time, so the plugin needn't
+   * know the internal host. External / protocol-relative / traversing urls are
+   * REFUSED at `registerServer`: core attaches a per-task bearer token and that
+   * token must never leave the deployment. Core adds the `Authorization` header
+   * itself; the plugin's route resolves it via {@link McpSessions.resolve}.
    */
   transport:
     | {
@@ -830,6 +846,17 @@ export interface McpServerSpec {
 
 export interface McpRegistry {
   registerServer(spec: McpServerSpec): void;
+}
+
+/**
+ * Identity behind a per-task token core minted when it injected the plugin's
+ * MCP server into an agent container. The plugin's MCP HTTP route reads the
+ * `Authorization: Bearer <token>` header and resolves it here to scope the
+ * call to the right user / profile / tenant. Gated by `mcp.register`.
+ */
+export interface McpSessions {
+  /** Resolve a per-task MCP token, or null if unknown/expired. */
+  resolve(token: string): { userId: string; profileId: string; orgId: string | null } | null;
 }
 
 /**

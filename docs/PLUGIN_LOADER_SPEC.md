@@ -678,6 +678,42 @@ interface PluginSecrets { mtls(name: string): MtlsRef }   // ctx.secrets
 Resolution + each mTLS outbound call are audited (`plugin mtls secret
 resolved`, and `mtls_secret` on the `plugin outbound call` event).
 
+### Plugin-contributed MCP servers (`mcp.register` + `ctx.mcpSessions`)
+
+A plugin contributes MCP tools to agents by serving an HTTP route (via
+`ctx.server`) and registering it:
+
+```typescript
+ctx.mcpRegistry.registerServer({
+  name: "teller",
+  transport: { type: "http", url: "/plugins/teller/mcp" },  // leading "/" = path
+});
+```
+
+At task launch the orchestrator injects **every** registered http MCP server
+into the agent container — unconditionally (the plugin's route does its own
+per-user filtering and returns nothing when the user has no relevant data; this
+trades the built-in MCPs' "inject only if the user has a row" optimization for a
+far smaller contract). For each, core:
+
+- resolves the spec's `url` (an absolute PATH, e.g. `/plugins/teller/mcp`)
+  against its internal server URL so the plugin needn't know the internal host.
+  External / protocol-relative / traversing urls are refused at `registerServer`
+  — core attaches a token, which must never leave the deployment,
+- mints a per-task bearer token and attaches it as the `Authorization` header,
+- tears the token down when the task finishes.
+
+The plugin's route reads `Authorization: Bearer <token>` and resolves it:
+
+```typescript
+const session = ctx.mcpSessions.resolve(token);  // { userId, profileId, orgId } | null
+```
+
+`ctx.mcpSessions` is gated by the same `mcp.register` capability (no separate
+capability). The token is per-task and delivered only to that server's URL, so a
+plugin can't resolve another plugin's tokens in practice. stdio MCP specs are
+not injected over this path.
+
 ### Three-tier storage story
 
 | Tier | Capability | Who | Why |
