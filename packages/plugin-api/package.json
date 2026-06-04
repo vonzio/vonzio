@@ -1,6 +1,6 @@
 {
   "name": "@vonzio/plugin-api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Plugin contract for vonzio. Defines the types + helpers a plugin author implements; defines what core-server's loader and bus implement. Stable surface: breaking changes require a major bump.",
@@ -21,10 +21,15 @@
     "./frontend": {
       "types": "./src/frontend.ts",
       "import": "./src/frontend.ts"
+    },
+    "./policy": {
+      "types": "./src/policy.ts",
+      "import": "./src/policy.ts"
     }
   },
   "scripts": {
     "build": "tsc",
+    "prepare-dist": "node ../../scripts/prepare-sdk-dist.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -12,6 +12,7 @@
   "workspaces": [
     "packages/shared",
     "packages/plugin-api",
+    "packages/dashboard-registry",
     "packages/plugins/*",
     "packages/core-server",
     "packages/dashboard",
