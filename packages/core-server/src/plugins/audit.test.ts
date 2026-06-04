@@ -31,6 +31,7 @@ const audit: PluginLoadAudit = {
   capabilitiesGranted: ["storage.kv", "http.outbound"],
   outboundHostsDeclared: ["hello.example.com"],
   outboundHostsGranted: ["hello.example.com"],
+  mtlsSecrets: [],
   schemaPrefix: null,
   routePrefix: { kind: "auto" },
   frontendApproved: false,

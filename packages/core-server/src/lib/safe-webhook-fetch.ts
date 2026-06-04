@@ -84,19 +84,51 @@ const DEFAULT_MAX_REDIRECTS = 3;
  * substituted the IP literal into the URL, which made TLS validate the cert
  * against the IP and fail with "does not match certificate's altnames".)
  */
-function pinnedDispatcher(ip: string, family: 4 | 6): Agent {
-  // net/tls `lookup` shape: (hostname, options, callback). With options.all the
-  // callback wants an array; otherwise (address, family). Typed loosely at this
-  // node/undici interop boundary.
-  const lookup = (
-    _hostname: string,
-    options: { all?: boolean },
-    cb: (...args: unknown[]) => void,
-  ): void => {
-    if (options && options.all) cb(null, [{ address: ip, family }]);
-    else cb(null, ip, family);
-  };
-  return new Agent({ connect: { lookup: lookup as never } });
+/** Client-cert material for a mutual-TLS connection (PEM bytes, already read
+ *  from the operator-provisioned files by the caller). */
+export interface MtlsMaterial {
+  cert: string | Buffer;
+  key: string | Buffer;
+  /** PEM CA bundle to trust the server cert (private mTLS endpoints). */
+  ca?: string | Buffer;
+  passphrase?: string;
+}
+
+/**
+ * Build an undici dispatcher with two independent, composable `connect`
+ * options:
+ *  - `pin`: a custom `lookup` that forces the connection to a pre-validated IP
+ *    (DNS-rebind defense) while leaving the request URL hostname intact, so TLS
+ *    SNI + cert validation + the Host header still use the real hostname.
+ *  - `mtls`: a client certificate + key presented during the TLS handshake.
+ * Both live on the same `connect` object and coexist without interference.
+ */
+function makeConnectDispatcher(opts: {
+  pin?: { ip: string; family: 4 | 6 };
+  mtls?: MtlsMaterial;
+}): Agent {
+  const connect: Record<string, unknown> = {};
+  if (opts.pin) {
+    const { ip, family } = opts.pin;
+    // net/tls `lookup` shape: (hostname, options, callback). With options.all the
+    // callback wants an array; otherwise (address, family). Typed loosely at this
+    // node/undici interop boundary.
+    connect.lookup = ((
+      _hostname: string,
+      options: { all?: boolean },
+      cb: (...args: unknown[]) => void,
+    ): void => {
+      if (options && options.all) cb(null, [{ address: ip, family }]);
+      else cb(null, ip, family);
+    }) as never;
+  }
+  if (opts.mtls) {
+    connect.cert = opts.mtls.cert;
+    connect.key = opts.mtls.key;
+    if (opts.mtls.ca) connect.ca = opts.mtls.ca;
+    if (opts.mtls.passphrase) connect.passphrase = opts.mtls.passphrase;
+  }
+  return new Agent({ connect });
 }
 
 /**
@@ -301,6 +333,9 @@ export interface SafeFetchInit {
   method?: string;
   headers?: Record<string, string>;
   body?: SafeFetchBody;
+  /** Present a client certificate for mutual TLS. The cert/key bytes are read
+   *  server-side (never by plugin code). Composes with the IP pin. */
+  mtls?: MtlsMaterial;
 }
 
 /** Raw result of {@link safeFetchCore}: bytes + headers preserved so callers
@@ -356,6 +391,11 @@ export async function safeFetchCore(
   let currentMethod = init.method ?? "POST";
   let currentBody: SafeFetchBody | undefined = init.body;
   let redirectCount = 0;
+  // Host the mTLS client cert is bound to (the ORIGINAL target). The cert is
+  // presented only to this host; a redirect to a different host — even another
+  // allowlisted one — does NOT get the client cert, so the credential can't
+  // spill across hosts. Captured on the first validated hop.
+  let mtlsHost: string | undefined;
   let lastResponse: Response | null = null;
   // The dispatcher pinning the CURRENT hop's connection to its validated IP.
   // Kept open until its response body is read; closed in the outer finally.
@@ -382,9 +422,21 @@ export async function safeFetchCore(
         await currentDispatcher.close().catch(() => {});
         currentDispatcher = undefined;
       }
-      // Allowlisted hosts skip pinning (the explicit "internal callback" path).
-      if (!validated.allowlisted) {
-        currentDispatcher = pinnedDispatcher(validated.resolvedIp, validated.family);
+      // Bind the client cert to the original target host: present it only when
+      // this hop's host matches the first hop's. A cross-host redirect drops the
+      // cert (and likely fails at the new host, which is the safe outcome).
+      if (mtlsHost === undefined) mtlsHost = validated.bareHost;
+      const hopMtls = init.mtls && validated.bareHost === mtlsHost ? init.mtls : undefined;
+
+      // Allowlisted hosts skip IP pinning (the explicit "internal callback"
+      // path). A dispatcher is still needed when this call carries an mTLS
+      // client cert, so build one whenever pinning OR mTLS applies.
+      const needPin = !validated.allowlisted;
+      if (needPin || hopMtls) {
+        currentDispatcher = makeConnectDispatcher({
+          pin: needPin ? { ip: validated.resolvedIp, family: validated.family } : undefined,
+          mtls: hopMtls,
+        });
       }
 
       try {

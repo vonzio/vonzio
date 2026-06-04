@@ -188,6 +188,15 @@ export interface PluginContext<TConfig = unknown> {
    * surfaces (e.g. Telegram chat, Slack thread).
    */
   sessionEvents: SessionEvents;
+
+  /**
+   * Resolve operator-provisioned secret material into opaque references.
+   * Present only when the plugin declared `secrets.mtls` (with a non-empty
+   * `manifest.mtlsSecrets`) and the operator both granted it and provisioned
+   * the cert/key files in policy; otherwise accessing it throws
+   * `CapabilityViolationError`. v1 covers mTLS client certs only. See §5, §10.
+   */
+  secrets: PluginSecrets;
 }
 
 /**
@@ -895,10 +904,47 @@ export interface PluginHttpInit {
   timeoutMs?: number;
   /** Per-call max response size override (bytes), capped at 5 MiB. */
   maxResponseBytes?: number;
+  /**
+   * Present a client certificate for mutual TLS on this call. Pass an
+   * {@link MtlsRef} obtained from `ctx.secrets.mtls(name)` — core reads the
+   * operator-provisioned cert/key files server-side at request time; the cert
+   * material never passes through plugin code. Gated by `secrets.mtls`. See §10.
+   */
+  mtls?: MtlsRef;
 }
 
 export interface PluginHttp {
   fetch(url: string, init?: PluginHttpInit): Promise<Response>;
+}
+
+/**
+ * Opaque handle to operator-provisioned mTLS client material, resolved from a
+ * logical name the plugin declared in `manifest.mtlsSecrets`. The plugin CANNOT
+ * read the cert/key bytes through this object — it carries only the logical
+ * `name`. The cert/key files are read server-side when the ref is passed to
+ * `ctx.http.fetch({ mtls })`. See §5, §10.
+ */
+export interface MtlsRef {
+  /** Brand: lets the HTTP surface recognize a genuine ref and keeps the type
+   *  nominal to plugin authors. */
+  readonly __vonzioMtls: true;
+  /** The logical secret name — the only field a plugin can observe. */
+  readonly name: string;
+}
+
+/**
+ * Secret-material resolution surface (`ctx.secrets`). Gated by `secrets.mtls`.
+ * v1 exposes only mTLS client certs as opaque {@link MtlsRef}s; the bytes are
+ * never readable through this surface (the operator provisions them as host
+ * files in policy and core loads them server-side at request time).
+ */
+export interface PluginSecrets {
+  /**
+   * Resolve a declared mTLS secret `name` (from `manifest.mtlsSecrets`) into an
+   * opaque ref for `ctx.http.fetch({ mtls })`. Throws `CapabilityViolationError`
+   * if the name was not declared + provisioned.
+   */
+  mtls(name: string): MtlsRef;
 }
 
 export {
@@ -913,10 +959,12 @@ export {
   MANIFEST_ALLOWED_KEYS,
   POLICY_ENTRY_ALLOWED_KEYS,
   SCHEMA_PREFIX_PATTERN,
+  MTLS_SECRET_NAME_PATTERN,
 } from "./manifest.js";
 export type {
   PluginManifest,
   ManifestRoutePrefix,
+  MtlsSecretFiles,
   PluginSource,
   PolicyEntry,
   OperatorPolicy,
