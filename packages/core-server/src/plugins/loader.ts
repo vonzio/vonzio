@@ -154,6 +154,8 @@ type IntegrationRow = {
   type: string;
   config: Record<string, unknown>;
   enabled: boolean;
+  scope: "all" | "agents";
+  profile_ids: string[];
   updated_at: string;
 };
 

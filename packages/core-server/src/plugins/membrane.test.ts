@@ -158,17 +158,29 @@ describe("assembleCore — integrations masked vs decrypted (fail-closed)", () =
     base.integrations.listByTypeAndExternalId = async () => [row];
     return base as unknown as PluginCore;
   }
-  const secretRow = { id: "i1", config: { channel: "C1", bot_token: "xoxb-REAL", api_key: "sk-REAL" } };
+  const secretRow = {
+    id: "i1",
+    config: { channel: "C1", bot_token: "xoxb-REAL", api_key: "sk-REAL" },
+    scope: "agents",
+    profile_ids: ["pr1"],
+  };
 
   it("masked-only re-redacts secrets even on methods that decrypt unconditionally", async () => {
     const { core } = assembleCore(coreReturning(secretRow), {
       pluginName: "p",
       granted: grant("integrations.read.masked"),
     });
-    const viaGet = (await core.integrations.get("i1")) as { config: Record<string, string> };
+    const viaGet = (await core.integrations.get("i1")) as {
+      config: Record<string, string>;
+      scope: string;
+      profile_ids: string[];
+    };
     expect(viaGet.config.bot_token).toBe("••••••••");
     expect(viaGet.config.api_key).toBe("••••••••");
     expect(viaGet.config.channel).toBe("C1"); // non-secret preserved
+    // scope + profile_ids survive redaction so a plugin can gate per-profile.
+    expect(viaGet.scope).toBe("agents");
+    expect(viaGet.profile_ids).toEqual(["pr1"]);
     // the leaky no-opts method is now also redacted at the membrane
     const viaList = (await core.integrations.getByUserAndType("u", "slack")) as { config: Record<string, string> };
     expect(viaList.config.bot_token).toBe("••••••••");
