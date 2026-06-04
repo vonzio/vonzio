@@ -255,6 +255,11 @@ Notes:
 - The integration row's `type` is the discriminator. Pick a stable
   short string ("telegram", "slack", "github", etc.) and use it
   consistently.
+- Each row carries `scope` (`"all" | "agents"`) and `profile_ids`
+  (plugin-api ≥ 1.1.0). To honour the user's per-profile visibility when
+  surfacing a row to an agent (e.g. an MCP tool), filter with
+  `scope === "all" || profile_ids.includes(profileId)` — where `profileId`
+  comes from `ctx.mcpSessions.resolve(token)`.
 
 ---
 
@@ -458,8 +463,25 @@ const register: PluginFrontendEntry = () => {
 export default register;
 ```
 
-The dashboard's `plugins.ts` imports each plugin's `/frontend` entry
-and calls its `register()` once before React mounts.
+A plugin's frontend is bundled into the dashboard **only when the
+operator policy approves it**. The dashboard's `vonzio-plugins` Vite
+plugin reads `vonzio-plugins.builtins.json` + the operator's
+`vonzio-plugins.json` at build time and bundles a plugin's frontend
+only if its policy entry sets `approved_frontend: true` (built-ins are
+auto-approved; externals require `vonzio plugin approve --frontend`).
+The approved set is exposed to `plugins.ts` via the virtual module
+`virtual:vonzio-plugins`, and `dist/.plugins.json` records what was
+bundled so the server can verify build↔runtime parity at boot.
+
+Frontend code runs in the dashboard origin with full DOM + session
+access — approving it is a real trust grant (see
+[SECURITY_MODEL.md](./SECURITY_MODEL.md) and the loader spec §2). The
+dashboard ships a strict Content-Security-Policy
+(`script-src 'nonce-<per-request>' 'strict-dynamic'`, no `'self'`) so
+**bundling is the only path code reaches the dashboard origin**: a
+script served from a plugin's Fastify route (or injected via XSS) lacks
+the per-request nonce and the browser refuses it. Approved frontend code
+is still fully trusted once bundled.
 
 ### Available slots (v0.1)
 
@@ -641,6 +663,31 @@ src/
 ---
 
 ## 12. Common patterns
+
+### Calling an mTLS upstream (`secrets.mtls`)
+
+If an upstream requires a client certificate (mutual TLS — e.g. the Teller
+banking API), you never handle the private key yourself. Declare the capability
+and the logical cert names; the operator provisions the PEM files in policy:
+
+```jsonc
+// package.json "vonzio" block
+"capabilities": ["http.outbound", "secrets.mtls"],
+"outboundHosts": ["api.teller.io"],
+"mtlsSecrets": ["teller-client"]
+```
+
+```ts
+// in init() / a request handler
+const ref = ctx.secrets.mtls("teller-client");          // opaque — no bytes
+const res = await ctx.http.fetch("https://api.teller.io/accounts", { mtls: ref });
+```
+
+The operator maps each name to host files in `vonzio-plugins.json`
+(`mtls_secrets: { "teller-client": { cert, key, ca?, passphraseEnv? } }`). Core
+reads the PEMs and presents the cert server-side; your code only ever holds the
+opaque ref. A name you didn't declare (or the operator didn't provision) throws
+`CapabilityViolationError`. See [PLUGIN_LOADER_SPEC.md §5](./PLUGIN_LOADER_SPEC.md).
 
 ### Auth scoping for fastify-plugins
 

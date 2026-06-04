@@ -54,6 +54,11 @@ COPY packages/plugin-api/ packages/plugin-api/
 COPY packages/core-server/ packages/core-server/
 COPY packages/dashboard/ packages/dashboard/
 COPY packages/widget/ packages/widget/
+# Built-in plugin policy: read at dashboard BUILD time (the Vite plugin bundles
+# the approved built-in frontends) and at RUNTIME (the loader classifies slack +
+# telegram as builtin instead of external, and the dashboard parity check
+# validates the bundle). Must land before the `vite build` below.
+COPY vonzio-plugins.builtins.json ./
 # Schema-only Better Auth config used by @better-auth/cli at startup
 # (see scripts/start-prod.sh). Without this, fresh installs crash with
 # `relation "user" does not exist` -- the dev image got away with it
