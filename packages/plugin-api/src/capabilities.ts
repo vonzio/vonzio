@@ -3,7 +3,7 @@
 // OF TRUTH consumed by the loader (to validate manifests + cross-check the
 // operator policy) and by the membrane (to assemble the per-plugin `core`
 // object method-by-method and to decide which non-core `ctx` surfaces to
-// attach). See docs/PLUGIN_LOADER_SPEC.md §5, §7.
+// attach).
 //
 // The runtime array `PLUGIN_CAPABILITIES` is authoritative; the
 // `PluginCapability` type is derived from it so a completeness test can

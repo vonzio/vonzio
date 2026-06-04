@@ -1,6 +1,6 @@
 // The audited outbound HTTP surface handed to plugins as `ctx.http` (gated by
 // the `http.outbound` capability). Every call is SSRF-checked + allowlist-
-// checked (manifest∩policy hosts) and logged. See docs/PLUGIN_LOADER_SPEC.md §10.
+// checked (manifest∩policy hosts) and logged.
 //
 // Also provides best-effort detection of plugins that reach for the GLOBAL
 // `fetch` instead of `ctx.http.fetch`. This is an OBSERVABILITY aid, not a

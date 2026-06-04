@@ -1,6 +1,6 @@
 // `vonzio plugin` CLI: approve an installed external plugin into the operator
 // policy file, diff changes since last approval, and dry-run the loader
-// validation (`--list-plugins`). See docs/PLUGIN_LOADER_SPEC.md §4, §6.
+// validation (`--list-plugins`).
 //
 // Run: npx tsx packages/core-server/src/plugins/cli.ts <subcommand> [args]
 //

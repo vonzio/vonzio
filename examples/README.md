@@ -1,7 +1,6 @@
 # vonzio plugin examples
 
 Worked examples for the external plugin loader (see
-[`docs/PLUGIN_LOADER_SPEC.md`](../docs/PLUGIN_LOADER_SPEC.md) and
 [`docs/PLUGINS.md`](../docs/PLUGINS.md)).
 
 ## `plugin-hello/`

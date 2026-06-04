@@ -9,7 +9,7 @@
 // script emits a SEPARATE `dist/package.json` (no private, exports → built
 // `./*.js` + `./*.d.ts`, workspace `*` deps pinned to `^version`) so the dist
 // directory is a self-contained, publishable package. CI does `cd dist && npm
-// publish`. See docs/PLUGIN_LOADER_SPEC.md §16 follow-ups / PR-A.
+// publish`.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, copyFileSync, rmSync } from "node:fs";
@@ -76,7 +76,7 @@ const license = path.join(repoRoot, "LICENSE");
 if (existsSync(license)) copyFileSync(license, path.join(pkgDir, "dist", "LICENSE"));
 writeFileSync(
   path.join(pkgDir, "dist", "README.md"),
-  `# ${src.name}\n\n${src.description ?? ""}\n\nPart of [vonzio](https://vonzio.com). See the external plugin SDK guide: https://github.com/vonzio/vonzio/blob/main/docs/PLUGIN_SDK.md\n`,
+  `# ${src.name}\n\n${src.description ?? ""}\n\nPart of [vonzio](https://vonzio.com). See the plugin guide: https://github.com/vonzio/vonzio/blob/main/docs/PLUGINS.md\n`,
 );
 
 console.log(`prepared ${src.name}@${src.version} in ${path.relative(repoRoot, path.join(pkgDir, "dist"))}/`);

@@ -3,7 +3,7 @@
 // It declares exactly three capabilities (storage.kv, notifications.channel,
 // http.outbound), which is the audit signal a small plugin gives: the operator
 // sees precisely what it can reach. The matching manifest lives in
-// package.json under the `vonzio` block. See docs/PLUGIN_LOADER_SPEC.md.
+// package.json under the `vonzio` block.
 
 import type { PluginContext, VonzioPlugin } from "@vonzio/plugin-api";
 
