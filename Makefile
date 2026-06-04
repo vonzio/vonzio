@@ -62,7 +62,8 @@ plugin: ## Plugin policy CLI. Usage: make plugin ARGS="approve @scope/plugin-x -
 publish-sdk-dryrun: ## Build + pack the plugin SDK packages (no publish) to inspect the tarballs
 	cd packages/shared && npm run prepare-dist && cd dist && npm pack
 	cd packages/plugin-api && npm run prepare-dist && cd dist && npm pack
-	@echo "Tarballs written to packages/{shared,plugin-api}/dist/*.tgz — inspect with 'tar tzf <file>'"
+	cd packages/dashboard-registry && npm run prepare-dist && cd dist && npm pack
+	@echo "Tarballs written to packages/{shared,plugin-api,dashboard-registry}/dist/*.tgz — inspect with 'tar tzf <file>'"
 
 test: ## Run all tests
 	npx vitest run
@@ -128,7 +129,7 @@ migrate-to-pg: ## Migrate SQLite data to PostgreSQL. Usage: make migrate-to-pg S
 	npx tsx packages/core-server/src/scripts/migrate-sqlite-to-pg.ts $(SQLITE) $(PG_URL)
 
 clean: ## Remove build artifacts and DB
-	rm -rf packages/shared/dist packages/plugin-api/dist packages/core-server/dist packages/dashboard/dist packages/widget/dist
+	rm -rf packages/shared/dist packages/plugin-api/dist packages/dashboard-registry/dist packages/core-server/dist packages/dashboard/dist packages/widget/dist
 	rm -f packages/*/dist/*.tgz packages/shared/tsconfig.tsbuildinfo packages/core-server/tsconfig.tsbuildinfo
 	rm -f vonzio.db vonzio.db-wal vonzio.db-shm
 

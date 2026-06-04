@@ -10,6 +10,12 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // Force a single copy of React and the dashboard registry across the app
+    // and every bundled plugin frontend. Duplicate React breaks hooks/context;
+    // a duplicate registry module would split registrations from the readers.
+    // The registry also self-pins to globalThis as a backstop, but deduping
+    // keeps external plugins (resolved from their own node_modules) on one copy.
+    dedupe: ["react", "react-dom", "@vonzio/dashboard-registry"],
   },
   server: {
     port: 5173,

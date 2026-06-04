@@ -16,7 +16,7 @@
 //
 // Both consume the plugin-owned API client in ./dashboard/api.ts.
 
-import { registerIntegrationRow, registerWorkspaceHeaderSlot } from "@vonzio/dashboard/registry/api";
+import { registerIntegrationRow, registerWorkspaceHeaderSlot } from "@vonzio/dashboard-registry/api";
 import type { PluginFrontendEntry } from "@vonzio/plugin-api/frontend";
 import { TelegramIntegrationRow } from "./dashboard/TelegramIntegrationRow.js";
 import { WorkspaceHeaderTelegramButton } from "./dashboard/WorkspaceHeaderTelegramButton.js";
