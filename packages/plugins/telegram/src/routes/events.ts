@@ -38,6 +38,7 @@ import type {
   PluginConnectionManager,
   PluginImageRewriter,
   PluginModelList,
+  PluginHttp,
   SessionEvents,
 } from "@vonzio/plugin-api";
 import type { TelegramService } from "../services/telegram-service.js";
@@ -107,6 +108,9 @@ export interface TelegramEventsRoutesOptions {
   platformBotService: PlatformBotService;
   // Shared cached provider lookup for the /model picker.
   modelListService: PluginModelList;
+  // Audited outbound HTTP (ctx.http). Used for the best-effort
+  // Anthropic title-generation call in setupTelegramRelay.
+  http: PluginHttp;
   // Typed facade over orchestrator's EventEmitter. Backs the 5
   // task:* subscriptions inside setupTelegramRelay; replaces the
   // direct orchestrator.on(...) calls the file used to do.
@@ -1755,7 +1759,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
 
 // ---- Orchestrator → Telegram relay ----
 function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyInstance) {
-  const { orchestrator, db, integrationService, telegramService, profileService, workspaceService, eventLog, imageRewriterService, platformBotService, sessionEvents } = opts;
+  const { orchestrator, db, integrationService, telegramService, profileService, workspaceService, eventLog, imageRewriterService, platformBotService, sessionEvents, http } = opts;
 
   async function getTelegramContext(sessionId: string) {
     const rows = await db.select().from(schema.telegramSessions)
@@ -2177,7 +2181,7 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     if (!apiKey) return;
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await http.fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
