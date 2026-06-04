@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Settings, LogOut, Activity, Bot } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { getUserMenuItems } from "../registry/index.js";
-import { useEntitlements } from "../registry/EntitlementContext.js";
+import { useEntitlements } from "@vonzio/dashboard-registry";
 
 interface Props {
   onLogout: () => void;

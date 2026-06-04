@@ -15,6 +15,7 @@ import type { FastifyInstance, onRequestHookHandler } from "fastify";
 import fp from "fastify-plugin";
 import type {
   PluginIntegrationLookup,
+  PluginHttp,
   AuthUser,
 } from "@vonzio/plugin-api";
 
@@ -47,6 +48,9 @@ interface SharedOAuthOpts {
   };
   integrationService: PluginIntegrationLookup;
   encryption: PluginEncryption;
+  // Audited outbound HTTP (ctx.http). Used for the oauth.v2.access
+  // token exchange in the callback route.
+  http: PluginHttp;
 }
 
 export interface SlackOAuthRoutesOptions extends SharedOAuthOpts {
@@ -111,7 +115,7 @@ export const slackOAuthRoutes = fp(
  */
 export const slackOAuthCallbackRoute = fp(
   async (server: FastifyInstance, opts: SharedOAuthOpts) => {
-    const { config, integrationService, encryption } = opts;
+    const { config, integrationService, encryption, http } = opts;
     const callbackBase = config.BETTER_AUTH_URL.replace(/\/$/, "");
 
     server.get<{ Querystring: { code?: string; state?: string; error?: string } }>(
@@ -149,7 +153,7 @@ export const slackOAuthCallbackRoute = fp(
         try {
           // Exchange code for bot token
           const redirectUri = `${callbackBase}/api/slack/callback`;
-          const tokenRes = await fetch("https://slack.com/api/oauth.v2.access", {
+          const tokenRes = await http.fetch("https://slack.com/api/oauth.v2.access", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({

@@ -1,50 +1,9 @@
-export type {
-  ComposerSlotProps,
-  ComposerSlotReg,
-  Entitlement,
-  IntegrationRowReg,
-  IntegrationRowSection,
-  IntegrationRowSlotProps,
-  NavItemReg,
-  NavSection,
-  OnboardingStepProps,
-  OnboardingStepReg,
-  RouteLayout,
-  RouteReg,
-  SettingsSectionReg,
-  TopbarSlotPlacement,
-  TopbarSlotReg,
-  UserMenuItemReg,
-  WorkspaceHeaderSlotProps,
-  WorkspaceHeaderSlotReg,
-} from "./types.js";
-
-export {
-  getComposerSlots,
-  getIntegrationRows,
-  getNavItems,
-  getOnboardingSteps,
-  getRoutes,
-  getSettingsSections,
-  getTopbarSlots,
-  getUserMenuItems,
-  getWorkspaceHeaderSlots,
-  registerComposerSlot,
-  registerIntegrationRow,
-  registerNavItem,
-  registerOnboardingStep,
-  registerRoute,
-  registerSettingsSection,
-  registerTopbarSlot,
-  registerUserMenuItem,
-  registerWorkspaceHeaderSlot,
-  resetRegistry,
-} from "./registry.js";
-
-export {
-  EntitlementsProvider,
-  useEntitlements,
-  useHas,
-} from "./EntitlementContext.js";
-
+// The registry now lives in the standalone, publishable
+// @vonzio/dashboard-registry package so external plugins can consume the
+// register*/get* slot API from npm. This module keeps the
+// `@vonzio/dashboard/registry` entry working for internal dashboard code (and
+// the cp-dashboard overlay) by re-exporting it, plus the dashboard's own
+// registerDefaults — which wires up first-party pages/routes and can't live in
+// the generic package.
+export * from "@vonzio/dashboard-registry";
 export { registerDefaults } from "./defaults.js";
