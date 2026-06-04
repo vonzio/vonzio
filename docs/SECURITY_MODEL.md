@@ -142,9 +142,10 @@ what's documented here.
   not the master key, not other tenants' credentials, not the Docker
   socket. Treat the inside of an agent container as compromised if you
   cannot vouch for the prompts or code it runs.
-- **Plugins** (Phase 3, planned) run in-process with core-server. A
-  malicious plugin is equivalent to a core-server compromise. Only
-  install plugins from sources you trust.
+- **Plugins** run in-process with core-server. The capability membrane and
+  operator approval (`vonzio plugin approve`) guard against honest mistakes,
+  but a deliberately malicious plugin is equivalent to a core-server
+  compromise. Only install — and approve — plugins from sources you trust.
 
 ## Known limitations in the current release
 

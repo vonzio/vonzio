@@ -5,7 +5,7 @@
 // (../vite-vonzio-plugins.ts) reads vonzio-plugins.builtins.json + the operator
 // policy, bundles a plugin's frontend only when it's approved
 // (`approved_frontend: true`), and exposes the approved set via the virtual
-// module `virtual:vonzio-plugins`. See docs/PLUGIN_LOADER_SPEC.md §16 PR 3J.2.
+// module `virtual:vonzio-plugins`.
 //
 // Per-plugin try/catch keeps a broken plugin from blank-screening the dashboard.
 

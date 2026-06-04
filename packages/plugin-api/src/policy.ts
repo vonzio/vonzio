@@ -5,7 +5,7 @@
 //   - core-server's loader (runtime §3 pipeline + the dashboard parity check)
 //   - the dashboard's Vite plugin (build-time frontend bundling, PR 3J.2)
 // The package's main "." entry stays pure + browser-safe; this module is never
-// pulled into the browser bundle. See docs/PLUGIN_LOADER_SPEC.md §3, §4, §16.
+// pulled into the browser bundle.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";

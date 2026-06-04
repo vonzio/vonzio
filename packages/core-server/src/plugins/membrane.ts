@@ -2,7 +2,7 @@
 // set of GRANTED capabilities (declared ∩ approved) and wraps it in a
 // revocable Proxy that throws on access to any undeclared surface.
 //
-// FRAMING (docs/PLUGIN_LOADER_SPEC.md §2, §7): this is hygiene against honest
+// FRAMING: this is hygiene against honest
 // mistakes + runtime legibility, NOT a sandbox. A plugin can defeat it with
 // `require('@vonzio/core-server')` directly; the loader cannot prevent that
 // without out-of-process isolation (v2). What the membrane guarantees is that

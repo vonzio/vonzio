@@ -22,7 +22,7 @@ on top of the defaults; pick the ones that match your threat model.
 - [ ] Terminate TLS in front of core-server (reverse proxy or load balancer)
 - [ ] Pin agent base images to specific digests, not tags
 - [ ] Monitor `agent_runs`, `audit_log`, and Docker daemon logs
-- [ ] Restrict who can install plugins (Phase 3, when shipped)
+- [ ] Restrict who can approve plugins — treat `vonzio plugin approve` + `VONZIO_PLUGINS` like a code deployment
 
 ## Kernel-level isolation (gVisor)
 
@@ -112,7 +112,7 @@ credential. Plan for:
 - OAuth client secrets: rotate per the provider's recommendation
   (typically yearly)
 
-The re-encryption tooling is on the v0.3 roadmap; for now, rotation
+Automated re-encryption tooling is not yet available; for now, rotation
 means logging back into each integration after the secret change.
 
 ## Encrypt data at rest
@@ -191,12 +191,16 @@ Worth alerting on:
   container action
 - Any process inside an agent container that opens an unexpected port
 
-## Restrict plugin installation (Phase 3)
+## Restrict plugin installation
 
-When the plugin system ships, the `VONZIO_PLUGINS` env var becomes a
-code-execution boundary — anyone who can edit it can run code in
-core-server's process. Treat it like a binary deployment: same
-review/approval as a core-server image change.
+The `VONZIO_PLUGINS` env var is a code-execution boundary — a plugin runs
+in core-server's process, so anyone who can add one (and approve it in
+`vonzio-plugins.json` via `vonzio plugin approve`) can run code there. The
+capability membrane and the approval gate guard against honest mistakes,
+not a deliberately malicious plugin. Treat installing/approving a plugin
+like a binary deployment: same review as a core-server image change, and
+only approve plugins — and their declared capabilities — from sources you
+trust.
 
 ---
 

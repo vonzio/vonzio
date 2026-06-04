@@ -1,6 +1,6 @@
 # plugin-hello-attacks
 
-The negative-test corpus from `docs/PLUGIN_LOADER_SPEC.md` §12. Each entry
+The negative-test corpus. Each entry
 below deliberately violates a loader invariant; the **expected outcome** is the
 loader's honest contract — a refusal where the gate refuses, an audit signal
 where the gate is informational, or a documented limitation where the loader
