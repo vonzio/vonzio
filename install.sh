@@ -669,7 +669,34 @@ setup_database() {
   # The Better Auth schema migration is part of the dev container's startup
   # wrapper (scripts/start-dev.sh) so it runs against the compose pg
   # automatically.
+  guard_existing_db
   ok "Database setup is automatic — compose brings up postgres and the server runs Better Auth migrate on startup."
+}
+
+# Docker volumes persist by name, so if a previous install left a postgres
+# volume, the next `up` silently REUSES it — you'd resume that database (its
+# admin + data), not start fresh. Surface that and let an interactive user wipe
+# it. NEVER auto-wipe under --yes: keeping data is the safe non-interactive
+# default (confirm() returns yes for everything when --yes is set, so the wipe
+# must not go through it).
+guard_existing_db() {
+  local project="${COMPOSE_PROJECT_NAME:-vonzio}"
+  local vol="${project}_pgdata"
+  docker volume inspect "$vol" >/dev/null 2>&1 || return 0   # no existing DB — fresh install
+  log ""
+  warn "Found an existing database volume (${vol}) from a previous install."
+  warn "  Starting now REUSES it — you'll resume that database (existing admin + data), not start fresh."
+  if $ASSUME_YES; then
+    info "Keeping it (non-interactive --yes). To start fresh instead, remove it and re-run:"
+    info "    docker volume rm ${vol} ${project}_vonzio-data"
+    return 0
+  fi
+  if confirm "Wipe it and start with a fresh database? (irreversible)" "default-no"; then
+    docker volume rm "${vol}" "${project}_vonzio-data" >/dev/null 2>&1 || true
+    ok "Removed the old database volume — this install starts fresh."
+  else
+    info "Keeping the existing database — the stack will resume your current data."
+  fi
 }
 
 # Poll the dashboard's /health (which proxies to the API) until the stack
