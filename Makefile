@@ -1,5 +1,5 @@
 .PHONY: install check-lock build test e2e e2e-install e2e-fresh e2e-chat dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
-.PHONY: docker-build docker-dev docker-dev-detached docker-dev-oss-detached docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
+.PHONY: docker-build docker-dev docker-dev-detached docker-dev-oss-detached docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat uninstall nuke
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
 # Optional local/downstream extension hook. Any user can drop a `Makefile.saas`
@@ -169,6 +169,12 @@ docker-clean: ## Remove ALL vonzio containers, images, volumes
 	-docker ps -aq --filter "label=managed-by=vonzio" | xargs docker rm -f 2>/dev/null
 	-docker ps -aq --filter "ancestor=vonzio-agent:latest" | xargs docker rm -f 2>/dev/null
 	cd docker && $(COMPOSE_DEV) --profile flavors down -v --rmi local 2>/dev/null || true
+
+uninstall: ## Stop + remove vonzio containers + network (keeps your data, images, checkout)
+	@bash install.sh --uninstall --dir .
+
+nuke: ## DEEP uninstall — also deletes ALL volumes (your DB!) + images. IRREVERSIBLE.
+	@bash install.sh --uninstall --purge --dir .
 
 migrate-to-pg: ## Migrate SQLite data to PostgreSQL. Usage: make migrate-to-pg SQLITE=./vonzio.db PG_URL=postgres://...
 	npx tsx packages/core-server/src/scripts/migrate-sqlite-to-pg.ts $(SQLITE) $(PG_URL)

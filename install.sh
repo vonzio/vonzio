@@ -24,11 +24,18 @@
 #   --tag <tag>         Vonzio release to install (default: latest v* tag).
 #                       Also reads VONZIO_VERSION from the environment.
 #                       Example: --tag v0.1.3  or  VONZIO_VERSION=v0.1.3
-#   --uninstall         Stop containers + ask whether to remove volumes.
 #   --dir <path>        Install location for the curl-piped case (default: ~/vonzio).
 #   --yes, -y           Auto-confirm all "install missing dep?" prompts.
 #   --no-start          Set everything up but don't start the stack.
 #   --reset-env         Back up an existing .env and regenerate it.
+#
+# Uninstall:
+#   --uninstall         Stop + remove containers + network (keeps data/images/dir).
+#   --uninstall --purge IRREVERSIBLE: also remove all volumes (DB + sessions) +
+#                       app images. The ENCRYPTION_KEY in .env is the only key to
+#                       your stored credentials — gone for good.
+#   --remove-base       With --purge, also drop the heavy agent-base image.
+#   --remove-dir        Also delete the checkout directory.
 #
 # Env knobs (mostly for CI/automation):
 #   VONZIO_NO_OPEN=1    Don't open a browser when the stack is ready.
@@ -58,6 +65,12 @@ ASSUME_YES=false
 NO_START=false
 RESET_ENV=false
 ACTION="install"
+# Uninstall tiers (see do_uninstall): --purge removes data + images,
+# --remove-dir deletes the checkout, --remove-base also drops the heavy
+# agent-base image (kept by default).
+PURGE=false
+REMOVE_DIR=false
+REMOVE_BASE=false
 # Resolved app version we're about to install (set early by announce_version so
 # the user sees it BEFORE the install-location prompt, and reused in step 3).
 RESOLVED_REF=""
@@ -522,6 +535,9 @@ parse_args() {
       --yes|-y) ASSUME_YES=true; shift ;;
       --no-start) NO_START=true; shift ;;
       --reset-env) RESET_ENV=true; shift ;;
+      --purge) PURGE=true; shift ;;
+      --remove-dir) REMOVE_DIR=true; shift ;;
+      --remove-base) REMOVE_BASE=true; shift ;;
       *) echo "Unknown arg: $1 (try --help)" >&2; exit 2 ;;
     esac
   done
@@ -603,6 +619,11 @@ detect_mode() {
   fi
 }
 
+# Tiered uninstall:
+#   (default)        stop + remove containers + network. Keeps data/images/dir.
+#   --purge          + all volumes (DB + sessions) + app images. IRREVERSIBLE.
+#   --remove-base    (with --purge) also drop the heavy agent-base image.
+#   --remove-dir     delete the checkout.
 do_uninstall() {
   step "Uninstalling vonzio core"
   local target="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
@@ -611,22 +632,64 @@ do_uninstall() {
     exit 1
   fi
   cd "$target"
-  info "Stopping containers…"
-  (cd docker && docker compose -f docker-compose.yml -f docker-compose.dev.yml down 2>&1 | tail -3) || true
-  # Legacy standalone postgres from older installer versions. Today the
-  # compose stack brings its own postgres up; this remove is a no-op
-  # for fresh installs.
+
+  # Stop + remove the stack. compose needs --env-file or it can't interpolate
+  # the required ENCRYPTION_KEY and aborts; fall back to removing by name when
+  # there's no .env (a partial/broken install).
+  info "Stopping the stack…"
+  if [[ -f .env ]]; then
+    ( cd docker && docker compose --env-file ../.env \
+        -f docker-compose.yml -f docker-compose.dev.yml down 2>&1 | tail -2 ) || true
+  else
+    docker ps -aq --filter "name=^vonzio-" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
+  fi
   docker rm -f vonzio-pg 2>/dev/null && info "Removed legacy standalone postgres" || true
-  if confirm "Remove postgres volume + agent session volumes? (irreversible)" "default-no"; then
-    # vonzio_pgdata is the current name (project `vonzio`); docker_pgdata is the
-    # legacy name from when the project defaulted to the docker/ dir — remove
-    # both so older installs get cleaned up too.
-    docker volume rm vonzio_pgdata docker_pgdata 2>/dev/null || true
-    docker volume ls -q | grep -E "^vonzio-(ws|sdk)-" | xargs -r docker volume rm 2>/dev/null || true
-    ok "Volumes removed."
+  # Spawned agent containers are ephemeral (not in compose) — clear by label.
+  docker ps -aq --filter "label=managed-by=vonzio" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker network rm vonzio-network >/dev/null 2>&1 && info "Removed network vonzio-network." || true
+  ok "Stack stopped + containers removed."
+
+  if ! $PURGE; then
+    log ""
+    ok "Light uninstall done — your database, images, and checkout were kept."
+    log "  Deep clean: ${C_DIM}bash install.sh --uninstall --purge${C_RESET}  ${C_DIM}(deletes the DB + images)${C_RESET}"
+    return 0
+  fi
+
+  # --purge: irreversible.
+  log ""
+  warn "${C_BOLD}--purge permanently deletes your database and credentials.${C_RESET}"
+  warn "  The ENCRYPTION_KEY in .env is the only key to your stored credentials."
+  if ! confirm "Delete all vonzio volumes + images? (irreversible)" "default-no"; then
+    err "Aborted — nothing purged."
+    exit 1
+  fi
+
+  # Volumes: compose (current + legacy names) + per-session.
+  docker volume rm vonzio_pgdata vonzio_vonzio-data docker_pgdata docker_vonzio-data 2>/dev/null || true
+  docker volume ls -q 2>/dev/null | grep -E "^vonzio-(ws|sdk)-" | xargs -r docker volume rm >/dev/null 2>&1 || true
+  ok "Volumes removed."
+
+  # Images: app images always; agent-base only with --remove-base (it's the
+  # ~GB one with the slow rebuild, so we keep it unless asked).
+  docker image rm -f vonzio-server:latest vonzio-agent:latest >/dev/null 2>&1 || true
+  docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+    | grep -E '^vonzio-agent-' | xargs -r docker image rm -f >/dev/null 2>&1 || true
+  if $REMOVE_BASE; then
+    docker image rm -f ghcr.io/vonzio/vonzio/agent-base:latest >/dev/null 2>&1 || true
+    ok "Images removed (including agent-base)."
+  else
+    ok "Images removed (kept agent-base — pass --remove-base to drop it too)."
+  fi
+
+  if $REMOVE_DIR; then
+    cd /
+    rm -rf "$target" && ok "Removed checkout ${target}."
+  else
+    log "  Checkout kept at ${target} — delete with ${C_DIM}--remove-dir${C_RESET} or ${C_DIM}rm -rf ${target}${C_RESET}."
   fi
   log ""
-  ok "Uninstalled. The vonzio/vonzio checkout at $target was kept — delete it manually if you want."
+  ok "Deep uninstall complete."
 }
 
 check_prereqs() {
