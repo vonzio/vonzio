@@ -1,0 +1,47 @@
+# E2E chat overlay. Adds a deterministic mock LLM on vonzio-network and points
+# the stack's OLLAMA_BASE_URL at it, so the chat path runs against canned,
+# free responses instead of a real provider. Layer on top of the base + dev
+# files; driven by `make e2e-chat`. The chat agent then uses the `ollama`
+# provider, whose in-container proxy forwards to OLLAMA_TARGET_URL (= the
+# server's OLLAMA_BASE_URL) — i.e. to mock-llm below.
+services:
+  mock-llm:
+    image: node:22-slim
+    restart: unless-stopped
+    networks:
+      # The base file's network KEY is `vonzio` (its `name:` is vonzio-network).
+      # Join by that key so the name override below moves us onto the isolated
+      # bridge alongside server/postgres/proxy.
+      - vonzio
+    volumes:
+      - ../e2e/helpers/mock-llm-server.cjs:/app/mock-llm-server.cjs:ro
+    command: ["node", "/app/mock-llm-server.cjs"]
+    environment:
+      - PORT=8080
+      - MOCK_MODEL=mock-model
+      - MOCK_REPLY=E2E pong
+
+  # Point both the model list (core-server) and the agent's LLM calls (via
+  # OLLAMA_TARGET_URL) at the mock. DOCKER_NETWORK pins spawned agent
+  # containers to the isolated network below so this stack never collides with
+  # a running dev stack on the shared `vonzio-network`.
+  server:
+    environment:
+      - OLLAMA_BASE_URL=http://mock-llm:8080
+      - DOCKER_NETWORK=vonzio-e2e-network
+      # Pin auth to this stack's own alt-port origin (5273/3100) so it works
+      # regardless of the developer's .env (which may point BETTER_AUTH_URL at a
+      # tunnel and scope CORS to 5173/3000). Keep these in sync with the ports
+      # in scripts/e2e-chat.sh.
+      - BETTER_AUTH_URL=http://localhost:5273
+      - CORS_ORIGIN=http://localhost:5273,http://localhost:3100
+
+# Override the `vonzio` network KEY's name (base sets it to vonzio-network) so
+# this whole stack — server, postgres, proxy, mock-llm, AND the agent
+# containers the orchestrator spawns onto DOCKER_NETWORK — lives on its own
+# bridge. Must override the SAME key the base uses (`vonzio`, NOT
+# `vonzio-network`), else the existing services stay on the shared network and
+# DNS cross-talks with a running dev stack on `server`/`postgres`.
+networks:
+  vonzio:
+    name: vonzio-e2e-network

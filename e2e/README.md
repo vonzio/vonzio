@@ -1,9 +1,9 @@
-# End-to-end smoke tests
+# End-to-end tests
 
 Browser-level tests (Playwright) that drive the **dockerized OSS stack** the way
-a brand-new self-hoster does. They guard the one class of regression nothing
-else catches: **first-run is broken** — the `/setup` wizard, login, and the
-hand-off into onboarding.
+a brand-new self-hoster does. They guard the regressions nothing else catches:
+**first-run is broken** (the `/setup` wizard, login, onboarding hand-off) and
+**chat is broken** (send a message, get a reply).
 
 Scope is intentionally tiny. E2E is the most expensive and flakiest test tier,
 so it covers only the critical path; breadth lives in the unit suites
@@ -12,61 +12,66 @@ the highest-value safety net to grow first.
 
 ## What's covered
 
-| Spec | Flow | Provider needed? |
+| Spec | Flow | Cost |
 | --- | --- | --- |
-| `tests/first-run.spec.ts` | `/setup` → create admin → `/login` → sign in → routed to `/onboarding` → "pick a provider" renders | No — deterministic & free |
-| `tests/chat.spec.ts` | send a message → assistant reply | Yes — **skipped**, behind a mock (see below) |
+| `tests/first-run.spec.ts` | `/setup` → create admin → `/login` → sign in → routed to `/onboarding` ("pick a provider") | Light — no provider, no agent |
+| `tests/chat.spec.ts` | configure a mock-backed agent → send a message → assistant reply | Heavy — spawns a **real agent container** against a **mock LLM** |
 
 ## Running it
 
-The suite needs a **fresh** stack (empty DB, so the first visit lands on
-`/setup`; the wizard 409s once an admin exists).
+Each suite needs a **fresh** stack (empty DB, so the first visit lands on
+`/setup`; the wizard 409s once an admin exists). The easiest way is the
+self-contained make targets — they boot their **own fully-isolated stack**
+(separate docker network + volumes + alt ports `5273/3100`) and tear it down,
+so they never touch a running `make docker-dev` stack or its DB:
 
 ```bash
-# 1. Boot a fresh OSS stack in one terminal
-make docker-dev-oss          # dashboard :5173, API :3000
+make e2e-install      # one-time: install the Playwright browser
 
-# 2. First time only: install the Playwright browser
-make e2e-install
-
-# 3. Run the smoke
-make e2e
+make e2e-fresh        # first-run smoke on a throwaway isolated stack
+make e2e-chat         # chat round-trip on an isolated stack + mock LLM
 ```
 
-Re-running against a dirty DB fails at step 1 of `first-run` (the `/setup`
-409) — recreate the stack to reset:
+`make e2e-chat` needs the agent image (`vonzio-agent:latest`); the script builds
+it (agent-base + agent, ~5-8 min) on first run if it's missing.
+
+### Against an already-running stack
+
+If you already have a fresh stack up (`make docker-dev-oss`), you can run the
+first-run smoke directly against it:
 
 ```bash
-cd docker && docker compose --env-file ../.env \
-  -f docker-compose.yml -f docker-compose.dev.yml down -v
+make e2e                                  # uses VONZIO_E2E_BASE_URL or :5173
 ```
 
-Point the suite at a different origin with `VONZIO_E2E_BASE_URL`
-(default `http://localhost:5173`).
+This fails if the DB isn't fresh (the `/setup` 409) — that's what `make
+e2e-fresh` avoids by spinning its own throwaway DB.
+
+## How the chat mock works
+
+The agent uses `@anthropic-ai/claude-agent-sdk`, so the chat path speaks the
+**Anthropic Messages API** from *inside* the spawned agent container — the
+browser can't intercept it. So instead we redirect the agent's upstream:
+
+- `OLLAMA_BASE_URL` is env-overridable (`packages/core-server/.../ollama-service.ts`).
+  `docker/docker-compose.e2e.yml` points it at the `mock-llm` service.
+- The test configures the profile with the **ollama** provider, whose
+  in-container proxy (`docker/ollama-proxy.cjs`) forwards the agent's LLM calls
+  to `OLLAMA_TARGET_URL` (= `OLLAMA_BASE_URL`) — i.e. to the mock.
+- `helpers/mock-llm-server.cjs` is a tiny Anthropic-shaped endpoint: `GET
+  /v1/models` (for the model picker / credential validation) and `POST
+  /v1/messages` (streaming + not) returning a canned `E2E pong`. No real
+  provider, no API key, no cost.
+
+The overlay also gives this stack its own network and pins auth to the alt-port
+origin, so it's safe to run alongside your dev stack.
 
 ## CI
 
-`.github/workflows/e2e.yml` runs this **gated**, not on every PR: only when
-`packages/dashboard/**`, `packages/core-server/**`, or `e2e/**` change, plus
-manual `workflow_dispatch`. The job boots its own fresh stack, waits for
-`/health`, runs the suite, and uploads the Playwright HTML report + failure
-traces as an artifact. It's deliberately off the every-PR required-checks path
-because spinning the full stack costs a few minutes.
-
-## Finishing the chat test
-
-`tests/chat.spec.ts` is written but `test.describe.skip`-ped. The chat path
-calls the model provider **server-side** (inside the agent container), so the
-browser can't intercept it; `helpers/mock-provider.ts` is a real, tiny
-OpenAI-compatible stub (`/v1/models` + `/v1/chat/completions`, streaming and
-not) that returns a canned reply. Two wiring steps remain, both documented
-inline in the spec:
-
-1. **Reachability** — make the mock's URL resolvable from the agent container
-   (`host.docker.internal` with `extra_hosts`, or a sidecar on the compose
-   network).
-2. **Credential** — create an OpenAI-compatible credential pointing at the mock
-   via the API with an admin session, then set the profile model. Drive the
-   rest through the UI and assert the canned reply appears.
-
-Un-skip once both are wired.
+- **`e2e.yml`** — the **first-run** smoke. Gated (only on `packages/dashboard/**`,
+  `packages/core-server/**`, `docker/**`, `e2e/**` changes, plus
+  `workflow_dispatch`), not an every-PR required check. Boots a fresh stack,
+  waits for `/health`, runs the suite, uploads the report on failure.
+- **`e2e-chat.yml`** — the **chat** round-trip. **Manual only**
+  (`workflow_dispatch`): it builds the heavy agent image, so it's run before
+  releases or when the chat/agent path changes — not on every PR.
