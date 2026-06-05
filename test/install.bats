@@ -46,6 +46,52 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+# ─── guard_existing_db ─────────────────────────────────────────────────
+@test "guard_existing_db: no existing volume -> silent no-op (fresh install)" {
+  docker() { case "$1 $2" in "volume inspect") return 1 ;; *) return 0 ;; esac; }
+  export -f docker
+  run guard_existing_db
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "guard_existing_db: existing volume + --yes KEEPS data, never wipes" {
+  # The safety invariant: confirm() returns yes for everything under --yes, so
+  # the destructive wipe must NOT route through it — non-interactive keeps data.
+  ASSUME_YES=true
+  marker="$BATS_TEST_TMPDIR/rm-called"
+  docker() {
+    case "$1 $2" in
+      "volume inspect") return 0 ;;
+      "volume rm") echo called > "$marker"; return 0 ;;
+      *) return 0 ;;
+    esac
+  }
+  export -f docker
+  run guard_existing_db
+  [ "$status" -eq 0 ]
+  [ ! -f "$marker" ]                 # never wiped under --yes
+  [[ "$output" == *"Keeping it"* ]]
+}
+
+@test "guard_existing_db: existing volume + interactive 'yes' wipes it" {
+  ASSUME_YES=false
+  marker="$BATS_TEST_TMPDIR/rm-called"
+  docker() {
+    case "$1 $2" in
+      "volume inspect") return 0 ;;
+      "volume rm") echo called > "$marker"; return 0 ;;
+      *) return 0 ;;
+    esac
+  }
+  export -f docker
+  confirm() { return 0; }            # stand in for the user typing 'y'
+  export -f confirm
+  run guard_existing_db
+  [ "$status" -eq 0 ]
+  [ -f "$marker" ]                   # wiped on explicit consent
+}
+
 # ─── detect_platform ───────────────────────────────────────────────────
 @test "detect_platform: Darwin -> macos" {
   uname() { echo "Darwin"; }
