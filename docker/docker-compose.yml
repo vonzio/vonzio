@@ -1,3 +1,9 @@
+# Project name → container/image/group prefix. Without this, Compose defaults to
+# the directory it runs from ("docker/"), so everything shows up as docker-*.
+# COMPOSE_PROJECT_NAME (env) or -p still override this — the E2E suites set their
+# own isolated project names that way.
+name: vonzio
+
 services:
   postgres:
     image: postgres:17-alpine
