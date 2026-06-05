@@ -119,7 +119,9 @@ services:
       # server's /preview/{container_id}/{port}/ route. No wildcard DNS
       # or reverse proxy required — works on stock localhost.
       - PREVIEW_MODE=path
-      - PREVIEW_URL_TEMPLATE=http://localhost:3000/preview/{container_id}/{port}/
+      # Overridable so the installer can bump the host API port (the container
+      # still listens on 3000; this is the host-facing URL agents hand back).
+      - PREVIEW_URL_TEMPLATE=${PREVIEW_URL_TEMPLATE:-http://localhost:3000/preview/{container_id}/{port}/}
     depends_on:
       agent:
         condition: service_completed_successfully
