@@ -105,7 +105,14 @@ docker-flavors: ## Build all flavored agent images (Go, Rust, Python-data, Java)
 	cd docker && docker compose --profile flavors build
 
 docker-dev: agent-base-local ## Start full stack with hot reload (postgres + agent + server, ports 3000/5173)
+	@bash scripts/dev-urls.sh --wait &
 	cd docker && docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+urls: ## Print the dev stack's addresses (dashboard, API, webhook tunnel)
+	@bash scripts/dev-urls.sh
+
+dev-tunnel: ## DEV-ONLY: expose the stack via a public tunnel for Slack/Telegram webhooks (cloudflared default; VONZIO_DEV_TUNNEL=ngrok)
+	@bash scripts/dev-tunnel.sh
 
 docker-prod: ## Build and start production stack with HTTPS
 	cd docker && docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.yml up -d --build
