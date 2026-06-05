@@ -10,11 +10,20 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/vonzio/vonzio/actions/workflows/ci.yml"><img src="https://github.com/vonzio/vonzio/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/vonzio/vonzio/releases"><img src="https://img.shields.io/github/v/tag/vonzio/vonzio?label=latest&sort=semver" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg" alt="AGPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/node-22+-green.svg" alt="Node 22+">
   <img src="https://img.shields.io/badge/postgres-17-336791.svg" alt="Postgres 17">
   <a href="https://vonzio.com">vonzio.com</a>
 </p>
+
+<p align="center"><sub>Pre-1.0 and actively developed — APIs may shift between minor versions.</sub></p>
+
+<!-- Hero shot: drop a dashboard screenshot or a short chat GIF in assets/ and
+     uncomment the line below (≈800px wide reads well on GitHub).
+<p align="center"><img src="assets/dashboard.png" alt="vonzio dashboard" width="800"></p>
+-->
 
 ---
 
@@ -120,14 +129,17 @@ Three processes on your host, one fresh Docker container per conversation.
 3. Inside the container, `agent-runner` calls the configured **LLM provider** (Anthropic API key, Anthropic subscription token, Ollama Cloud, or any OpenAI-compatible endpoint), streams tokens back over the WebSocket, and runs tools / MCP calls in-process.
 4. core-server logs every event (token, tool call, file write) and persists the session so the next message resumes in the same container with the same memory.
 
-**Key building blocks.**
+**Core concepts.**
 
 - **Profile** — the agent recipe: model + system prompt + tool allowlist + MCP servers + container image + budget caps. Members can have many; admins can mark some as shared.
+- **Models / providers** — pick per profile or per workspace: Anthropic (Claude Sonnet/Opus/Haiku), Anthropic subscription tokens, Ollama Cloud, or any OpenAI-compatible endpoint. Credentials are yours and stay encrypted at rest.
 - **Workspace** — the per-conversation directory the agent reads and writes. Survives across messages; lives at `data/workspaces/<session_id>/` on the host.
-- **Container pool** — warm containers are reused across conversations of the same profile; cold ones are torn down after a configurable idle window.
-- **MCP runtime** — first-class support for stdio + HTTP MCP servers, scoped per profile. Built-ins: `memory`, `notify`, `gmail`, `platform`.
+- **Memory** — persistent, searchable agent memories scoped per user/profile, so a session recalls what mattered across conversations (backed by the `memory` MCP server).
+- **Skills & subagents** — reusable prompt/skill snippets and custom subagents you define once and attach to profiles, instead of re-explaining the same context every time.
+- **MCP runtime** — first-class support for stdio + HTTP MCP servers, scoped per profile. Bring your own, or use the built-ins: `memory`, `notify`, `gmail`, `platform`.
+- **Integrations & plugins** — **built-in** integrations (GitHub / GitLab / Bitbucket / Slack / Telegram / Gmail) connect via OAuth on the dashboard and flow credentials into the container at launch. **Extensions** ship as external plugins loaded through a capability-gated, operator-approved loader (e.g. Teller bank data) — write your own with the [plugin guide](docs/PLUGINS.md).
 - **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria; runs are first-class observable workspaces.
-- **Integrations** — GitHub / GitLab / Bitbucket / Slack / Telegram / Gmail — OAuth on the dashboard, credentials flow into the container at launch. Additional integrations (e.g. Teller bank data) ship as external plugins via the loader.
+- **Container pool** — warm containers are reused across conversations of the same profile; cold ones are torn down after a configurable idle window.
 
 **Packages**, all AGPL-3.0-or-later:
 
@@ -137,6 +149,13 @@ Three processes on your host, one fresh Docker container per conversation.
 - `@vonzio/widget` — embeddable chat widget
 - `agent-runner/` — the in-container process that drives the LLM and exposes the tool / MCP surface
 
+## Documentation
+
+- **[Self-hosting guide](docs/SELF_HOST.md)** — install, env reference, upgrade path, troubleshooting, local webhook testing
+- **[Security model](docs/SECURITY_MODEL.md)** — threat model, trust boundaries, what's in and out of scope
+- **[Hardening guide](docs/HARDENING.md)** — opt-in production hardening (gVisor, restricted Docker socket, egress policies, secret rotation)
+- **[Plugin guide](docs/PLUGINS.md)** — write and publish external plugins: capabilities, manifest, the operator approval flow
+
 ## Hosted option
 
 If you'd rather skip running your own postgres and Docker, [vonzio.com](https://vonzio.com) offers the same agent runtime as a managed multi-tenant service. The SaaS adds teams, invites, billing, and an admin panel that aren't part of the OSS package, built as a proprietary control plane that mounts onto the same data plane shipped here.
@@ -144,15 +163,22 @@ If you'd rather skip running your own postgres and Docker, [vonzio.com](https://
 ## Develop
 
 ```bash
-# Host-mode dev — faster iteration on dashboard code; you supply postgres
+# Full Docker stack with hot reload (what the installer runs) — recommended
+make docker-dev-oss
+
+# Host-mode — faster iteration on dashboard code; you supply postgres
 make dev-oss
 
-# All tests
-make test
-
-# Typecheck across packages
-make typecheck
+make urls          # print the dashboard / API / webhook addresses any time
+make dev-tunnel    # DEV-ONLY: expose the stack so Slack/Telegram webhooks reach it
+make test          # full test suite
+make typecheck     # typecheck across packages
 ```
+
+Both dev paths print a startup summary of where everything is. To test
+webhook-based plugins (Slack, Telegram) against a local stack, `make dev-tunnel`
+opens a public tunnel (cloudflared by default, no account) — see
+[SELF_HOST.md](docs/SELF_HOST.md#local-webhook-testing-slack--telegram).
 
 Project layout:
 
