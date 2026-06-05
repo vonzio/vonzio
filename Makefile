@@ -11,9 +11,7 @@ install: ## Install all dependencies
 	npm install
 
 check-lock: ## Fail if package-lock.json is out of sync with package.json (same gate CI runs)
-	npm install --package-lock-only --ignore-scripts
-	@git diff --exit-code package-lock.json \
-	  || { echo "package-lock.json is out of sync — run 'npm install' and commit it."; exit 1; }
+	@bash scripts/check-lockfile.sh
 
 build: ## Build all packages
 	npx tsc --project packages/shared/tsconfig.json
