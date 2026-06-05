@@ -24,9 +24,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "npm run dev --workspace=packages/core-server",
-    "dev:dashboard": "npm run dev --workspace=packages/dashboard"
+    "dev:dashboard": "npm run dev --workspace=packages/dashboard",
+    "e2e": "playwright test --config e2e/playwright.config.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.0",
     "@types/node": "^22.15.3",
     "concurrently": "^9.2.1",
     "typescript": "^5.8.3",
