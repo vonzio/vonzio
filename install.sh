@@ -58,6 +58,9 @@ ASSUME_YES=false
 NO_START=false
 RESET_ENV=false
 ACTION="install"
+# Resolved app version we're about to install (set early by announce_version so
+# the user sees it BEFORE the install-location prompt, and reused in step 3).
+RESOLVED_REF=""
 
 # ─── Pre-flight state ──────────────────────────────────────────────────
 MISSING_DEPS=()          # populated by preflight_deps
@@ -478,6 +481,27 @@ print_banner() {
   log ""
 }
 
+# Resolve and announce WHICH app version we're about to install, up front —
+# before the install-location prompt — so it's never a surprise. (The banner's
+# vX above is the installer's own version, not the app's.) Caches the result in
+# RESOLVED_REF so setup_source_tree doesn't hit the remote twice.
+announce_version() {
+  if $IN_CLONE; then
+    local ref
+    ref="$(git -C "$INSTALL_DIR" describe --tags --always --dirty 2>/dev/null || echo "unknown")"
+    info "Installing from this checkout: ${C_BOLD}${ref}${C_RESET} ${C_DIM}(${INSTALL_DIR})${C_RESET}"
+    return 0
+  fi
+  RESOLVED_REF="$(resolve_target_tag || true)"
+  if [[ -n "$RESOLVED_REF" ]]; then
+    local how="latest release"
+    [[ -n "$TARGET_TAG" ]] && how="pinned"
+    info "Installing: ${C_BOLD}vonzio core ${RESOLVED_REF}${C_RESET} ${C_DIM}(${how})${C_RESET}"
+  else
+    warn "Couldn't resolve a release version from the remote — will fall back to main HEAD."
+  fi
+}
+
 detect_platform() {
   case "$(uname -s)" in
     Darwin) OS="macos" ;;
@@ -583,13 +607,12 @@ setup_source_tree() {
     # back to main HEAD only if the remote has no tags — fresh empty repo
     # case during early bootstrap. Otherwise we pin so every install is
     # reproducible.
-    local target_ref
-    target_ref="$(resolve_target_tag)"
+    # Reuse the version already resolved + announced by announce_version().
+    local target_ref="${RESOLVED_REF:-$(resolve_target_tag)}"
     if [[ -z "$target_ref" ]]; then
       warn "Couldn't resolve a release tag from $REPO_URL — falling back to main HEAD."
       target_ref="main"
     fi
-    info "Target version: ${target_ref}"
 
     if [[ -d "$INSTALL_DIR/.git" ]]; then
       info "Existing checkout at $INSTALL_DIR — fetching and switching to ${target_ref}."
@@ -788,6 +811,7 @@ main() {
   # their own guidance and aren't surfaced as crashes.
   trap 'on_error $LINENO' ERR
 
+  announce_version
   preflight
   check_prereqs
   setup_source_tree
