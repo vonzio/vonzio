@@ -126,16 +126,22 @@ docker-build: ## Build all Docker images (agent + server)
 docker-flavors: ## Build all flavored agent images (Go, Rust, Python-data, Java)
 	cd docker && docker compose --profile flavors build
 
+# Dev-stack compose invocation (base + dev overlay + the generated .env). EVERY
+# docker-* management target must use this: `docker compose down`/`logs` WITHOUT
+# --env-file can't interpolate the required ENCRYPTION_KEY (etc.) and aborts —
+# which broke the `make docker-down` we print in the install summary.
+COMPOSE_DEV = docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.dev.yml
+
 docker-dev: agent-base-local ## Start full stack with hot reload (postgres + agent + server, ports 3000/5173)
 	@bash scripts/dev-urls.sh --wait &
-	cd docker && docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.dev.yml up --build
+	cd docker && $(COMPOSE_DEV) up --build
 
 # Build (progress streams) then start DETACHED — control returns to the shell
 # instead of being held by a log stream. Used by install.sh so the address
 # summary it prints afterwards is the last, unmissable thing on screen. No
 # dev-urls.sh here: the caller (installer, or `make urls`) owns the summary.
 docker-dev-detached: agent-base-local ## Build + start the dev stack detached (logs: make docker-logs, stop: make docker-down)
-	cd docker && docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+	cd docker && $(COMPOSE_DEV) up -d --build
 
 docker-dev-oss-detached: ## Same as docker-dev-detached but REGISTRATION_ENABLED=false (OSS single-user mode)
 	REGISTRATION_ENABLED=false $(MAKE) docker-dev-detached
@@ -152,17 +158,17 @@ docker-prod: ## Build and start production stack with HTTPS
 docker-up: ## Build and start everything with docker-compose
 	cd docker && docker compose up --build -d
 
-docker-down: ## Stop compose and clean agent containers
-	cd docker && docker compose down
+docker-down: ## Stop the dev stack + clean agent containers
+	cd docker && $(COMPOSE_DEV) down
 	-docker ps -aq --filter "label=managed-by=vonzio" | xargs docker rm -f 2>/dev/null
 
-docker-logs: ## Tail docker-compose logs
-	cd docker && docker compose logs -f
+docker-logs: ## Tail the dev stack logs
+	cd docker && $(COMPOSE_DEV) logs -f
 
 docker-clean: ## Remove ALL vonzio containers, images, volumes
 	-docker ps -aq --filter "label=managed-by=vonzio" | xargs docker rm -f 2>/dev/null
 	-docker ps -aq --filter "ancestor=vonzio-agent:latest" | xargs docker rm -f 2>/dev/null
-	cd docker && docker compose --profile flavors down -v --rmi local 2>/dev/null || true
+	cd docker && $(COMPOSE_DEV) --profile flavors down -v --rmi local 2>/dev/null || true
 
 migrate-to-pg: ## Migrate SQLite data to PostgreSQL. Usage: make migrate-to-pg SQLITE=./vonzio.db PG_URL=postgres://...
 	npx tsx packages/core-server/src/scripts/migrate-sqlite-to-pg.ts $(SQLITE) $(PG_URL)
