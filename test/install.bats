@@ -92,6 +92,23 @@ setup() {
   [ -f "$marker" ]                   # wiped on explicit consent
 }
 
+# ─── announce_version ──────────────────────────────────────────────────
+@test "announce_version: resolves + caches the (pinned) version, no network" {
+  IN_CLONE=false
+  TARGET_TAG="v9.9.9"        # resolve_target_tag short-circuits on this — no ls-remote
+  run announce_version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Installing"* ]]
+  [[ "$output" == *"v9.9.9"* ]]
+}
+
+@test "announce_version: caches into RESOLVED_REF for reuse in step 3" {
+  IN_CLONE=false
+  TARGET_TAG="v9.9.9"
+  announce_version >/dev/null
+  [ "$RESOLVED_REF" = "v9.9.9" ]
+}
+
 # ─── detect_platform ───────────────────────────────────────────────────
 @test "detect_platform: Darwin -> macos" {
   uname() { echo "Darwin"; }
