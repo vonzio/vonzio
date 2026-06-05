@@ -3,7 +3,12 @@
  * Self-contained — delete this file to remove the feature.
  */
 
-export const OLLAMA_BASE_URL = "https://ollama.com";
+// Defaults to Ollama Cloud. Overridable via env so a self-hoster can point at
+// a private/enterprise Ollama deployment or any Anthropic-compatible gateway —
+// the value is used both for the model list (here) and, via OLLAMA_TARGET_URL,
+// as the in-container proxy's upstream for the agent's LLM calls. The E2E chat
+// suite uses this to redirect the agent at a local mock.
+export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "https://ollama.com";
 
 export interface OllamaModel {
   id: string;
