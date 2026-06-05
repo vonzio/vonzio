@@ -56,6 +56,16 @@ jobs:
             -f docker-compose.yml -f docker-compose.dev.yml \
             build server
 
+      # The server's boot preflight (index.ts) inspects AGENT_IMAGE and exit(1)s
+      # if it's missing — it never *runs* an agent for the first-run smoke, but
+      # the existence check is unconditional under DOCKER_ENABLED. Tag a tiny
+      # image as vonzio-agent:latest to satisfy the inspect without building the
+      # heavy (and private-base) agent image. The placeholder is never executed.
+      - name: Provide a placeholder agent image
+        run: |
+          docker pull -q node:22-slim
+          docker tag node:22-slim vonzio-agent:latest
+
       # --no-deps so `depends_on: agent` doesn't drag the agent service in;
       # --no-build because we just built. Start exactly the 3 the smoke needs.
       - name: Boot fresh OSS stack (postgres + proxy + server; no agent)
