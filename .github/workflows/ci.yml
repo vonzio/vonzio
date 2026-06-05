@@ -251,6 +251,12 @@ jobs:
           severity: warning
           scandir: "./"
           additional_files: "install.sh scripts/start-dev.sh"
+      # macOS ships bash 3.2 and `curl | bash` runs under it, but shellcheck +
+      # CI run bash 5 — so a bash-4-ism (${var,,}, declare -A, …) passes lint
+      # and only breaks on a real Mac install. This greps for them. See
+      # scripts/check-bash-portability.sh.
+      - name: bash 3.2 portability (install.sh + scripts)
+        run: bash scripts/check-bash-portability.sh
       - name: Install bats
         run: sudo apt-get update -y && sudo apt-get install -y bats
       - name: Unit-test install.sh
