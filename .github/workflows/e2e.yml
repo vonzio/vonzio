@@ -44,12 +44,26 @@ jobs:
           sed -i "s|^BETTER_AUTH_SECRET=.*|BETTER_AUTH_SECRET=$(openssl rand -hex 32)|" .env
           sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 16)|" .env
 
-      - name: Boot fresh OSS stack (server brings up postgres + proxy)
+      # Build ONLY the server image. `server` has `depends_on: agent`, and the
+      # agent image does `FROM ghcr.io/.../agent-base` — a private/heavy base
+      # that 401s for an anonymous pull in CI. The first-run smoke never spawns
+      # an agent, so we skip it entirely (naming `server` keeps bake from
+      # building the agent target too).
+      - name: Build the server image
         working-directory: docker
         run: |
           docker compose --env-file ../.env \
             -f docker-compose.yml -f docker-compose.dev.yml \
-            up -d --build server
+            build server
+
+      # --no-deps so `depends_on: agent` doesn't drag the agent service in;
+      # --no-build because we just built. Start exactly the 3 the smoke needs.
+      - name: Boot fresh OSS stack (postgres + proxy + server; no agent)
+        working-directory: docker
+        run: |
+          docker compose --env-file ../.env \
+            -f docker-compose.yml -f docker-compose.dev.yml \
+            up -d --no-build --no-deps postgres docker-proxy server
 
       - name: Wait for the API to be healthy
         run: |
@@ -75,7 +89,10 @@ jobs:
       - name: Stack logs on failure
         if: failure()
         working-directory: docker
-        run: docker compose logs --tail=200 server
+        run: |
+          docker compose --env-file ../.env \
+            -f docker-compose.yml -f docker-compose.dev.yml \
+            logs --tail=200 server
 
       - name: Upload Playwright report
         if: always()
