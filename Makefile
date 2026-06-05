@@ -173,8 +173,8 @@ docker-clean: ## Remove ALL vonzio containers, images, volumes
 uninstall: ## Stop + remove vonzio containers + network (keeps your data, images, checkout)
 	@bash install.sh --uninstall --dir .
 
-nuke: ## DEEP uninstall — also deletes ALL volumes (your DB!) + images. IRREVERSIBLE.
-	@bash install.sh --uninstall --purge --dir .
+nuke: ## Remove EVERYTHING — volumes (your DB!), all images (incl. agent-base), AND this checkout. IRREVERSIBLE.
+	@bash install.sh --uninstall --purge --remove-base --remove-dir --dir .
 
 migrate-to-pg: ## Migrate SQLite data to PostgreSQL. Usage: make migrate-to-pg SQLITE=./vonzio.db PG_URL=postgres://...
 	npx tsx packages/core-server/src/scripts/migrate-sqlite-to-pg.ts $(SQLITE) $(PG_URL)
