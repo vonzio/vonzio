@@ -37,6 +37,7 @@ dashboard: ## Start the customer dashboard dev server (port 5173)
 	cd packages/dashboard && npx vite
 
 dev: ## Start API + dashboard together (clean container shutdown on Ctrl+C)
+	@bash scripts/dev-urls.sh --wait &
 	npx concurrently --kill-others-on-fail --kill-signal SIGINT --kill-timeout 10000 -n api,dash -c blue,magenta "make api-once" "make dashboard"
 
 # OSS-mode shortcuts — force REGISTRATION_ENABLED=false so a fresh DB
