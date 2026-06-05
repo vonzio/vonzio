@@ -731,7 +731,9 @@ setup_env() {
     ok ".env created (random ENCRYPTION_KEY + BETTER_AUTH_SECRET + POSTGRES_PASSWORD)."
     warn "Back up .env now — losing ENCRYPTION_KEY bricks your credential vault."
     # Only meaningful on a freshly generated .env — never rewrite a kept one.
-    $PORTS_BUMPED && apply_bumped_ports
+    # NB: `if`, not `$PORTS_BUMPED && …` — the latter returns 1 when false, and
+    # as setup_env's last statement that fails the function under `set -e`.
+    if $PORTS_BUMPED; then apply_bumped_ports; fi
   fi
 }
 

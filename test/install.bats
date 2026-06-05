@@ -176,6 +176,19 @@ setup() {
   grep -q 'PREVIEW_URL_TEMPLATE=http://localhost:3100/preview/' .env
 }
 
+# Regression: the installer runs under `set -e`. setup_env ended with
+# `$PORTS_BUMPED && apply_bumped_ports`, which returns 1 when not bumped (the
+# common path) and, as the function's last statement, failed the whole install.
+# The rest of the suite relaxes set -e in setup(), so this test re-enables it.
+@test "setup_env: returns 0 under set -e on the free-ports path (not bumped)" {
+  cd "$BATS_TEST_TMPDIR"
+  printf 'ENCRYPTION_KEY=\nBETTER_AUTH_SECRET=\nPOSTGRES_PASSWORD=\n' > .env.example
+  RESET_ENV=false
+  PORTS_BUMPED=false
+  INSTALL_DIR="$PWD"
+  ( set -e; setup_env )   # subshell exits non-zero → test fails if the bug is back
+}
+
 # ─── detect_platform ───────────────────────────────────────────────────
 @test "detect_platform: Darwin -> macos" {
   uname() { echo "Darwin"; }
