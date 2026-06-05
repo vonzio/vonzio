@@ -13,3 +13,9 @@ dist/
 
 # Dev tunnel state (written by make dev-tunnel)
 .vonzio-dev-tunnel
+
+# Playwright E2E artifacts
+/playwright-report/
+/test-results/
+/e2e/playwright-report/
+/e2e/test-results/
