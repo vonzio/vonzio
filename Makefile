@@ -1,4 +1,4 @@
-.PHONY: install build test dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
+.PHONY: install check-lock build test dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
 .PHONY: docker-build docker-dev docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
@@ -9,6 +9,11 @@
 
 install: ## Install all dependencies
 	npm install
+
+check-lock: ## Fail if package-lock.json is out of sync with package.json (same gate CI runs)
+	npm install --package-lock-only --ignore-scripts
+	@git diff --exit-code package-lock.json \
+	  || { echo "package-lock.json is out of sync — run 'npm install' and commit it."; exit 1; }
 
 build: ## Build all packages
 	npx tsc --project packages/shared/tsconfig.json

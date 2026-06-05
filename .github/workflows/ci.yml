@@ -23,6 +23,17 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Lockfile in sync with package.json
+        # CI + the dev/server images use `npm install` (tolerant of lock drift)
+        # because `npm ci` trips npm bug #4828 on the host-generated lockfile's
+        # platform-specific @tailwindcss/oxide entries (linux native binding gets
+        # skipped → dashboard build fails). So drift only surfaced at release.yml's
+        # `npm ci`. Catch it here WITHOUT a full install: regenerate the lock
+        # metadata-only and fail if it would change.
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          git diff --exit-code package-lock.json \
+            || { echo "::error::package-lock.json is out of sync with package.json — run 'npm install' and commit the lockfile."; exit 1; }
       - run: npm install
       - run: npx tsc --project packages/shared/tsconfig.json --noEmit
       - run: npx tsc --project packages/plugin-api/tsconfig.json --noEmit
