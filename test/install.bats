@@ -128,6 +128,54 @@ setup() {
   [ "$RESOLVED_REF" = "v9.9.9" ]
 }
 
+# ─── port auto-bump (find_free_port / port_is_vonzio / set_env_var) ─────
+@test "find_free_port: returns the start port when it's free" {
+  port_in_use() { return 1; }   # everything free
+  run find_free_port 5173
+  [ "$output" = "5173" ]
+}
+
+@test "find_free_port: skips consecutive busy ports to the next free one" {
+  port_in_use() { case "$1" in 5173|5174) return 0 ;; *) return 1 ;; esac; }
+  run find_free_port 5173
+  [ "$output" = "5175" ]
+}
+
+@test "port_is_vonzio: true when a vonzio container publishes the port" {
+  docker() { printf 'vonzio-server-1 vonzio-server 0.0.0.0:5173->5173/tcp\n'; }
+  export -f docker
+  run port_is_vonzio 5173
+  [ "$status" -eq 0 ]
+}
+
+@test "port_is_vonzio: false when an unrelated process holds the port" {
+  docker() { printf 'some-dev-server node:20 0.0.0.0:5173->80/tcp\n'; }
+  export -f docker
+  run port_is_vonzio 5173
+  [ "$status" -eq 1 ]
+}
+
+@test "set_env_var: replaces an existing key and appends a missing one" {
+  cd "$BATS_TEST_TMPDIR"
+  printf 'BETTER_AUTH_URL=http://localhost:5173\nFOO=bar\n' > .env
+  set_env_var BETTER_AUTH_URL "http://localhost:5273"
+  set_env_var DASHBOARD_PORT "5273"
+  grep -qx 'BETTER_AUTH_URL=http://localhost:5273' .env
+  grep -qx 'DASHBOARD_PORT=5273' .env
+  grep -qx 'FOO=bar' .env          # untouched
+}
+
+@test "apply_bumped_ports: writes all five coupled values coherently" {
+  cd "$BATS_TEST_TMPDIR"
+  printf 'BETTER_AUTH_URL=http://localhost:5173\nCORS_ORIGIN=http://localhost:5173,http://localhost:3000\n' > .env
+  DASHBOARD_PORT=5273 SERVER_PORT=3100 apply_bumped_ports >/dev/null
+  grep -qx 'DASHBOARD_PORT=5273' .env
+  grep -qx 'SERVER_PORT=3100' .env
+  grep -qx 'BETTER_AUTH_URL=http://localhost:5273' .env
+  grep -qx 'CORS_ORIGIN=http://localhost:5273,http://localhost:3100' .env
+  grep -q 'PREVIEW_URL_TEMPLATE=http://localhost:3100/preview/' .env
+}
+
 # ─── detect_platform ───────────────────────────────────────────────────
 @test "detect_platform: Darwin -> macos" {
   uname() { echo "Darwin"; }

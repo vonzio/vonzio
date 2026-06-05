@@ -89,7 +89,9 @@ services:
       # Path-mode preview: no wildcard DNS needed. Agent dev servers
       # are reachable through http://localhost:3000/preview/{container_id}/{port}/
       - PREVIEW_MODE=path
-      - PREVIEW_URL_TEMPLATE=http://localhost:3000/preview/{container_id}/{port}/
+      # Overridable so the installer can bump the host API port (the container
+      # still listens on 3000; this is the host-facing URL agents hand back).
+      - PREVIEW_URL_TEMPLATE=${PREVIEW_URL_TEMPLATE:-http://localhost:3000/preview/{container_id}/{port}/}
       - INTERNAL_SERVER_URL=http://server:3000
       - TOOLS_DIR=/app/tools
       - SKILLS_DIR=/app/skills

@@ -61,6 +61,9 @@ ACTION="install"
 # Resolved app version we're about to install (set early by announce_version so
 # the user sees it BEFORE the install-location prompt, and reused in step 3).
 RESOLVED_REF=""
+# Set true when preflight_ports bumps to free ports; setup_env then rewrites the
+# port + the port-coupled URLs in .env.
+PORTS_BUMPED=false
 
 # ─── Pre-flight state ──────────────────────────────────────────────────
 MISSING_DEPS=()          # populated by preflight_deps
@@ -426,17 +429,60 @@ preflight_deps() {
   fi
 }
 
+# Next free TCP port at or after $1. (port_in_use returns "free" when we have no
+# probe tool, so this just returns $1 in that case — safe.)
+find_free_port() {
+  local p="$1"
+  while port_in_use "$p"; do p=$(( p + 1 )); done
+  printf '%s' "$p"
+}
+
+# Heuristic: is the listener on TCP $1 one of OUR containers? (a running
+# container that publishes that host port and whose name/image says vonzio.)
+# Used so we don't bump into a SECOND stack when the conflict is our own
+# already-running install — they'd share the fixed vonzio-network and cross-talk.
+port_is_vonzio() {
+  local p="$1"
+  require_cmd docker || return 1
+  docker ps --format '{{.Names}} {{.Image}} {{.Ports}}' 2>/dev/null \
+    | grep -E ":${p}->" | grep -qi 'vonzio'
+}
+
 preflight_ports() {
-  local dash_port="${DASHBOARD_PORT:-5173}" conflicts=()
-  port_in_use "$dash_port" && conflicts+=("${dash_port} (dashboard)")
-  port_in_use 3000 && conflicts+=("3000 (API)")
-  if (( ${#conflicts[@]} > 0 )); then
-    warn "Port(s) already in use: ${conflicts[*]}"
-    log  "  The stack binds these — a conflict makes it fail to start. Stop whatever's using"
-    log  "  them, or set ${C_DIM}DASHBOARD_PORT${C_RESET} in .env to a free port."
-    confirm "Continue anyway?" "default-no" || { err "Aborting on port conflict."; exit 1; }
+  local dash="${DASHBOARD_PORT:-5173}" api="${SERVER_PORT:-3000}"
+  if ! port_in_use "$dash" && ! port_in_use "$api"; then
+    ok "Ports ${dash} + ${api} are free."
+    return 0
+  fi
+
+  # If a conflict is OUR own running stack, don't spin up a second one — point
+  # the user at it instead.
+  if { port_in_use "$dash" && port_is_vonzio "$dash"; } ||
+     { port_in_use "$api" && port_is_vonzio "$api"; }; then
+    warn "vonzio already appears to be running on ${dash}/${api}."
+    log  "  Open ${C_BOLD}http://localhost:${dash}${C_RESET} — or stop it first and re-run:"
+    log  "    ${C_DIM}(cd <install-dir> && make docker-down)${C_RESET}"
+    err "Not starting a second stack."
+    exit 1
+  fi
+
+  # An unrelated process holds a port → offer to bump to the next free pair.
+  local busy="" new_dash new_api
+  port_in_use "$dash" && busy="${dash} (dashboard)"
+  port_in_use "$api"  && busy="${busy:+$busy, }${api} (API)"
+  new_dash="$(find_free_port "$dash")"
+  new_api="$(find_free_port "$api")"
+  [[ "$new_api" == "$new_dash" ]] && new_api="$(find_free_port "$(( new_dash + 1 ))")"
+
+  warn "Port(s) in use by another process: ${busy}."
+  if confirm "Use free ports ${new_dash} (dashboard) + ${new_api} (API) instead?" "default-yes"; then
+    DASHBOARD_PORT="$new_dash"; SERVER_PORT="$new_api"
+    export DASHBOARD_PORT SERVER_PORT
+    PORTS_BUMPED=true
+    ok "Using ports ${new_dash} (dashboard) + ${new_api} (API)."
   else
-    ok "Ports ${dash_port} + 3000 are free."
+    err "Free the port(s) and re-run, or set DASHBOARD_PORT / SERVER_PORT yourself."
+    exit 1
   fi
 }
 
@@ -684,7 +730,31 @@ setup_env() {
     sed_inplace "s|^POSTGRES_PASSWORD=$|POSTGRES_PASSWORD=${pg_pass}|" .env
     ok ".env created (random ENCRYPTION_KEY + BETTER_AUTH_SECRET + POSTGRES_PASSWORD)."
     warn "Back up .env now — losing ENCRYPTION_KEY bricks your credential vault."
+    # Only meaningful on a freshly generated .env — never rewrite a kept one.
+    $PORTS_BUMPED && apply_bumped_ports
   fi
+}
+
+# Upsert KEY=VALUE in .env (replace the line if present, else append).
+set_env_var() {
+  local key="$1" val="$2"
+  if grep -qE "^${key}=" .env; then
+    sed_inplace "s|^${key}=.*|${key}=${val}|" .env
+  else
+    printf '%s=%s\n' "$key" "$val" >> .env
+  fi
+}
+
+# When preflight bumped the ports, the port number alone isn't enough: auth
+# (BETTER_AUTH_URL), CORS, and agent previews (PREVIEW_URL_TEMPLATE) all encode
+# the ports. Rewrite them together so a bumped install actually works.
+apply_bumped_ports() {
+  set_env_var DASHBOARD_PORT "$DASHBOARD_PORT"
+  set_env_var SERVER_PORT "$SERVER_PORT"
+  set_env_var BETTER_AUTH_URL "http://localhost:${DASHBOARD_PORT}"
+  set_env_var CORS_ORIGIN "http://localhost:${DASHBOARD_PORT},http://localhost:${SERVER_PORT}"
+  set_env_var PREVIEW_URL_TEMPLATE "http://localhost:${SERVER_PORT}/preview/{container_id}/{port}/"
+  info "Wrote bumped ports + coupled URLs (BETTER_AUTH_URL, CORS_ORIGIN, PREVIEW_URL_TEMPLATE) to .env."
 }
 
 setup_npm() {
