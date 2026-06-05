@@ -32,6 +32,16 @@ function asArray(json: unknown): any[] {
 }
 
 test.describe.serial("chat round-trip (mock provider)", () => {
+  // This spec only works against the e2e overlay (mock LLM + real agent image)
+  // — i.e. `make e2e-chat` / scripts/e2e-local.sh chat, which set this flag. In
+  // a plain `npm run e2e` / the first-run CI job there's no mock, so skip it
+  // (otherwise it fails on the model list AND its /api/setup pollutes the
+  // first-run spec's fresh-DB assumption).
+  test.skip(
+    !process.env.VONZIO_E2E_CHAT,
+    "chat E2E needs the mock LLM overlay — run via `make e2e-chat`"
+  );
+
   let page: Page;
 
   test.beforeAll(async ({ browser }) => {

@@ -71,7 +71,10 @@ if ! curl -fsS "http://localhost:${API_PORT}/health" >/dev/null 2>&1; then
 fi
 
 SPEC="first-run.spec.ts"
-[ "${MODE}" = "chat" ] && SPEC="chat.spec.ts"
+if [ "${MODE}" = "chat" ]; then
+  SPEC="chat.spec.ts"
+  export VONZIO_E2E_CHAT=1  # un-gates chat.spec.ts (skipped without the mock)
+fi
 echo ">> running ${SPEC}"
 VONZIO_E2E_BASE_URL="http://localhost:${DASH_PORT}" \
   npx playwright test --config e2e/playwright.config.ts "${SPEC}"
