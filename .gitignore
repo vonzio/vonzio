@@ -10,3 +10,6 @@ dist/
 .DS_Store
 .superpowers/
 *.tsbuildinfo
+
+# Dev tunnel state (written by make dev-tunnel)
+.vonzio-dev-tunnel

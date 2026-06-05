@@ -94,6 +94,37 @@ Visit your URL. You'll see:
 
 If anything 500s during onboarding, check the API log for the actual error.
 
+## Knowing where things are
+
+Once the stack is up it prints a summary; re-print it any time with:
+
+```bash
+make urls
+#   Dashboard   http://localhost:5173   ← open this
+#   API         http://localhost:3000   (/health, /v1)
+#   Webhooks    none — run `make dev-tunnel` for Slack/Telegram webhooks
+```
+
+## Local webhook testing (Slack / Telegram)
+
+Webhook-based integrations need a **public** URL to receive callbacks, which
+`localhost` isn't. For **local development only**, expose the stack through a
+tunnel (run it in a second terminal alongside `make docker-dev-oss`):
+
+```bash
+make dev-tunnel                          # cloudflared — no account/token
+VONZIO_DEV_TUNNEL=ngrok make dev-tunnel  # ngrok — needs an authtoken
+```
+
+It prints a public URL (also shown by `make urls`). Use it as your Slack/Telegram
+webhook URL; inbound webhooks work immediately. For OAuth-redirect plugins (Slack),
+set `BETTER_AUTH_URL=<that url>` in `.env` and restart the stack so the redirect
+matches.
+
+> **Never use a tunnel for production.** It bypasses your firewall, TLS, and auth.
+> A real deployment must sit behind your own TLS reverse proxy — see
+> [HARDENING.md](./HARDENING.md). `dev-tunnel` refuses to run when `NODE_ENV=production`.
+
 ## Updating
 
 ```bash
