@@ -1,22 +1,26 @@
-name: e2e-chat
+name: e2e-full
 
-# Chat round-trip E2E against a mock LLM. MANUAL ONLY (workflow_dispatch): the
-# chat path spawns a REAL agent container, so this builds the heavy agent image
-# (~5-8 min) — too slow for an every-PR gate. The lightweight first-run smoke
-# (e2e.yml) covers PRs; run this before releases or when the chat/agent path
-# changes. See e2e/README.md.
+# The full, heavy E2E: the first-run smoke AND the chat round-trip (mock LLM +
+# a REAL agent container). It builds the agent image (~5-8 min), so it is NOT an
+# every-PR gate — the lightweight first-run smoke (e2e.yml) covers PRs.
+#
+# Two entry points:
+#   - workflow_call  — release.yml uses this as a blocking gate before publish,
+#                      so a broken setup/login/onboarding/chat stops the release.
+#   - workflow_dispatch — run it by hand any time (e.g. before tagging).
 on:
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: e2e-chat-${{ github.ref }}
+  group: e2e-full-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  chat:
-    name: chat round-trip (mock LLM + real agent)
+  full:
+    name: first-run + chat (mock LLM + real agent)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -34,22 +38,26 @@ jobs:
           sed -i "s|^BETTER_AUTH_SECRET=.*|BETTER_AUTH_SECRET=$(openssl rand -hex 32)|" .env
           sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 16)|" .env
 
-      # The orchestrator spawns vonzio-agent:latest; scripts/e2e-local.sh builds
-      # it (agent-base + agent) if absent, but do it explicitly so the timing is
-      # visible as its own step.
+      # The chat path spawns vonzio-agent:latest; scripts/e2e-local.sh builds it
+      # if absent, but do it explicitly so the timing is its own step.
       - name: Build the agent image
         run: |
           make agent-base-local
           make agent-image
 
-      - name: Run the chat E2E (isolated stack + mock LLM)
+      # Order matters: first-run needs a pristine DB; chat seeds an admin. Each
+      # call boots its own isolated throwaway stack and tears it down.
+      - name: first-run smoke
+        run: bash scripts/e2e-local.sh first-run
+
+      - name: chat round-trip
         run: bash scripts/e2e-local.sh chat
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-chat
+          name: playwright-report-full
           path: playwright-report/
           retention-days: 7
           if-no-files-found: ignore

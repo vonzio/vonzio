@@ -11,8 +11,19 @@ permissions:
   contents: write   # required to create a GitHub release
 
 jobs:
+  # Blocking pre-publish gate: run the full E2E (first-run + chat round-trip
+  # against a real agent container + mock LLM) on the exact tagged commit. The
+  # per-PR first-run smoke is path-filtered, so a tag can sit on a main where it
+  # never ran — this closes that gap and verifies the whole critical journey
+  # before any artifact ships. `release` + `publish-sdk` need it, so a red E2E
+  # stops the release.
+  e2e-gate:
+    name: e2e gate
+    uses: ./.github/workflows/e2e-full.yml
+
   release:
     name: GitHub release
+    needs: e2e-gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -64,6 +75,7 @@ jobs:
     # version already on npm is skipped, so app releases that didn't bump the SDK
     # are no-ops. Bumping an SDK package.json version + pushing a v* tag ships it.
     name: publish plugin SDK to npm
+    needs: e2e-gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

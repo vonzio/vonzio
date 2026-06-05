@@ -72,6 +72,9 @@ origin, so it's safe to run alongside your dev stack.
   `packages/core-server/**`, `docker/**`, `e2e/**` changes, plus
   `workflow_dispatch`), not an every-PR required check. Boots a fresh stack,
   waits for `/health`, runs the suite, uploads the report on failure.
-- **`e2e-chat.yml`** — the **chat** round-trip. **Manual only**
-  (`workflow_dispatch`): it builds the heavy agent image, so it's run before
-  releases or when the chat/agent path changes — not on every PR.
+- **`e2e-full.yml`** — the **full** heavy E2E: first-run **and** chat
+  (real agent image + mock LLM). Reusable (`workflow_call`) + `workflow_dispatch`.
+  It is the **release gate**: `release.yml` calls it and makes the GitHub
+  release + npm publish `needs:` it, so a broken setup/login/onboarding/chat on
+  the tagged commit stops the release. Run it by hand any time before tagging.
+  Not an every-PR gate — it builds the heavy agent image (~5-8 min).
