@@ -264,6 +264,32 @@ setup() {
   [ "$RESET_ENV" = true ]
 }
 
+@test "parse_args: uninstall tier flags" {
+  ACTION=install; PURGE=false; REMOVE_DIR=false; REMOVE_BASE=false
+  parse_args --uninstall --purge --remove-dir --remove-base
+  [ "$ACTION" = uninstall ]
+  [ "$PURGE" = true ]
+  [ "$REMOVE_DIR" = true ]
+  [ "$REMOVE_BASE" = true ]
+}
+
+@test "do_uninstall: errors clearly when target isn't a vonzio install" {
+  INSTALL_DIR="$BATS_TEST_TMPDIR/not-vonzio"   # no docker/ dir
+  run do_uninstall
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Couldn't find a vonzio install"* ]]
+}
+
+@test "do_uninstall: light path returns 0 under set -e (mocked docker)" {
+  mkdir -p "$BATS_TEST_TMPDIR/inst/docker"
+  : > "$BATS_TEST_TMPDIR/inst/.env"
+  INSTALL_DIR="$BATS_TEST_TMPDIR/inst"
+  PURGE=false
+  docker() { return 0; }   # every docker op no-ops successfully
+  export -f docker
+  ( set -e; do_uninstall >/dev/null 2>&1 )   # fails the test if it returns non-zero
+}
+
 # ─── disk_free_gb ──────────────────────────────────────────────────────
 @test "disk_free_gb: converts df's 1K-blocks to whole GB" {
   # df -Pk 'Available' column (4th) in 1024-byte blocks; 20 GiB = 20971520.
