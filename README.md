@@ -20,10 +20,10 @@
 
 <p align="center"><sub>Pre-1.0 and actively developed — APIs may shift between minor versions.</sub></p>
 
-<!-- Hero shot: drop a dashboard screenshot or a short chat GIF in assets/ and
-     uncomment the line below (≈800px wide reads well on GitHub).
-<p align="center"><img src="assets/dashboard.png" alt="vonzio dashboard" width="800"></p>
--->
+<p align="center">
+  <img src="assets/screenshot-chat.png" width="820"
+       alt="vonzio dashboard — a chat session running an agent in a Docker container, GLM 5.1 via Ollama Cloud">
+</p>
 
 ---
 
@@ -148,6 +148,14 @@ Three processes on your host, one fresh Docker container per conversation.
 - `@vonzio/dashboard` — customer SPA (React + Vite)
 - `@vonzio/widget` — embeddable chat widget
 - `agent-runner/` — the in-container process that drives the LLM and exposes the tool / MCP surface
+
+## Screenshots
+
+| Workspace — chat, one container per session | Integrations — built-in OAuth + plugin extensions |
+|---|---|
+| <img src="assets/screenshot-workspace.png" width="430" alt="Workspace"> | <img src="assets/screenshot-integrations.png" width="430" alt="Integrations"> |
+| **Agents — profiles (model, prompt, tools, budget)** | **Playbooks — scheduled / webhook-triggered chains** |
+| <img src="assets/screenshot-agents.png" width="430" alt="Agents"> | <img src="assets/screenshot-playbooks.png" width="430" alt="Playbooks"> |
 
 ## Documentation
 
