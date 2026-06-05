@@ -1,4 +1,4 @@
-.PHONY: install check-lock build test dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
+.PHONY: install check-lock build test e2e e2e-install dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
 .PHONY: docker-build docker-dev docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
@@ -74,6 +74,15 @@ test: ## Run all tests
 
 test-watch: ## Run tests in watch mode
 	npx vitest
+
+# Browser-level first-run smoke (Playwright). Needs a FRESH OSS stack already
+# running (`make docker-dev-oss`) — it drives /setup → login → onboarding
+# against an empty DB. See e2e/README.md. CI runs it gated via e2e.yml.
+e2e: ## Run the E2E smoke against a running fresh OSS stack (see e2e/README.md)
+	npm run e2e
+
+e2e-install: ## One-time: install the Playwright Chromium browser the E2E suite uses
+	npx playwright install chromium
 
 typecheck: ## Type-check all packages
 	npx tsc --project packages/shared/tsconfig.json --noEmit
