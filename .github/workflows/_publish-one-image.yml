@@ -1,0 +1,102 @@
+name: _publish-one-image
+
+# Reusable: build ONE image for amd64 + arm64 on their NATIVE runners (no QEMU
+# — it would crawl on the heavy agent-base), push each by digest, then merge the
+# two into the version + latest manifest tags on GHCR. Canonical multi-platform
+# CI pattern (docker/build-push-action multi-runner).
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "image name under ghcr.io/vonzio/vonzio/ (e.g. agent-base)"
+        required: true
+        type: string
+      dockerfile:
+        required: true
+        type: string
+      version:
+        description: "tag to publish alongside :latest (e.g. 0.3.9)"
+        required: true
+        type: string
+      build_args:
+        description: "extra newline-separated build args"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REPO: ghcr.io/vonzio/vonzio
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-latest, arch: amd64 }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Daily cache-bust for the apt layers (only agent-base reads it; harmless
+      # elsewhere) — matches the scan job's APT_SNAPSHOT.
+      - id: date
+        run: echo "d=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            APT_SNAPSHOT=${{ steps.date.outputs.d }}
+            ${{ inputs.build_args }}
+          outputs: type=image,name=${{ env.REPO }}/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }},mode=max
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ inputs.image }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ inputs.image }}-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create + push the multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.REPO }}/${{ inputs.image }}:${{ inputs.version }} \
+            -t ${{ env.REPO }}/${{ inputs.image }}:latest \
+            $(printf '${{ env.REPO }}/${{ inputs.image }}@sha256:%s ' *)
+      - name: Inspect (shows the amd64 + arm64 manifest)
+        run: docker buildx imagetools inspect ${{ env.REPO }}/${{ inputs.image }}:${{ inputs.version }}
