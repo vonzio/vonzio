@@ -1,0 +1,55 @@
+name: e2e-chat
+
+# Chat round-trip E2E against a mock LLM. MANUAL ONLY (workflow_dispatch): the
+# chat path spawns a REAL agent container, so this builds the heavy agent image
+# (~5-8 min) — too slow for an every-PR gate. The lightweight first-run smoke
+# (e2e.yml) covers PRs; run this before releases or when the chat/agent path
+# changes. See e2e/README.md.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-chat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chat:
+    name: chat round-trip (mock LLM + real agent)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm install
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Generate a fresh .env (random secrets)
+        run: |
+          cp .env.example .env
+          sed -i "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$(openssl rand -hex 16)|" .env
+          sed -i "s|^BETTER_AUTH_SECRET=.*|BETTER_AUTH_SECRET=$(openssl rand -hex 32)|" .env
+          sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 16)|" .env
+
+      # The orchestrator spawns vonzio-agent:latest; scripts/e2e-local.sh builds
+      # it (agent-base + agent) if absent, but do it explicitly so the timing is
+      # visible as its own step.
+      - name: Build the agent image
+        run: |
+          make agent-base-local
+          make agent-image
+
+      - name: Run the chat E2E (isolated stack + mock LLM)
+        run: bash scripts/e2e-local.sh chat
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-chat
+          path: playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -1,4 +1,4 @@
-.PHONY: install check-lock build test e2e e2e-install dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
+.PHONY: install check-lock build test e2e e2e-install e2e-fresh e2e-chat dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
 .PHONY: docker-build docker-dev docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
@@ -83,6 +83,15 @@ e2e: ## Run the E2E smoke against a running fresh OSS stack (see e2e/README.md)
 
 e2e-install: ## One-time: install the Playwright Chromium browser the E2E suite uses
 	npx playwright install chromium
+
+# Self-contained variants — each boots its OWN fully-isolated stack (separate
+# network + volumes + alt ports 5273/3100) and tears it down, so they never
+# touch a running `make docker-dev` stack or its DB.
+e2e-fresh: ## Run the first-run smoke against a throwaway isolated stack (no need to wipe your dev DB)
+	@bash scripts/e2e-local.sh first-run
+
+e2e-chat: ## Run the chat round-trip against an isolated stack + mock LLM (needs the agent image; builds it if missing)
+	@bash scripts/e2e-local.sh chat
 
 typecheck: ## Type-check all packages
 	npx tsc --project packages/shared/tsconfig.json --noEmit
