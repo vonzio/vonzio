@@ -710,17 +710,30 @@ wait_for_health() {
   deadline=$(( now + HEALTH_TIMEOUT_SECS ))
   while (( $(date +%s) < deadline )); do
     if require_cmd curl && curl -fsS -o /dev/null "${url}/health" 2>/dev/null; then
+      local api_port="${SERVER_PORT:-3000}"
       log ""
-      ok "vonzio is up. Open: ${C_BOLD}${url}${C_RESET}"
+      log "  ────────────────────────────────────────────────"
+      ok "${C_BOLD}vonzio is up.${C_RESET}"
+      log ""
+      log "    Dashboard   ${C_BOLD}${url}${C_RESET}   ${C_DIM}← open this${C_RESET}"
+      log "    API         http://localhost:${api_port}"
+      log ""
+      log "    Logs    ${C_DIM}cd ${INSTALL_DIR} && make docker-logs${C_RESET}"
+      log "    Stop    ${C_DIM}cd ${INSTALL_DIR} && make docker-down${C_RESET}"
+      log "  ────────────────────────────────────────────────"
+      log ""
       log "  First visit lands on /setup — create your admin account, then onboarding."
       open_browser "$url"
       return 0
     fi
     sleep 2
   done
+  # Detached, so there's no live log stream to watch — point at the logs cmd.
   log ""
   warn "Still waiting on /health after ${HEALTH_TIMEOUT_SECS}s (cold builds can take longer)."
-  warn "  Once you see 'Server listening' in the logs, open: ${C_BOLD}${url}${C_RESET}"
+  warn "  The stack is running in the background. Watch it with:"
+  warn "    cd ${INSTALL_DIR} && make docker-logs"
+  warn "  then open ${C_BOLD}${url}${C_RESET} once you see 'Server listening'."
   return 0
 }
 
@@ -732,23 +745,24 @@ start_stack() {
     log ""
     log "Next:"
     log "  cd $INSTALL_DIR"
-    log "  make docker-dev-oss   ${C_DIM}# full Docker stack with Traefik${C_RESET}"
+    log "  make docker-dev-oss   ${C_DIM}# full Docker stack, hot reload (streams logs)${C_RESET}"
     log "  ${C_DIM}# OR${C_RESET}"
-    log "  make dev-oss          ${C_DIM}# host-mode (faster iteration, needs the postgres above)${C_RESET}"
+    log "  make dev-oss          ${C_DIM}# host-mode dev (server on host; still needs Docker for agents)${C_RESET}"
     exit 0
   fi
 
-  info "Starting the vonzio stack in OSS mode…"
-  log "  ${C_DIM}First boot builds the agent base image (~3 min cold on Apple Silicon).${C_RESET}"
-  log "  ${C_DIM}Logs streaming below. Ctrl-C stops the stack cleanly.${C_RESET}"
+  info "Building images + starting the stack in OSS mode…"
+  log "  ${C_DIM}First boot builds the agent base image (~3 min cold on Apple Silicon) — progress streams below.${C_RESET}"
   log ""
 
-  # Background poller watches /health and announces the URL the moment the
-  # stack is actually serving (replaces a fixed sleep that fired ~2.5 min
-  # before the server was ready on a cold build).
-  ( wait_for_health ) &
+  # Build (progress shown), then start DETACHED so the terminal returns to the
+  # user and the address summary below is the last, unmissable thing on screen
+  # — instead of being buried under an endless foreground log stream.
+  make docker-dev-oss-detached
 
-  exec make docker-dev-oss
+  # The stack is detached now, so poll /health in the FOREGROUND and print the
+  # summary as the final output.
+  wait_for_health
 }
 
 # ─── Orchestration ─────────────────────────────────────────────────────
