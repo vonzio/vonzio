@@ -87,6 +87,22 @@ warn() { printf "%s⚠%s  %s\n" "$C_WARN" "$C_RESET" "$*" >&2; }
 err()  { printf "%s✗%s %s\n" "$C_ERR" "$C_RESET" "$*" >&2; }
 step() { printf "\n%s%s%s\n" "$C_BOLD" "$*" "$C_RESET"; }
 
+# Decide a yes/no reply. Split out from confirm() so it's unit-testable without
+# a TTY. Lowercasing uses `tr`, not bash's built-in case-conversion expansion —
+# that expansion is bash 4+ and errors as "bad substitution" on the bash 3.2
+# that macOS ships and `curl | bash` runs under.
+confirm_reply() {
+  # confirm_reply "<reply>" [default-yes|default-no] -> 0 = yes, 1 = no
+  local reply default
+  reply="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  default="${2:-default-yes}"
+  case "$reply" in
+    y|yes) return 0 ;;
+    n|no)  return 1 ;;
+    *)     [[ "$default" == "default-yes" ]] ;;
+  esac
+}
+
 confirm() {
   # confirm "prompt text" [default-yes|default-no]
   local prompt="$1" default="${2:-default-yes}"
@@ -97,12 +113,7 @@ confirm() {
   if [[ -t 0 ]]; then read -r reply || reply=""
   else read -r reply < /dev/tty || reply=""
   fi
-  case "${reply,,}" in
-    y|yes) return 0 ;;
-    n|no)  return 1 ;;
-    "")    [[ "$default" == "default-yes" ]] ;;
-    *)     [[ "$default" == "default-yes" ]] ;;
-  esac
+  confirm_reply "$reply" "$default"
 }
 
 # Resolve the release tag we should install at. Precedence:
