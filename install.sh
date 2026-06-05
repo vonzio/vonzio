@@ -627,10 +627,16 @@ detect_mode() {
 do_uninstall() {
   step "Uninstalling vonzio core"
   local target="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-  if [[ ! -d "$target/docker" ]]; then
-    warn "Couldn't find a vonzio install at $target. Pass --dir <path> if it lives elsewhere."
+  # Resolve to an ABSOLUTE path first. Critical: a relative --dir (e.g. `.`
+  # from `make nuke`) combined with --remove-dir would otherwise become
+  # `cd /; rm -rf .` — i.e. wipe the filesystem root.
+  local abs
+  abs="$(cd "$target" 2>/dev/null && pwd || true)"
+  if [[ -z "$abs" || ! -d "$abs/docker" ]]; then
+    warn "Couldn't find a vonzio install at ${target}. Pass --dir <path> if it lives elsewhere."
     exit 1
   fi
+  target="$abs"
   cd "$target"
 
   # Stop + remove the stack. compose needs --env-file or it can't interpolate

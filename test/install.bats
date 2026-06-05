@@ -290,6 +290,18 @@ setup() {
   ( set -e; do_uninstall >/dev/null 2>&1 )   # fails the test if it returns non-zero
 }
 
+@test "do_uninstall --remove-dir resolves a relative --dir (never nukes the CWD)" {
+  cd "$BATS_TEST_TMPDIR"
+  mkdir -p inst/docker; : > inst/.env
+  : > SENTINEL                # in the CWD — must survive; proves no `rm -rf .`
+  INSTALL_DIR="inst"          # RELATIVE (as `make nuke` passes `--dir .`)
+  PURGE=true; REMOVE_BASE=false; REMOVE_DIR=true; ASSUME_YES=true
+  docker() { return 0; }; export -f docker
+  ( set -e; do_uninstall >/dev/null 2>&1 ) || true
+  [ ! -d "$BATS_TEST_TMPDIR/inst" ]      # resolved to abs path + removed the install dir
+  [ -f "$BATS_TEST_TMPDIR/SENTINEL" ]    # the CWD was NOT wiped
+}
+
 # ─── disk_free_gb ──────────────────────────────────────────────────────
 @test "disk_free_gb: converts df's 1K-blocks to whole GB" {
   # df -Pk 'Available' column (4th) in 1024-byte blocks; 20 GiB = 20971520.
