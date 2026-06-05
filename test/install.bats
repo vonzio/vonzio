@@ -343,17 +343,15 @@ setup() {
   [ "${#MISSING_DEPS[@]}" -eq 0 ]
 }
 
-@test "preflight_deps: an outdated node lands in MISSING_DEPS and arms the one-shot consent" {
-  ASSUME_YES=true            # stand in for the user saying 'yes' once
-  DEPS_AUTOCONFIRM=false
-  require_cmd() { return 0; }
+@test "preflight_deps: node is OPTIONAL — a missing node does NOT block or enter MISSING_DEPS" {
+  MISSING_DEPS=()
+  # All required deps present; node absent. The docker stack doesn't need it.
+  require_cmd() { case "$1" in node) return 1 ;; *) return 0 ;; esac; }
   git()    { echo "git version 2.40.0"; }
   openssl(){ return 0; }
   docker() { case "$1" in --version) echo "Docker version 27.0.0, build x";; *) return 0;; esac; }
-  node()   { case "$1" in -e) printf 18;; --version) echo "v18.0.0";; esac; }
-  preflight_deps
-  [[ " ${MISSING_DEPS[*]} " == *" node "* ]]
-  [ "$DEPS_AUTOCONFIRM" = true ]
+  preflight_deps >/dev/null 2>&1
+  [ "${#MISSING_DEPS[@]}" -eq 0 ]
 }
 
 # ─── on_error: friendly failure message ────────────────────────────────

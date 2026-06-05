@@ -10,10 +10,18 @@
 install: ## Install all dependencies
 	npm install
 
+# Host node_modules — needed for host-mode dev (make dev/api/dashboard) and the
+# build/CLI targets, but NOT for the docker stack (its containers install their
+# own). The installer deliberately skips host `npm install`; this target lets
+# the host-mode entry points auto-install on first use. `package.json` as the
+# prereq re-runs it when deps change.
+node_modules: package.json
+	npm install
+
 check-lock: ## Fail if package-lock.json is out of sync with package.json (same gate CI runs)
 	@bash scripts/check-lockfile.sh
 
-build: ## Build all packages
+build: node_modules ## Build all packages
 	npx tsc --project packages/shared/tsconfig.json
 	npx tsc --project packages/core-server/tsconfig.json
 	cd packages/dashboard && npx vite build
@@ -30,16 +38,16 @@ agent-image: ## Build the Docker agent image
 agent-base-local: ## Build agent-base locally (required on non-amd64 dev machines)
 	docker build -t ghcr.io/vonzio/vonzio/agent-base:latest -f docker/Dockerfile.agent.base .
 
-api: ## Start the API server in dev mode (auto-reload)
+api: node_modules ## Start the API server in dev mode (auto-reload)
 	TOOLS_DIR=./tools SKILLS_DIR=./skills npx tsx watch --clear-screen=false packages/core-server/src/index.ts
 
-api-once: ## Start the API server (no auto-reload, clean shutdown)
+api-once: node_modules ## Start the API server (no auto-reload, clean shutdown)
 	TOOLS_DIR=./tools SKILLS_DIR=./skills npx tsx packages/core-server/src/index.ts
 
-dashboard: ## Start the customer dashboard dev server (port 5173)
+dashboard: node_modules ## Start the customer dashboard dev server (port 5173)
 	cd packages/dashboard && npx vite
 
-dev: ## Start API + dashboard together (clean container shutdown on Ctrl+C)
+dev: node_modules ## Start API + dashboard together (clean container shutdown on Ctrl+C)
 	@bash scripts/dev-urls.sh --wait &
 	npx concurrently --kill-others-on-fail --kill-signal SIGINT --kill-timeout 10000 -n api,dash -c blue,magenta "make api-once" "make dashboard"
 

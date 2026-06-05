@@ -407,6 +407,7 @@ disk_free_gb() {
 
 _dep_ok()   { printf "    %s✓%s %-9s %s\n" "$C_OK"  "$C_RESET" "$1" "${2:-}"; }
 _dep_miss() { printf "    %s✗%s %-9s %s%s%s\n" "$C_ERR" "$C_RESET" "$1" "$C_DIM" "${2:-will install}" "$C_RESET"; }
+_dep_opt()  { printf "    %s○%s %-9s %s%s%s\n" "$C_DIM" "$C_RESET" "$1" "$C_DIM" "${2:-optional}" "$C_RESET"; }
 
 # Read-only scan of every prerequisite. Builds MISSING_DEPS, prints a
 # summary, and asks ONCE to install whatever's missing (instead of a
@@ -426,8 +427,16 @@ preflight_deps() {
   else
     _dep_miss docker; MISSING_DEPS+=(docker)
   fi
+  # node/npm are OPTIONAL: the docker stack builds its own modules in-container.
+  # They're only needed for host-mode dev (make dev-oss) + the CLI tools, which
+  # auto-install node_modules on first use — so we never block or auto-install
+  # node on their account.
   local nv=0; require_cmd node && nv="$(node_major 2>/dev/null || echo 0)"
-  if (( nv >= NODE_MIN_MAJOR )); then _dep_ok node "v$(node --version | sed 's/^v//')"; else _dep_miss node "need ${NODE_MIN_MAJOR}+"; MISSING_DEPS+=(node); fi
+  if (( nv >= NODE_MIN_MAJOR )); then
+    _dep_ok node "v$(node --version | sed 's/^v//') ${C_DIM}(optional)${C_RESET}"
+  else
+    _dep_opt node "optional — only for host-mode dev / CLI tools"
+  fi
 
   if (( ${#MISSING_DEPS[@]} == 0 )); then
     ok "All prerequisites present."
@@ -828,15 +837,12 @@ apply_bumped_ports() {
   info "Wrote bumped ports + coupled URLs (BETTER_AUTH_URL, CORS_ORIGIN, PREVIEW_URL_TEMPLATE) to .env."
 }
 
-setup_npm() {
-  if [[ ! -d node_modules ]]; then
-    info "Installing npm dependencies (one-time, ~1 min)…"
-    npm install --silent
-    ok "npm install complete."
-  else
-    ok "node_modules present — skipping npm install."
-  fi
-}
+# NOTE: there is intentionally no host `npm install`. The docker stack builds
+# its own node_modules inside the server/agent images (Dockerfile.server.dev
+# runs `npm install`), and the dev compose mounts only `…/src`, never
+# node_modules — so the running stack never touches the host's. Host-mode dev
+# (make dev-oss) and the CLI targets DO need host modules; their make targets
+# auto-install on first use (the `node_modules` target).
 
 setup_database() {
   step "[5/6] Database"
@@ -970,7 +976,6 @@ main() {
   check_prereqs
   setup_source_tree
   setup_env
-  setup_npm
   setup_database
   start_stack
 }
