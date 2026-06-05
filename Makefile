@@ -1,5 +1,5 @@
 .PHONY: install check-lock build test e2e e2e-install e2e-fresh e2e-chat dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
-.PHONY: docker-build docker-dev docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
+.PHONY: docker-build docker-dev docker-dev-detached docker-dev-oss-detached docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
 # Optional local/downstream extension hook. Any user can drop a `Makefile.saas`
@@ -129,6 +129,16 @@ docker-flavors: ## Build all flavored agent images (Go, Rust, Python-data, Java)
 docker-dev: agent-base-local ## Start full stack with hot reload (postgres + agent + server, ports 3000/5173)
 	@bash scripts/dev-urls.sh --wait &
 	cd docker && docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+# Build (progress streams) then start DETACHED — control returns to the shell
+# instead of being held by a log stream. Used by install.sh so the address
+# summary it prints afterwards is the last, unmissable thing on screen. No
+# dev-urls.sh here: the caller (installer, or `make urls`) owns the summary.
+docker-dev-detached: agent-base-local ## Build + start the dev stack detached (logs: make docker-logs, stop: make docker-down)
+	cd docker && docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+docker-dev-oss-detached: ## Same as docker-dev-detached but REGISTRATION_ENABLED=false (OSS single-user mode)
+	REGISTRATION_ENABLED=false $(MAKE) docker-dev-detached
 
 urls: ## Print the dev stack's addresses (dashboard, API, webhook tunnel)
 	@bash scripts/dev-urls.sh
