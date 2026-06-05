@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "vonzio customer dashboard — React SPA for workspaces, agents, playbooks, settings. Pairs with @vonzio/core-server.",
-  "license": "AGPL-3.0-or-later",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",

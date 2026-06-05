@@ -2,8 +2,8 @@
   "name": "vonzio",
   "version": "0.1.0",
   "private": true,
-  "description": "vonzio core — open-source Claude Code agent runtime + dashboard.",
-  "license": "AGPL-3.0-or-later",
+  "description": "vonzio — source-available, self-hostable agent runtime. One isolated container per conversation; bring your own model.",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",

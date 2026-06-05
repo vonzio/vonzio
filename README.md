@@ -5,14 +5,14 @@
 <h1 align="center">vonzio</h1>
 
 <p align="center">
-  Run your agents in containers you control.<br>
-  Open-source, self-hostable, single-tenant, bring your own model.
+  One isolated container per conversation.<br>
+  Self-hostable, bring your own model — the autonomy of a hosted agent, on infrastructure you own.
 </p>
 
 <p align="center">
   <a href="https://github.com/vonzio/vonzio/actions/workflows/ci.yml"><img src="https://github.com/vonzio/vonzio/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/vonzio/vonzio/releases"><img src="https://img.shields.io/github/v/tag/vonzio/vonzio?label=latest&sort=semver" alt="Latest release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg" alt="AGPL-3.0-or-later"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue.svg" alt="FSL-1.1-ALv2"></a>
   <img src="https://img.shields.io/badge/node-22+-green.svg" alt="Node 22+">
   <img src="https://img.shields.io/badge/postgres-17-336791.svg" alt="Postgres 17">
   <a href="https://vonzio.com">vonzio.com</a>
@@ -29,15 +29,17 @@
 
 ## What it does
 
-vonzio runs agents in fresh Docker containers — one per conversation. You bring a credential for any supported model provider; vonzio brings the orchestration: a chat UI, a workspace for files, a session that remembers, MCP tools, integrations, and an embeddable chat widget.
+**vonzio gives every conversation its own fresh Docker container.** Not a shared sandbox, not a pool of long-lived workers — one clean, isolated container per conversation, with its own bind-mounted workspace. The agent can run shell commands, write files, and execute code with real tools, and none of it touches your host or any other conversation. When the session goes idle, the container is torn down.
 
-- **Provider-agnostic** — Anthropic (Claude Sonnet/Opus/Haiku), Anthropic subscription tokens, Ollama Cloud, and any OpenAI-compatible endpoint. Pick per profile or per workspace.
-- **Containerized sessions** — each conversation runs in its own Docker container with a bind-mounted workspace
-- **Chat surface + widget** — full dashboard for direct use, plus a `/chat` embed you can drop into any page
-- **Integrations** — GitHub, GitLab, Bitbucket, Slack, Telegram, Gmail; bank data (Teller) and more via external plugins
-- **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria
-- **Memory and skills** — persistent agent memories, reusable skill snippets, custom subagents
-- **MCP runtime** — bring your own MCP servers, or use the built-ins (memory, notify, gmail, platform)
+That isolation is the point. You get the autonomy of a hosted agent like Manus — but it runs on infrastructure you own, with a model and credentials you control. You bring a provider key; vonzio brings everything around the container: a chat dashboard, a session that remembers, MCP tools, integrations, and an embeddable widget.
+
+- **One container per conversation** — fresh, isolated, with a bind-mounted workspace; reused while warm, torn down when idle. A runaway or prompt-poisoned agent is contained to its own session.
+- **Provider-agnostic** — Anthropic (Claude Sonnet/Opus/Haiku), Anthropic subscription tokens, Ollama Cloud, or any OpenAI-compatible endpoint. Pick per profile or per workspace.
+- **Chat surface + widget** — full dashboard for direct use, plus a `/chat` embed you can drop into any page.
+- **Integrations** — GitHub, GitLab, Bitbucket, Slack, Telegram, Gmail; bank data (Teller) and more via external plugins.
+- **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria.
+- **Memory and skills** — persistent agent memories, reusable skill snippets, custom subagents.
+- **MCP runtime** — bring your own MCP servers, or use the built-ins (memory, notify, gmail, platform).
 
 ## Who this is for
 
@@ -141,7 +143,7 @@ Three processes on your host, one fresh Docker container per conversation.
 - **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria; runs are first-class observable workspaces.
 - **Container pool** — warm containers are reused across conversations of the same profile; cold ones are torn down after a configurable idle window.
 
-**Packages**, all AGPL-3.0-or-later:
+**Packages** (all FSL-1.1-ALv2):
 
 - `@vonzio/shared` — types + cross-package interfaces (`ContainerManager`, `CoreDeps`, `Profile`, …)
 - `@vonzio/core-server` — Fastify API, orchestrator, container lifecycle, MCP runtime, integrations
@@ -163,10 +165,6 @@ Three processes on your host, one fresh Docker container per conversation.
 - **[Security model](docs/SECURITY_MODEL.md)** — threat model, trust boundaries, what's in and out of scope
 - **[Hardening guide](docs/HARDENING.md)** — opt-in production hardening (gVisor, restricted Docker socket, egress policies, secret rotation)
 - **[Plugin guide](docs/PLUGINS.md)** — write and publish external plugins: capabilities, manifest, the operator approval flow
-
-## Hosted option
-
-If you'd rather skip running your own postgres and Docker, [vonzio.com](https://vonzio.com) offers the same agent runtime as a managed multi-tenant service. The SaaS adds teams, invites, billing, and an admin panel that aren't part of the OSS package, built as a proprietary control plane that mounts onto the same data plane shipped here.
 
 ## Develop
 
@@ -202,16 +200,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution flow.
 
 ## License
 
-vonzio is licensed under GNU AGPL-3.0-or-later. See [LICENSE](LICENSE).
+vonzio is licensed under the [Functional Source License v1.1 with an Apache 2.0 future grant](LICENSE) (FSL-1.1-ALv2).
 
 Practical translation:
 
-- Run vonzio on your own infrastructure for personal or commercial use, free of charge.
+- Run vonzio on your own infrastructure for personal, internal, or commercial use, free of charge.
 - Fork it, modify it, integrate it into your own product.
-- If you operate a modified vonzio as a network service for third parties, you must publish your modifications under AGPL too (this is the AGPL's defining clause — see §13).
-- "vonzio" and the vonzio logo are trademarks; the AGPL doesn't grant trademark rights. Rebrand if you operate a fork as a service.
+- The one thing you can't do: offer vonzio to others as a commercial product or service that competes with vonzio (a "Competing Use"). Everything else is fair game.
+- Every release becomes Apache-2.0 — fully open source — two years after it ships. That grant is irrevocable.
+- "vonzio" and the vonzio logo are trademarks; the license doesn't grant trademark rights. Rebrand if you operate a fork as a service.
 
-See [NOTICE](NOTICE) for the full open-core architecture explanation and third-party license summary.
+See [NOTICE](NOTICE) for the license summary and third-party license notices. Background on the license: [fsl.software](https://fsl.software).
 
 ---
 

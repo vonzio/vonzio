@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Worked example plugin for the vonzio external loader: storage.kv + notifications.channel + http.outbound. Demonstrates the minimal manifest + capability-shaped context. See docs/PLUGINS.md.",
-  "license": "AGPL-3.0-or-later",
+  "license": "FSL-1.1-ALv2",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

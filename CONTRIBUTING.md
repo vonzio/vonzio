@@ -4,7 +4,7 @@ Thanks for considering a contribution. This guide covers the basics; pair it wit
 
 ## Ground rules
 
-- **License**: by submitting a pull request, you agree to license your contribution under the same AGPL-3.0-or-later that covers the rest of the project. No CLA is required and no copyright assignment is requested. Your name stays on your commits.
+- **License**: by submitting a pull request, you agree to license your contribution under the same FSL-1.1-ALv2 that covers the rest of the project. No CLA is required and no copyright assignment is requested. Your name stays on your commits.
 - **Issues first for non-trivial work**: open an issue describing the change before sinking days into a PR. Small fixes can go straight to PR.
 - **One change per PR**: easier to review, easier to revert.
 - **No AI-slop**: if you used an AI assistant to write the code, that's fine; you're still responsible for understanding every line and the change reading like a human wrote it.
@@ -52,10 +52,9 @@ If you touched dashboard UI, take a screenshot and include it in the PR descript
 The OSS repository (`vonzio/vonzio`) covers the **data plane**: agent runtime, dashboard, widget, integrations runtime, MCP, sessions, playbooks, memories. Anything a single-user self-hoster needs.
 
 What's **not** in this repo (and won't be accepted as a PR here):
-- Multi-tenant signup, invites, plans, billing (lives in the proprietary `cp-server` package, behind a stable interface seam).
-- The SaaS admin SPA.
+- Multi-tenant signup, invites, plans, and billing. vonzio core targets single-tenant / trusted-team self-hosting, so PRs that bolt a SaaS tenancy or billing layer onto core won't be merged.
 
-If you want to extend the multi-tenant story, the right approach is to build it on top of the same six interface seams (`ProfileResolver`, `IntegrationCredentials`, `SecretVault`, `TokenValidator`, `QuotaConfig`, `UsageEmitter` — all in `@vonzio/shared`) and publish your own private overlay package. We did exactly this for the hosted vonzio service.
+If you want a multi-tenant layer, the six interface seams in `@vonzio/shared` (`ProfileResolver`, `IntegrationCredentials`, `SecretVault`, `TokenValidator`, `QuotaConfig`, `UsageEmitter`) are designed for exactly that — build your overlay on top of them in your own package, without forking core.
 
 ## What we're especially looking for
 

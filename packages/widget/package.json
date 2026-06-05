@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Embeddable vonzio chat widget — drop-in JS that mounts an agent chat panel into any web page.",
-  "license": "AGPL-3.0-or-later",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",

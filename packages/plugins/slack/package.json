@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Slack integration for vonzio. Second plugin in the extraction arc -- validates that the @vonzio/plugin-api contract from Phase 3D generalizes to a non-Telegram chat surface.",
-  "license": "AGPL-3.0-or-later",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",

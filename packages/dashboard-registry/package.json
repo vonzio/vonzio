@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Frontend slot registry for vonzio dashboard plugins. The register*/get* API a plugin's frontend entry calls to add integration rows, settings sections, routes, nav items, and other dashboard slots. Published so external plugins can extend the dashboard from npm.",
-  "license": "AGPL-3.0-or-later",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",

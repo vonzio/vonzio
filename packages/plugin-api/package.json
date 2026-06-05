@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Plugin contract for vonzio. Defines the types + helpers a plugin author implements; defines what core-server's loader and bus implement. Stable surface: breaking changes require a major bump.",
-  "license": "AGPL-3.0-or-later",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",

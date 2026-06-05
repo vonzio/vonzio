@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Telegram integration for vonzio. POC for the plugin extraction arc -- the real telegram code is being moved here piecewise from packages/core-server and packages/dashboard.",
-  "license": "AGPL-3.0-or-later",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://vonzio.com",
   "repository": {
     "type": "git",

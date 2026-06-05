@@ -1,51 +1,33 @@
 vonzio
 Copyright (C) 2026 Amen Amouzou and Vonzio contributors.
 
-This product is licensed under the GNU Affero General Public License v3.0
-or later (AGPL-3.0-or-later). See LICENSE for the full text.
+This product is licensed under the Functional Source License, Version 1.1,
+with an Apache 2.0 future license (FSL-1.1-ALv2). See LICENSE for the full
+text.
 
 ──────────────────────────────────────────────────────────────────────────
-Open-core architecture
+License summary
 ──────────────────────────────────────────────────────────────────────────
 
-vonzio is built as two layers:
+FSL is a source-available license. In plain terms:
 
-  • Data plane — the agent runtime, dashboard, chat widget, shared types.
-    Distributed as the open-source `vonzio/core` repository on GitHub.
-    AGPL-3.0-or-later. Self-hostable as a single-user instance via
-    `make docker-dev-oss` (see README).
+  • You may run, self-host, read, modify, and redistribute vonzio for any
+    purpose — personal, internal, or commercial — EXCEPT offering it to
+    others as a commercial product or service that competes with vonzio
+    (a "Competing Use").
 
-    Packages:
-      - @vonzio/shared          types + cross-package interfaces
-      - @vonzio/core-server     Fastify API + orchestrator + auth
-      - @vonzio/dashboard       customer SPA (React)
-      - @vonzio/widget          embeddable chat widget
+  • Each release converts to Apache License 2.0 — fully open source — two
+    years after it is published. The grant is irrevocable.
 
-  • Control plane — multi-tenant SaaS overlay (signup, invites, billing,
-    plans, quotas, admin UI). Closed source. Operated at https://vonz.io.
-
-    Packages (not in this repository):
-      - @vonzio/cp-server
-      - @vonzio/admin-dashboard
-
-The boundary is enforced at the package level. The data plane runs
-standalone — it has zero compile-time or runtime dependency on the
-control plane. The control plane mounts onto the data plane at boot
-via a dynamic import; when the control-plane package is absent, the
-server logs "running single-user OSS" and continues. Six interface
-seams in @vonzio/shared (ProfileResolver, IntegrationCredentials,
-SecretVault, TokenValidator, QuotaConfig, UsageEmitter) let the
-control plane swap default implementations with plan-aware ones.
-
-This pattern follows Cal.com, PostHog, Plausible, Supabase, and other
-open-core SaaS products.
+This keeps vonzio free to use and self-host for everyone, while reserving
+the hosted-competitor case. See https://fsl.software for the rationale.
 
 ──────────────────────────────────────────────────────────────────────────
 Trademarks
 ──────────────────────────────────────────────────────────────────────────
 
 "vonzio" and the vonzio logo are trademarks of Amen Amouzou.
-The AGPL grants you the right to fork, modify, and self-host the
+The license grants you the right to fork, modify, and self-host the
 software; it does not grant rights to the trademarks. If you operate
 a fork as a service, please rebrand.
 

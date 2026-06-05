@@ -1,8 +1,8 @@
 # Self-hosting vonzio
 
-This guide walks you through running vonzio on your own machine or server. The single-user OSS mode is the supported self-host configuration — one human, their agents, their data, their API key.
+This guide walks you through running vonzio on your own machine or server. Single-user mode is the supported self-host configuration — one human, their agents, their data, their API key.
 
-If you want multi-user invites, plans, billing, and an admin panel, those live in the proprietary control plane and the easiest path is the managed service at [vonzio.com](https://vonzio.com).
+Need multi-user invites, plans, or billing? vonzio doesn't ship a tenancy layer in core; the six interface seams in `@vonzio/shared` are designed to let you build one on top without forking. See [CONTRIBUTING.md](../CONTRIBUTING.md#whats-in-scope).
 
 ## Requirements
 
