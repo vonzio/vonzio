@@ -175,7 +175,7 @@ docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.prod.y
 ```
 
 The production stack:
-- Replaces the dev `docker-server.dev` (which mounts source for hot reload) with the built `docker-server` image
+- Replaces the hot-reload dev server (Dockerfile.server.dev, which mounts source) with the built `vonzio-server` production image
 - Adds Traefik HTTPS via Let's Encrypt (needs `DOMAIN` set in `.env`)
 - Sets `REGISTRATION_ENABLED=false` by default
 

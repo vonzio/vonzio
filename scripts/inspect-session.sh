@@ -9,8 +9,9 @@
 # blob.
 #
 # Assumes you're running the local docker-dev / docker-dev-oss stack —
-# uses the `docker-server-1` and `docker-postgres-1` container names from
-# the bundled compose files.
+# uses the `vonzio-server-1` and `vonzio-postgres-1` container names from
+# the bundled compose files (project name `vonzio`; override with
+# COMPOSE_PROJECT_NAME).
 
 set -euo pipefail
 
@@ -57,8 +58,11 @@ fi
 RUN() { eval "$*"; }
 
 # Single source-of-truth for the docker compose project's container names.
-SERVER_CTR="docker-server-1"
-PG_CTR="docker-postgres-1"
+# Derived from the compose project name (default `vonzio`; honors a custom
+# COMPOSE_PROJECT_NAME so multi-instance / E2E stacks still work).
+PROJECT="${COMPOSE_PROJECT_NAME:-vonzio}"
+SERVER_CTR="${PROJECT}-server-1"
+PG_CTR="${PROJECT}-postgres-1"
 
 # ─── Color helpers ──────────────────────────────────────────────────────
 if $JSON_MODE || ! [[ -t 1 ]]; then

@@ -537,7 +537,10 @@ do_uninstall() {
   # for fresh installs.
   docker rm -f vonzio-pg 2>/dev/null && info "Removed legacy standalone postgres" || true
   if confirm "Remove postgres volume + agent session volumes? (irreversible)" "default-no"; then
-    docker volume rm docker_pgdata 2>/dev/null || true
+    # vonzio_pgdata is the current name (project `vonzio`); docker_pgdata is the
+    # legacy name from when the project defaulted to the docker/ dir — remove
+    # both so older installs get cleaned up too.
+    docker volume rm vonzio_pgdata docker_pgdata 2>/dev/null || true
     docker volume ls -q | grep -E "^vonzio-(ws|sdk)-" | xargs -r docker volume rm 2>/dev/null || true
     ok "Volumes removed."
   fi
