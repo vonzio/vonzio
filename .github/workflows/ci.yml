@@ -261,3 +261,15 @@ jobs:
         run: sudo apt-get update -y && sudo apt-get install -y bats
       - name: Unit-test install.sh
         run: bats test/install.bats
+      # End-to-end run under the script's own `set -e` — the thing bats can't
+      # see (its setup() relaxes set -e) and the release E2E gate can't see (it
+      # boots via docker compose, not install.sh). Runs in-clone (this checkout)
+      # with a FRESH .env, so it exercises setup_env/setup_npm/etc. the way a
+      # real `curl | bash` does. --no-start stops before docker. This is the
+      # guard that would have caught the v0.3.6 `set -e` regression.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - name: install.sh end-to-end under set -e (--no-start, in-clone)
+        run: VONZIO_NO_OPEN=1 bash install.sh --no-start --yes
