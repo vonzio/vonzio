@@ -4,7 +4,10 @@
    Mirror of brand/tokens.json. Two surfaces share one accent.
    ───────────────────────────────────────────────────────────── */
 
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap');
+/* Fonts load via <link rel="stylesheet"> in index.html (with preconnect). A CSS
+   @import here was redundant — and since tokens.css is concatenated after other
+   CSS in the bundle, it tripped vite's "@import must precede all other
+   statements" warning and double-fetched the font CSS. */
 
 :root {
   /* ─── Brand ─── */
