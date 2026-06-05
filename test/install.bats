@@ -46,6 +46,25 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+# confirm_reply is the TTY-free reply parser. These cover the path that broke on
+# macOS bash 3.2 (${reply,,} → "bad substitution"): a typed reply must be parsed
+# case-insensitively without any bash-4 feature.
+@test "confirm_reply: y/Y/yes/YES all accepted (case-insensitive, no \${,,})" {
+  run confirm_reply "y"   "default-no"; [ "$status" -eq 0 ]
+  run confirm_reply "Y"   "default-no"; [ "$status" -eq 0 ]
+  run confirm_reply "yes" "default-no"; [ "$status" -eq 0 ]
+  run confirm_reply "YES" "default-no"; [ "$status" -eq 0 ]
+  run confirm_reply "yEs" "default-no"; [ "$status" -eq 0 ]
+}
+
+@test "confirm_reply: n/N/no rejected; empty + junk fall back to the default" {
+  run confirm_reply "n"  "default-yes"; [ "$status" -eq 1 ]
+  run confirm_reply "NO" "default-yes"; [ "$status" -eq 1 ]
+  run confirm_reply ""   "default-no";  [ "$status" -eq 1 ]
+  run confirm_reply ""   "default-yes"; [ "$status" -eq 0 ]
+  run confirm_reply "xyz" "default-no"; [ "$status" -eq 1 ]
+}
+
 # ─── guard_existing_db ─────────────────────────────────────────────────
 @test "guard_existing_db: no existing volume -> silent no-op (fresh install)" {
   docker() { case "$1 $2" in "volume inspect") return 1 ;; *) return 0 ;; esac; }
