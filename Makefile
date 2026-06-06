@@ -1,5 +1,5 @@
 .PHONY: install check-lock build test e2e e2e-install e2e-fresh e2e-chat dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
-.PHONY: docker-build docker-dev docker-dev-detached docker-dev-oss-detached docker-dev-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat uninstall nuke
+.PHONY: docker-build docker-dev docker-dev-detached docker-dev-oss-detached docker-dev-oss docker-pull-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat uninstall nuke
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
 # Optional local/downstream extension hook. Any user can drop a `Makefile.saas`
@@ -153,6 +153,15 @@ docker-dev-detached: agent-base-local ## Build + start the dev stack detached (l
 
 docker-dev-oss-detached: ## Same as docker-dev-detached but REGISTRATION_ENABLED=false (OSS single-user mode)
 	REGISTRATION_ENABLED=false $(MAKE) docker-dev-detached
+
+# Pull-based OSS run — prebuilt public images, NO build. The prod server image
+# serves the dashboard + API on :3000 (no vite). `pull` fails fast if the
+# version's images aren't published, so the installer can fall back to building.
+# Pin the version with VONZIO_IMAGE_TAG (default :latest).
+COMPOSE_PULL = docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.pull.yml
+docker-pull-oss: ## Pull prebuilt OSS images + start detached (no build). Set VONZIO_IMAGE_TAG to pin a version.
+	cd docker && $(COMPOSE_PULL) pull
+	cd docker && $(COMPOSE_PULL) up -d --no-build
 
 urls: ## Print the dev stack's addresses (dashboard, API, webhook tunnel)
 	@bash scripts/dev-urls.sh

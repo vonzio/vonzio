@@ -87,20 +87,18 @@ RUN npm prune --omit=dev
 # better-auth declares drizzle-kit as a peerOptional (npm treats peers
 # as required even with --omit=dev). Our runtime doesn't invoke
 # drizzle-kit -- better-auth migrations run via `npx @better-auth/cli`
-# in start-prod.sh, which fetches fresh, not from local node_modules.
+# in start-prod.sh, which fetches fresh, not from local node_modules -- so
+# drop drizzle-kit + the deprecated @esbuild-kit (its ancient esbuild Go
+# binary is what Trivy flagged).
 #
-# Also delete the top-level hoisted `esbuild` + `@esbuild` -- npm marks
-# them extraneous after prune (they were brought in by devDeps' transitive
-# graph and nothing in our prod tree depends on them anymore), but it
-# leaves them on disk. Trivy still scans the orphan binary's embedded
-# Go stdlib and reports CVEs from it. tsx ships its own newer esbuild
-# under `node_modules/tsx/node_modules/`, untouched by this delete --
-# that's the one start-prod.sh actually invokes.
+# DO NOT delete `esbuild` / `@esbuild`: npm HOISTS a single esbuild to the
+# top level and `tsx` (a RUNTIME dependency -- start-prod.sh runs the server
+# via `npx tsx`) imports it from there. Deleting it crashed the prod image at
+# boot with `Cannot find package 'esbuild' imported from tsx`. The kept copy
+# is tsx's current esbuild, not the @esbuild-kit one.
 RUN rm -rf \
     node_modules/drizzle-kit \
-    node_modules/@esbuild-kit \
-    node_modules/@esbuild \
-    node_modules/esbuild
+    node_modules/@esbuild-kit
 
 ARG VONZIO_VERSION=dev
 ENV VONZIO_VERSION=$VONZIO_VERSION

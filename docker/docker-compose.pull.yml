@@ -1,0 +1,18 @@
+# Pull-based OSS run: use the prebuilt public images instead of building from
+# source. Layer on top of docker-compose.yml (the prod base) — the server image
+# serves the built dashboard AND the API on :3000 (no vite, no source mounts).
+#
+# Installer default path: `compose pull` then `up -d --no-build`. Pin the image
+# version with VONZIO_IMAGE_TAG (the installer sets it to the release tag;
+# defaults to :latest). `make docker-dev*` stays build-from-source for
+# contributors.
+services:
+  server:
+    image: ghcr.io/vonzio/vonzio/server:${VONZIO_IMAGE_TAG:-latest}
+    environment:
+      # The orchestrator spawns the prebuilt agent image, not a locally-built
+      # vonzio-agent:latest.
+      - AGENT_IMAGE=ghcr.io/vonzio/vonzio/agent:${VONZIO_IMAGE_TAG:-latest}
+
+  agent:
+    image: ghcr.io/vonzio/vonzio/agent:${VONZIO_IMAGE_TAG:-latest}
