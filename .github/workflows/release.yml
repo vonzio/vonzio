@@ -1,7 +1,9 @@
 name: release
 
-# Triggered when a v* tag is pushed. Creates a GitHub release with auto-
-# generated notes pulled from PR titles since the previous tag.
+# Triggered when a v* tag is pushed. Gated on the full E2E, then: creates a
+# GitHub release (auto-generated notes from PR titles since the previous tag)
+# and publishes the plugin SDK to npm (in parallel); once the release is made,
+# publishes the multi-arch runtime images to GHCR so installs pull, not build.
 on:
   push:
     tags:
@@ -26,6 +28,11 @@ jobs:
     needs: e2e-gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      # Bare version (no leading "v") — reused by publish-images below. This is
+      # the tag the runtime images get AND what the installer pulls:
+      # install.sh strips the "v" (server:${RESOLVED_REF#v}).
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -66,6 +73,23 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes-file "$notes_file" \
             --generate-notes
+
+  publish-images:
+    # Publish the multi-arch runtime images (agent-base → agent, server) to GHCR
+    # at the release version so installs PULL instead of build. Runs only after
+    # the GitHub release is created (needs: release), so a tag that fails to
+    # release doesn't leave dangling images — and reuses release's bare version
+    # output as the image tag. The reusable workflow needs packages:write, which
+    # this job grants explicitly (the top-level token is contents:write only).
+    name: publish runtime images to GHCR
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-images.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
+    secrets: inherit
 
   publish-sdk:
     # Publish the plugin SDK packages to npm so external plugins (separate
