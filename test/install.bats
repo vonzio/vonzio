@@ -451,6 +451,22 @@ setup() {
   [[ "$output" == *"up -d --no-build"* ]]
 }
 
+@test "write_run_makefile: nuke + uninstall re-run the installer against THIS dir" {
+  mk="$BATS_TEST_TMPDIR/Makefile"
+  write_run_makefile "$mk"
+  run make -f "$mk" -n nuke
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"install.sh"* ]]
+  [[ "$output" == *"--uninstall"* ]]
+  [[ "$output" == *"--purge"* ]]
+  [[ "$output" == *"--remove-dir"* ]]
+  [[ "$output" == *"--dir $BATS_TEST_TMPDIR"* ]]   # CURDIR = this install dir
+  run make -f "$mk" -n uninstall
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--uninstall"* ]]
+  [[ "$output" != *"--purge"* ]]                    # plain uninstall keeps data
+}
+
 # ─── on_error: friendly failure message ────────────────────────────────
 @test "on_error: prints a re-runnable failure hint" {
   run on_error 42
