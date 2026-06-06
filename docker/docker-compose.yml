@@ -76,8 +76,11 @@ services:
       # to the daemon through docker-proxy below. Restoring the raw mount
       # would undo the Phase 2B hardening; do not add it back.
       - vonzio-data:/app/data
-      - ../tools:/app/tools
-      - ../config:/app/config
+      # config/ (system prompt) + tools/ are BAKED INTO the server image
+      # (see docker/Dockerfile.server), so the base + pull stacks are
+      # self-contained and need no source tree. The dev overlay bind-mounts
+      # the repo copies over them for live editing; self-hosters who want to
+      # customize without rebuilding can add the same mounts (docs/SELF_HOST.md).
     ports:
       # API + dashboard preview proxy reachable directly on the host. In
       # OSS dev/local self-host this is the user-visible endpoint. Prod
