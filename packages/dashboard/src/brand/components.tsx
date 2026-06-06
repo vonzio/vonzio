@@ -440,12 +440,25 @@ export function Card({ children, mute, flush, className = "", style, onClick }: 
   const cls = ["vz-card", mute && "vz-card--mute", flush && "vz-card--flush", className].filter(Boolean).join(" ");
   return <div className={cls} style={style} onClick={onClick}>{children}</div>;
 }
-export function Panel({ title, action, children }: { title?: ReactNode; action?: ReactNode; children: ReactNode }) {
+export function Panel({
+  title,
+  subtitle,
+  action,
+  children,
+}: {
+  title?: ReactNode;
+  subtitle?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div className="vz-panel">
-      {(title || action) && (
+      {(title || subtitle || action) && (
         <div className="vz-panel__header">
-          <span className="vz-panel__title">{title}</span>
+          <span className="vz-panel__heading">
+            <span className="vz-panel__title">{title}</span>
+            {subtitle && <span className="vz-panel__subtitle">{subtitle}</span>}
+          </span>
           <span style={{ marginLeft: "auto" }}>{action}</span>
         </div>
       )}
