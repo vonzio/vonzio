@@ -71,7 +71,7 @@ One-line install on macOS or Linux (it asks before installing any missing dep):
 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
 ```
 
-The installer checks for Docker, Compose v2, git, make, and openssl (Node is optional — only host-mode dev needs it). It generates a fresh `.env` with secure random secrets, **pulls vonzio's prebuilt multi-arch images** (no compiling on your machine), brings up postgres, runs the one-time Better Auth schema migration, and starts the stack — usually about a minute on a warm machine. Add `--build` to build the images from source instead.
+The installer checks for Docker, Compose v2, make, and openssl (git + Node are optional — only the `--build` / contributor path needs git). It generates a fresh `.env` with secure random secrets, **fetches just the compose files** (no `git clone`, no source tree), **pulls vonzio's prebuilt multi-arch images** (no compiling on your machine), brings up postgres, runs the one-time Better Auth schema migration, and starts the stack — usually about a minute on a warm machine. Add `--build` to clone the source and build the images instead.
 
 By default it installs the **latest tagged release**. Pin to a specific version with `VONZIO_VERSION=v0.1.3` (or pass `--tag v0.1.3` after the `bash`) — useful for reproducible installs, security advisories, or staying off in-flight `main`:
 

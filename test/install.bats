@@ -39,6 +39,15 @@ setup() {
   [ "$output" = "v9.9.9" ]
 }
 
+@test "resolve_target_tag: falls back to the GitHub API (curl) when git is absent" {
+  TARGET_TAG=""
+  require_cmd() { case "$1" in git) return 1 ;; *) return 0 ;; esac; }   # no git
+  curl() { printf '{\n  "tag_name": "v1.2.3",\n  "name": "v1.2.3"\n}\n'; }
+  run resolve_target_tag
+  [ "$status" -eq 0 ]
+  [ "$output" = "v1.2.3" ]
+}
+
 # ─── confirm ───────────────────────────────────────────────────────────
 @test "confirm: ASSUME_YES short-circuits to yes (the automatable path)" {
   ASSUME_YES=true
@@ -352,6 +361,40 @@ setup() {
   docker() { case "$1" in --version) echo "Docker version 27.0.0, build x";; *) return 0;; esac; }
   preflight_deps >/dev/null 2>&1
   [ "${#MISSING_DEPS[@]}" -eq 0 ]
+}
+
+@test "preflight_deps: git is OPTIONAL on the default pull path (no --build)" {
+  MISSING_DEPS=(); BUILD_FROM_SOURCE=false; IN_CLONE=false
+  require_cmd() { case "$1" in git) return 1 ;; *) return 0 ;; esac; }   # git absent
+  openssl(){ return 0; }
+  docker() { case "$1" in --version) echo "Docker version 27.0.0, build x";; *) return 0;; esac; }
+  preflight_deps >/dev/null 2>&1
+  # missing git must NOT block a pull install
+  [[ " ${MISSING_DEPS[*]} " != *" git "* ]]
+}
+
+@test "preflight_deps: git is REQUIRED when --build is set" {
+  MISSING_DEPS=(); BUILD_FROM_SOURCE=true; IN_CLONE=false
+  require_cmd() { case "$1" in git) return 1 ;; *) return 0 ;; esac; }   # git absent
+  openssl(){ return 0; }
+  docker() { case "$1" in --version) echo "Docker version 27.0.0, build x";; *) return 0;; esac; }
+  confirm() { return 0; }   # don't block on the install-missing-deps prompt
+  preflight_deps >/dev/null 2>&1
+  [[ " ${MISSING_DEPS[*]} " == *" git "* ]]
+}
+
+# ─── write_run_makefile (source-free pull install) ─────────────────────
+@test "write_run_makefile: emits a valid Makefile (TAB recipes) make can parse" {
+  mk="$BATS_TEST_TMPDIR/Makefile"
+  write_run_makefile "$mk"
+  [ -f "$mk" ]
+  # The literal Make variable reference must survive verbatim (not shell-expanded).
+  grep -q 'COMPOSE = docker compose' "$mk"
+  # make parses it AND expands $(COMPOSE) — proves the recipe TABs are real.
+  run make -f "$mk" -n docker-pull-oss
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"docker compose"*"pull"* ]]
+  [[ "$output" == *"up -d --no-build"* ]]
 }
 
 # ─── on_error: friendly failure message ────────────────────────────────
