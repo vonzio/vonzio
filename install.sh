@@ -15,7 +15,8 @@
 #      vonzio/vonzio there at that tag.
 #   4. Generates a fresh .env with secure random secrets (or keeps existing).
 #   5. Starts a postgres container, runs Better Auth's schema migrations.
-#   6. Brings the stack up via `make docker-dev-oss`.
+#   6. Pulls the prebuilt images and brings the stack up (no build). Falls back
+#      to building from source if the version's images aren't published.
 #   7. Polls /health and prints (and opens) the URL once it's serving.
 #
 # Flags:
@@ -27,6 +28,9 @@
 #   --dir <path>        Install location for the curl-piped case (default: ~/vonzio).
 #   --yes, -y           Auto-confirm all "install missing dep?" prompts.
 #   --no-start          Set everything up but don't start the stack.
+#   --build             Build the images from source instead of pulling the
+#                       prebuilt ones (the default). For contributors, or when
+#                       no prebuilt image exists for the target version.
 #   --reset-env         Back up an existing .env and regenerate it.
 #
 # Uninstall:
@@ -71,6 +75,13 @@ ACTION="install"
 PURGE=false
 REMOVE_DIR=false
 REMOVE_BASE=false
+# --build forces building from source instead of pulling prebuilt images.
+BUILD_FROM_SOURCE=false
+# The host port to open / health-check: 3000 for the pulled prod server (serves
+# the dashboard itself), 5173 for the build-from-source dev stack (vite). And
+# the command the summary shows for restarting (mode-dependent).
+OPEN_PORT=""
+START_CMD=""
 # Resolved app version we're about to install (set early by announce_version so
 # the user sees it BEFORE the install-location prompt, and reused in step 3).
 RESOLVED_REF=""
@@ -544,6 +555,7 @@ parse_args() {
       --yes|-y) ASSUME_YES=true; shift ;;
       --no-start) NO_START=true; shift ;;
       --reset-env) RESET_ENV=true; shift ;;
+      --build) BUILD_FROM_SOURCE=true; shift ;;
       --purge) PURGE=true; shift ;;
       --remove-dir) REMOVE_DIR=true; shift ;;
       --remove-base) REMOVE_BASE=true; shift ;;
@@ -885,7 +897,7 @@ guard_existing_db() {
 # the foreground `make` (which is what brings the stack up), so it has to
 # tolerate the port being unreachable for the whole cold-build window.
 wait_for_health() {
-  local port="${DASHBOARD_PORT:-5173}" url deadline now
+  local port="${OPEN_PORT:-${DASHBOARD_PORT:-5173}}" url deadline now
   url="http://localhost:${port}"
   now="$(date +%s)"
   deadline=$(( now + HEALTH_TIMEOUT_SECS ))
@@ -902,7 +914,7 @@ wait_for_health() {
       log "  ${C_DIM}Manage it (from ${INSTALL_DIR}):${C_RESET}"
       log "    Logs    ${C_DIM}make docker-logs${C_RESET}"
       log "    Stop    ${C_DIM}make docker-down${C_RESET}"
-      log "    Start   ${C_DIM}make docker-dev-oss-detached${C_RESET}"
+      log "    Start   ${C_DIM}${START_CMD:-make docker-dev-oss-detached}${C_RESET}"
       log "  ────────────────────────────────────────────────"
       log ""
       log "  First visit lands on /setup — create your admin account, then onboarding."
@@ -926,25 +938,37 @@ start_stack() {
     log ""
     ok "Setup complete (stack not started — --no-start was passed)."
     log ""
-    log "Next:"
-    log "  cd $INSTALL_DIR"
-    log "  make docker-dev-oss   ${C_DIM}# full Docker stack, hot reload (streams logs)${C_RESET}"
+    log "Next (from $INSTALL_DIR):"
+    log "  make docker-pull-oss          ${C_DIM}# pull prebuilt images + run (fast, default)${C_RESET}"
     log "  ${C_DIM}# OR${C_RESET}"
-    log "  make dev-oss          ${C_DIM}# host-mode dev (server on host; still needs Docker for agents)${C_RESET}"
+    log "  make docker-dev-oss-detached  ${C_DIM}# build from source (hot reload, for contributors)${C_RESET}"
     exit 0
+  fi
+
+  # Default: pull prebuilt images (no build, ~1 min). Fall back to building from
+  # source if this version's images aren't published yet (or --build was given).
+  if ! $BUILD_FROM_SOURCE; then
+    local tag="${RESOLVED_REF#v}"
+    [[ -z "$tag" || "$tag" == "main" ]] && tag="latest"
+    info "Pulling prebuilt images (vonzio ${tag}) — no build needed…"
+    if VONZIO_IMAGE_TAG="$tag" make docker-pull-oss; then
+      OPEN_PORT="${SERVER_PORT:-3000}"     # prod server serves the dashboard itself
+      START_CMD="make docker-pull-oss"
+      wait_for_health
+      return 0
+    fi
+    warn "Prebuilt images for ${tag} aren't available — building from source instead."
+    log ""
   fi
 
   info "Building images + starting the stack in OSS mode…"
   log "  ${C_DIM}First boot builds the agent base image (~3 min cold on Apple Silicon) — progress streams below.${C_RESET}"
   log ""
-
-  # Build (progress shown), then start DETACHED so the terminal returns to the
-  # user and the address summary below is the last, unmissable thing on screen
-  # — instead of being buried under an endless foreground log stream.
+  # Build (progress shown), then start DETACHED so the terminal returns and the
+  # summary below is the last, unmissable thing on screen.
   make docker-dev-oss-detached
-
-  # The stack is detached now, so poll /health in the FOREGROUND and print the
-  # summary as the final output.
+  OPEN_PORT="${DASHBOARD_PORT:-5173}"       # dev stack serves the dashboard via vite
+  START_CMD="make docker-dev-oss-detached"
   wait_for_health
 }
 
