@@ -6,13 +6,13 @@ If you want multi-user invites, plans, billing, and an admin panel, those live i
 
 ## Requirements
 
-The default install **pulls prebuilt images**, so the host needs no build toolchain — just Docker and a few shell utilities:
+The default install **pulls prebuilt images** and fetches only the compose files (no source tree), so the host needs no build toolchain — just Docker and a couple of shell utilities:
 
 - **Docker** 24+ with Compose v2
-- **git**, **make**, **openssl** — the installer checks for these and offers to install any that are missing
+- **curl**, **make**, **openssl** — `curl` runs the one-liner; the installer checks for `make` + `openssl` and offers to install them if missing
 - An **Anthropic API key** (`sk-ant-...` from console.anthropic.com), an Anthropic subscription token (from claude.ai cookies), or an **Ollama Cloud API key**
 - ~3 GB free disk for the pulled images + the postgres volume
-- **Node.js** 22+ — *optional*, only for host-mode dev (`make dev-oss`) and the CLI tools. A normal Docker install never needs it (the containers carry their own `node_modules`).
+- **git** and **Node.js** 22+ — *optional*. `git` is only needed for the build-from-source / contributor path (`--build`, which clones the repo); Node is for host-mode dev (`make dev-oss`) and the CLI tools. A normal pull install needs neither.
 
 ## Quickstart (one-liner)
 
@@ -22,7 +22,9 @@ curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bas
 
 The installer handles everything below automatically — dep checks, secret generation, postgres, Better Auth schema, stack boot. Flags: `--dir <path>`, `--tag <tag>`, `--build`, `--yes`, `--no-start`, `--uninstall`, `--help`.
 
-By default it **pulls vonzio's prebuilt multi-arch images** (amd64 + arm64) and brings the stack up with no compiling — usually under a minute on a warm machine. If no prebuilt image exists for the version you pick, it automatically falls back to building from source; pass `--build` to force that path (for contributors, or an unreleased ref).
+By default it **fetches just the two compose files** (no `git clone`, no source tree) and **pulls vonzio's prebuilt multi-arch images** (amd64 + arm64), bringing the stack up with no compiling — usually under a minute on a warm machine. It drops a small management `Makefile` in the install dir so `make docker-logs` / `docker-down` still work.
+
+Pass `--build` to instead clone the full source and build the images locally (for contributors, or an unreleased ref). `--build` is also the escape hatch if prebuilt images aren't published yet for the version you pick.
 
 It installs the **latest tagged release** unless you pin a specific version via `VONZIO_VERSION` (env) or `--tag` (flag):
 
