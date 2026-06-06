@@ -1012,7 +1012,11 @@ setup_database() {
 # default (confirm() returns yes for everything when --yes is set, so the wipe
 # must not go through it).
 guard_existing_db() {
-  local project="${COMPOSE_PROJECT_NAME:-vonzio}"
+  # Check THIS instance's volume, not a global one. PROJECT is the shell var set
+  # by resolve_install_target (COMPOSE_PROJECT_NAME only lives in .env, never in
+  # the installer's environment — reading it here would always fall back to
+  # "vonzio" and falsely flag a different instance's database).
+  local project="${PROJECT:-vonzio}"
   local vol="${project}_pgdata"
   docker volume inspect "$vol" >/dev/null 2>&1 || return 0   # no existing DB — fresh install
   log ""
