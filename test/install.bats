@@ -137,7 +137,7 @@ setup() {
   [ "$RESOLVED_REF" = "v9.9.9" ]
 }
 
-# ─── port auto-bump (find_free_port / port_is_vonzio / set_env_var) ─────
+# ─── port auto-bump (find_free_port / port_is_this_instance / set_env_var) ──
 @test "find_free_port: returns the start port when it's free" {
   port_in_use() { return 1; }   # everything free
   run find_free_port 5173
@@ -150,18 +150,46 @@ setup() {
   [ "$output" = "5175" ]
 }
 
-@test "port_is_vonzio: true when a vonzio container publishes the port" {
-  docker() { printf 'vonzio-server-1 vonzio-server 0.0.0.0:5173->5173/tcp\n'; }
-  export -f docker
-  run port_is_vonzio 5173
+@test "port_is_this_instance: true when THIS project's container holds the port" {
+  PROJECT="vonzio"
+  # The function filters `docker ps` by the project label; only "find" a
+  # container when that filter is present.
+  docker() { [[ "$*" == *"com.docker.compose.project=vonzio"* ]] && printf '0.0.0.0:5173->5173/tcp\n'; return 0; }
+  run port_is_this_instance 5173
   [ "$status" -eq 0 ]
 }
 
-@test "port_is_vonzio: false when an unrelated process holds the port" {
-  docker() { printf 'some-dev-server node:20 0.0.0.0:5173->80/tcp\n'; }
-  export -f docker
-  run port_is_vonzio 5173
+@test "port_is_this_instance: false when the port belongs to a DIFFERENT instance" {
+  PROJECT="vonzio-staging"
+  # Filtering for THIS project (vonzio-staging) finds nothing — the port is held
+  # by some other project, so a bump (not a refusal) is the right move.
+  docker() { [[ "$*" == *"com.docker.compose.project=vonzio-staging"* ]] && printf '\n'; return 0; }
+  run port_is_this_instance 5173
   [ "$status" -eq 1 ]
+}
+
+# ─── multi-instance: project derivation ────────────────────────────────
+@test "sanitize_project: lowercases + replaces invalid chars + trims dashes" {
+  [ "$(sanitize_project 'Vonzio')" = "vonzio" ]
+  [ "$(sanitize_project 'vonzio Staging')" = "vonzio-staging" ]
+  [ "$(sanitize_project '/Users/me/My.App/')" = "users-me-my-app" ]
+  [ "$(sanitize_project 'keep_under-score')" = "keep_under-score" ]
+}
+
+@test "resolve_install_target: --name wins; default dir → 'vonzio' (backward compatible)" {
+  IN_CLONE=false; ASSUME_YES=true; INSTANCE_NAME=""; INSTALL_DIR="$HOME/vonzio"
+  resolve_install_target >/dev/null 2>&1
+  [ "$PROJECT" = "vonzio" ]
+
+  PROJECT=""; INSTANCE_NAME="Staging Box"; INSTALL_DIR="$HOME/vonzio"
+  resolve_install_target >/dev/null 2>&1
+  [ "$PROJECT" = "staging-box" ]
+}
+
+@test "resolve_install_target: project derives from the install-dir basename" {
+  IN_CLONE=false; ASSUME_YES=true; INSTANCE_NAME=""; INSTALL_DIR="/tmp/vonzio-staging"
+  resolve_install_target >/dev/null 2>&1
+  [ "$PROJECT" = "vonzio-staging" ]
 }
 
 @test "set_env_var: replaces an existing key and appends a missing one" {
