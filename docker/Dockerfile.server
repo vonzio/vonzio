@@ -64,6 +64,15 @@ COPY vonzio-plugins.builtins.json ./
 # `relation "user" does not exist` -- the dev image got away with it
 # because the host source tree was bind-mounted.
 COPY auth.ts ./
+# Runtime assets the server reads at /app/config + /app/tools (the default
+# system prompt and the example tool). Baking them in makes the published
+# image SELF-CONTAINED — it boots without the repo's `../config` / `../tools`
+# bind-mounts, which is what lets installs pull-and-run with no source tree.
+# The dev stack (docker-compose.dev.yml) bind-mounts the repo copies over
+# these for live editing; self-hosters can do the same to customize without
+# rebuilding (see docs/SELF_HOST.md).
+COPY config/ ./config/
+COPY tools/ ./tools/
 COPY scripts/start-prod.sh ./scripts/start-prod.sh
 RUN chmod +x ./scripts/start-prod.sh
 

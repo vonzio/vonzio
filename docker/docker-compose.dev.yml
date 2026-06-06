@@ -12,6 +12,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - vonzio-data:/app/data
+      # Live-edit the system prompt + tools without a rebuild. These are baked
+      # into the prod image (docker/Dockerfile.server); the dev stack shadows
+      # the baked-in copies with the repo's so changes show up immediately.
+      - ../tools:/app/tools
+      - ../config:/app/config
       # Mount source code for hot reload
       - ../packages/shared/src:/app/packages/shared/src
       - ../packages/plugin-api/src:/app/packages/plugin-api/src
