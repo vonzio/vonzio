@@ -20,7 +20,7 @@ The default install **pulls prebuilt images** and fetches only the compose files
 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
 ```
 
-The installer handles everything below automatically — dep checks, secret generation, postgres, Better Auth schema, stack boot. Flags: `--dir <path>`, `--tag <tag>`, `--build`, `--yes`, `--no-start`, `--uninstall`, `--help`.
+The installer handles everything below automatically — dep checks, secret generation, postgres, Better Auth schema, stack boot. Flags: `--dir <path>`, `--name <slug>`, `--tag <tag>`, `--build`, `--yes`, `--no-start`, `--uninstall`, `--help`.
 
 By default it **fetches just the two compose files** (no `git clone`, no source tree) and **pulls vonzio's prebuilt multi-arch images** (amd64 + arm64), bringing the stack up with no compiling — usually under a minute on a warm machine. It drops a small management `Makefile` in the install dir so `make docker-logs` / `docker-down` still work.
 
@@ -35,6 +35,24 @@ VONZIO_VERSION=v0.1.3 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio
 Use a pinned install when you need reproducibility, are following a security advisory, or want to stay off the in-flight `main` branch.
 
 The manual recipe below is the same steps without the wrapper, for readers who want to understand what's happening or run them individually.
+
+### Running more than one instance on a host
+
+Each install is bound to a **compose project** derived from its install directory (or `--name`), and everything is namespaced under it — containers (`<project>-server-1`), volumes (`<project>_pgdata`), and the agent network (`<project>-network`). So a second install to a different directory just works:
+
+```bash
+# first instance → project "vonzio", on :3000
+curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
+
+# second instance → project "vonzio-staging", auto-bumped to :3001
+curl -fsSL .../install.sh | bash -s -- --dir ~/vonzio-staging
+# or name it explicitly:
+curl -fsSL .../install.sh | bash -s -- --dir ~/eu --name prod-eu
+```
+
+The installer detects the busy `:3000`/`:5173` and bumps the second instance to the next free pair; the two stacks have separate databases, secrets, and networks and never cross-talk. Re-running the installer for an **already-running** instance is detected and refuses to start a duplicate (stop it first with `make docker-down`). `--uninstall --dir <path>` removes only that instance.
+
+The default single install (`~/vonzio`, no `--name`) stays project `vonzio` with the `vonzio-network` network — unchanged from before.
 
 ## First-time setup (manual)
 
