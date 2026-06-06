@@ -71,7 +71,7 @@ One-line install on macOS or Linux (it asks before installing any missing dep):
 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
 ```
 
-The installer checks for Docker, Compose v2, Node 22+, git, make, and openssl. It generates a fresh `.env` with secure random secrets, brings up postgres, runs the one-time Better Auth schema migration, and starts the stack. About five minutes on a warm machine.
+The installer checks for Docker, Compose v2, git, make, and openssl (Node is optional — only host-mode dev needs it). It generates a fresh `.env` with secure random secrets, **pulls vonzio's prebuilt multi-arch images** (no compiling on your machine), brings up postgres, runs the one-time Better Auth schema migration, and starts the stack — usually about a minute on a warm machine. Add `--build` to build the images from source instead.
 
 By default it installs the **latest tagged release**. Pin to a specific version with `VONZIO_VERSION=v0.1.3` (or pass `--tag v0.1.3` after the `bash`) — useful for reproducible installs, security advisories, or staying off in-flight `main`:
 
@@ -87,7 +87,7 @@ cd vonzio
 ./install.sh
 ```
 
-Then visit `http://localhost:5173`. First visit lands on `/setup` to create your admin account, then `/onboarding` to add a credential and pick a default model. After that you're in.
+Then open the address the installer prints when it finishes — `http://localhost:3000` for the default pull-based install (or `:5173` if you used `--build`). First visit lands on `/setup` to create your admin account, then `/onboarding` to add a credential and pick a default model. After that you're in.
 
 Full self-host guide with env reference, upgrade path, and troubleshooting: [docs/SELF_HOST.md](docs/SELF_HOST.md).
 
@@ -171,8 +171,11 @@ If you'd rather skip running your own postgres and Docker, [vonzio.com](https://
 ## Develop
 
 ```bash
-# Full Docker stack with hot reload (what the installer runs) — recommended
+# Full Docker stack, built from source with hot reload — recommended for dev
 make docker-dev-oss
+
+# Or run the prebuilt images without building (what the installer does by default)
+make docker-pull-oss
 
 # Host-mode — faster iteration on dashboard code; you supply postgres
 make dev-oss
