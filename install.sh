@@ -672,7 +672,13 @@ detect_mode() {
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [[ -d "$SCRIPT_DIR/packages/core-server" ]]; then
       IN_CLONE=true
-      INSTALL_DIR="$SCRIPT_DIR"
+      # Adopt the checkout as the install dir ONLY when the user didn't point us
+      # elsewhere. An explicit --dir (and every uninstall, which targets a dir by
+      # path) must win — otherwise running the in-repo install.sh to manage an
+      # install at another path would silently operate on the repo instead.
+      if [[ -z "$INSTALL_DIR" && "$ACTION" != "uninstall" ]]; then
+        INSTALL_DIR="$SCRIPT_DIR"
+      fi
     fi
   fi
   if ! $IN_CLONE; then

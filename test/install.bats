@@ -246,6 +246,20 @@ setup() {
   [ "$OS" = "macos" ]
 }
 
+# ─── detect_mode: don't clobber an explicit --dir ──────────────────────
+# (bats sources install.sh from the repo, so in-clone detection fires here.)
+@test "detect_mode: an explicit --dir survives in-clone detection" {
+  INSTALL_DIR="/tmp/elsewhere"; ACTION="install"
+  detect_mode >/dev/null 2>&1
+  [ "$INSTALL_DIR" = "/tmp/elsewhere" ]   # not overwritten by the script's dir
+}
+
+@test "detect_mode: uninstall never adopts the script's checkout as INSTALL_DIR" {
+  INSTALL_DIR=""; ACTION="uninstall"
+  detect_mode >/dev/null 2>&1
+  [ -z "$INSTALL_DIR" ]                    # stays empty → do_uninstall uses --dir/default
+}
+
 # ─── ensure_docker: the permission-vs-daemon fix ───────────────────────
 @test "ensure_docker: 'permission denied' tells the user about the docker group, not 'daemon unreachable'" {
   docker() {
