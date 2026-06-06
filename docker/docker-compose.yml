@@ -110,7 +110,11 @@ services:
       - VONZIO_PLUGINS=${VONZIO_PLUGINS:-@vonzio/plugin-telegram,@vonzio/plugin-slack}
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
-      - DOCKER_NETWORK=vonzio-network
+      # The network agents attach to. Interpolated so multiple vonzio instances
+      # on one host get their OWN network (install.sh sets VONZIO_NETWORK per
+      # install). Defaults to vonzio-network for a single default install.
+      # MUST match the `name:` under `networks:` below.
+      - DOCKER_NETWORK=${VONZIO_NETWORK:-vonzio-network}
       - LOG_LEVEL=info
       - PORT=3000
       - HOST=0.0.0.0
@@ -192,7 +196,10 @@ services:
 
 networks:
   vonzio:
-    name: vonzio-network
+    # Per-instance network name so multiple vonzio installs on one host don't
+    # collide (install.sh sets VONZIO_NETWORK=<project>-network). Defaults to
+    # vonzio-network. MUST match DOCKER_NETWORK on the server service above.
+    name: ${VONZIO_NETWORK:-vonzio-network}
 
 volumes:
   vonzio-data:

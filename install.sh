@@ -27,6 +27,11 @@
 #                       Also reads VONZIO_VERSION from the environment.
 #                       Example: --tag v0.1.3  or  VONZIO_VERSION=v0.1.3
 #   --dir <path>        Install location for the curl-piped case (default: ~/vonzio).
+#   --name <slug>       Instance name → compose project (default: the --dir
+#                       basename). Each name gets its own containers, volumes,
+#                       and network, so multiple vonzio instances coexist on
+#                       one host. Install a second to a different --dir and it
+#                       auto-bumps ports (3001/5174…).
 #   --yes, -y           Auto-confirm all "install missing dep?" prompts.
 #   --no-start          Set everything up but don't start the stack.
 #   --build             Build the images from source instead of pulling the
@@ -69,6 +74,12 @@ readonly RECOMMENDED_DISK_GB="${VONZIO_MIN_DISK_GB:-10}"
 
 # ─── Args (assigned by parse_args) ─────────────────────────────────────
 INSTALL_DIR=""
+# --name <slug>: explicit instance name. Empty → derived from the install dir
+# basename (resolve_install_target). The instance name becomes the compose
+# project, so each install gets its own containers, volumes, and network —
+# multiple vonzio instances can coexist on one host. Default ~/vonzio → vonzio.
+INSTANCE_NAME=""
+PROJECT=""
 TARGET_TAG="${VONZIO_VERSION:-}"
 ASSUME_YES=false
 NO_START=false
@@ -493,15 +504,16 @@ find_free_port() {
   printf '%s' "$p"
 }
 
-# Heuristic: is the listener on TCP $1 one of OUR containers? (a running
-# container that publishes that host port and whose name/image says vonzio.)
-# Used so we don't bump into a SECOND stack when the conflict is our own
-# already-running install — they'd share the fixed vonzio-network and cross-talk.
-port_is_vonzio() {
+# Is the listener on TCP $1 a container of THIS instance (compose project
+# $PROJECT)? Used so re-running the installer for an already-running instance
+# points the user at it instead of starting a duplicate — while a DIFFERENT
+# instance on the same port just triggers a port-bump (each instance has its
+# own network now, so they no longer cross-talk).
+port_is_this_instance() {
   local p="$1"
   require_cmd docker || return 1
-  docker ps --format '{{.Names}} {{.Image}} {{.Ports}}' 2>/dev/null \
-    | grep -E ":${p}->" | grep -qi 'vonzio'
+  docker ps --filter "label=com.docker.compose.project=${PROJECT}" \
+    --format '{{.Ports}}' 2>/dev/null | grep -qE ":${p}->"
 }
 
 preflight_ports() {
@@ -511,18 +523,21 @@ preflight_ports() {
     return 0
   fi
 
-  # If a conflict is OUR own running stack, don't spin up a second one — point
-  # the user at it instead.
-  if { port_in_use "$dash" && port_is_vonzio "$dash"; } ||
-     { port_in_use "$api" && port_is_vonzio "$api"; }; then
-    warn "vonzio already appears to be running on ${dash}/${api}."
+  # If THIS instance ($PROJECT) is already running on these ports, don't spin up
+  # a duplicate — point the user at it instead. (A DIFFERENT instance falls
+  # through to the port-bump below.)
+  if { port_in_use "$dash" && port_is_this_instance "$dash"; } ||
+     { port_in_use "$api" && port_is_this_instance "$api"; }; then
+    warn "vonzio instance '${PROJECT}' already appears to be running on ${dash}/${api}."
     log  "  Open ${C_BOLD}http://localhost:${dash}${C_RESET} — or stop it first and re-run:"
-    log  "    ${C_DIM}(cd <install-dir> && make docker-down)${C_RESET}"
-    err "Not starting a second stack."
+    log  "    ${C_DIM}(cd ${INSTALL_DIR:-<install-dir>} && make docker-down)${C_RESET}"
+    err "Not starting a duplicate of '${PROJECT}'."
     exit 1
   fi
 
-  # An unrelated process holds a port → offer to bump to the next free pair.
+  # Another process (or a DIFFERENT vonzio instance) holds a port → offer to
+  # bump to the next free pair. This is the multi-instance path: a second
+  # install lands on 3001/5174, etc.
   local busy="" new_dash new_api
   port_in_use "$dash" && busy="${dash} (dashboard)"
   port_in_use "$api"  && busy="${busy:+$busy, }${api} (API)"
@@ -530,7 +545,7 @@ preflight_ports() {
   new_api="$(find_free_port "$api")"
   [[ "$new_api" == "$new_dash" ]] && new_api="$(find_free_port "$(( new_dash + 1 ))")"
 
-  warn "Port(s) in use by another process: ${busy}."
+  warn "Port(s) already in use: ${busy}."
   if confirm "Use free ports ${new_dash} (dashboard) + ${new_api} (API) instead?" "default-yes"; then
     DASHBOARD_PORT="$new_dash"; SERVER_PORT="$new_api"
     export DASHBOARD_PORT SERVER_PORT
@@ -573,6 +588,8 @@ parse_args() {
       --uninstall) ACTION="uninstall"; shift ;;
       --dir) INSTALL_DIR="$2"; shift 2 ;;
       --dir=*) INSTALL_DIR="${1#*=}"; shift ;;
+      --name) INSTANCE_NAME="$2"; shift 2 ;;
+      --name=*) INSTANCE_NAME="${1#*=}"; shift ;;
       --tag) TARGET_TAG="$2"; shift 2 ;;
       --tag=*) TARGET_TAG="${1#*=}"; shift ;;
       --yes|-y) ASSUME_YES=true; shift ;;
@@ -683,20 +700,34 @@ do_uninstall() {
   target="$abs"
   cd "$target"
 
-  # Stop + remove the stack. compose needs --env-file or it can't interpolate
-  # the required ENCRYPTION_KEY and aborts; fall back to removing by name when
-  # there's no .env (a partial/broken install).
+  # Which instance is this? Read COMPOSE_PROJECT_NAME from the install's .env,
+  # else derive from the dir basename (matches resolve_install_target). Default
+  # "vonzio". Everything below is scoped to this project so uninstalling one
+  # instance never touches another on the same host.
+  local proj net
+  proj="$(grep -E '^COMPOSE_PROJECT_NAME=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
+  [[ -z "$proj" ]] && proj="$(sanitize_project "$(basename "$target")")"
+  [[ -z "$proj" ]] && proj="vonzio"
+  net="$(grep -E '^VONZIO_NETWORK=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
+  [[ -z "$net" ]] && net="${proj}-network"
+  info "Uninstalling instance '${proj}' at ${target}."
+
+  # Stop + remove the stack. compose needs --env-file to interpolate the required
+  # ENCRYPTION_KEY; the BASE file alone identifies every core service + the
+  # project's network (overlays only add/retag), so this works for pull and
+  # build installs alike. Fall back to removing by project label when there's no
+  # .env (a partial/broken install).
   info "Stopping the stack…"
   if [[ -f .env ]]; then
-    ( cd docker && docker compose --env-file ../.env \
-        -f docker-compose.yml -f docker-compose.dev.yml down 2>&1 | tail -2 ) || true
+    ( cd docker && docker compose --env-file ../.env -f docker-compose.yml down 2>&1 | tail -2 ) || true
   else
-    docker ps -aq --filter "name=^vonzio-" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker ps -aq --filter "label=com.docker.compose.project=${proj}" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
   fi
   docker rm -f vonzio-pg 2>/dev/null && info "Removed legacy standalone postgres" || true
-  # Spawned agent containers are ephemeral (not in compose) — clear by label.
-  docker ps -aq --filter "label=managed-by=vonzio" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
-  docker network rm vonzio-network >/dev/null 2>&1 && info "Removed network vonzio-network." || true
+  # Spawned agent containers are ephemeral (not in compose). Scope removal to
+  # THIS instance's network so other running instances' agents are untouched.
+  docker ps -aq --filter "network=${net}" --filter "label=managed-by=vonzio" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 && info "Removed network ${net}." || true
   ok "Stack stopped + containers removed."
 
   if ! $PURGE; then
@@ -715,9 +746,10 @@ do_uninstall() {
     exit 1
   fi
 
-  # Volumes: compose (current + legacy names) + per-session.
-  docker volume rm vonzio_pgdata vonzio_vonzio-data docker_pgdata docker_vonzio-data 2>/dev/null || true
-  docker volume ls -q 2>/dev/null | grep -E "^vonzio-(ws|sdk)-" | xargs -r docker volume rm >/dev/null 2>&1 || true
+  # Volumes: this instance's data (project-prefixed) + legacy names + per-session.
+  docker volume rm "${proj}_pgdata" "${proj}_vonzio-data" 2>/dev/null || true
+  [[ "$proj" == "vonzio" ]] && docker volume rm docker_pgdata docker_vonzio-data 2>/dev/null || true
+  docker volume ls -q 2>/dev/null | grep -E "^${proj}-(ws|sdk)-" | xargs -r docker volume rm >/dev/null 2>&1 || true
   ok "Volumes removed."
 
   # Images: app images always; agent-base only with --remove-base (it's the
@@ -804,6 +836,38 @@ fetch_run_files() {
   ok "Fetched compose files for the pull-based stack — no source tree needed."
 }
 
+# Compose project names allow [a-z0-9_-]. Lowercase, replace any run of other
+# chars with a single dash, trim leading/trailing dashes.
+sanitize_project() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//; s/-+$//'
+}
+
+# Resolve the install dir (prompting in curl mode) and derive the compose
+# PROJECT from --name or the dir basename. Runs BEFORE preflight so the port
+# check can tell "THIS instance already running" (refuse) from "a DIFFERENT
+# instance" (bump to free ports). Each project gets its own containers,
+# volumes, and network, so installs to different dirs coexist on one host.
+# Default ~/vonzio (no --name) → project "vonzio" — fully backward compatible.
+resolve_install_target() {
+  if ! $IN_CLONE && [[ -z "$INSTALL_DIR" ]]; then
+    if $ASSUME_YES; then
+      INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+    else
+      printf "  Install location [%s]: " "$DEFAULT_INSTALL_DIR"
+      if [[ -t 0 ]]; then read -r INSTALL_DIR || INSTALL_DIR=""
+      else read -r INSTALL_DIR < /dev/tty || INSTALL_DIR=""
+      fi
+      INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+    fi
+  fi
+  local src="${INSTANCE_NAME:-$(basename "${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}")}"
+  PROJECT="$(sanitize_project "$src")"
+  [[ -z "$PROJECT" ]] && PROJECT="vonzio"
+  if [[ "$PROJECT" != "vonzio" ]]; then
+    info "Instance: ${C_BOLD}${PROJECT}${C_RESET} ${C_DIM}(its own containers, volumes + network)${C_RESET}"
+  fi
+}
+
 setup_source_tree() {
   step "[3/6] Source tree"
 
@@ -827,17 +891,7 @@ setup_source_tree() {
     return 0
   fi
 
-  if [[ -z "$INSTALL_DIR" ]]; then
-    if $ASSUME_YES; then
-      INSTALL_DIR="$DEFAULT_INSTALL_DIR"
-    else
-      printf "  Install location [%s]: " "$DEFAULT_INSTALL_DIR"
-      if [[ -t 0 ]]; then read -r INSTALL_DIR || INSTALL_DIR=""
-      else read -r INSTALL_DIR < /dev/tty || INSTALL_DIR=""
-      fi
-      INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-    fi
-  fi
+  # INSTALL_DIR was resolved by resolve_install_target (before preflight).
 
   # Resolve target release tag. Default = latest v* release. Falls back to main
   # only if none resolves. Reuse the version already announced earlier.
@@ -896,7 +950,14 @@ setup_env() {
     sed_inplace "s|^ENCRYPTION_KEY=$|ENCRYPTION_KEY=${enc_key}|" .env
     sed_inplace "s|^BETTER_AUTH_SECRET=$|BETTER_AUTH_SECRET=${auth_key}|" .env
     sed_inplace "s|^POSTGRES_PASSWORD=$|POSTGRES_PASSWORD=${pg_pass}|" .env
+    # Bind this install to its own compose project + network so multiple vonzio
+    # instances coexist on one host. compose reads COMPOSE_PROJECT_NAME from the
+    # --env-file; VONZIO_NETWORK names the agent network (see docker-compose.yml).
+    # For the default install both equal the legacy values, so nothing changes.
+    set_env_var "COMPOSE_PROJECT_NAME" "$PROJECT"
+    set_env_var "VONZIO_NETWORK" "${PROJECT}-network"
     ok ".env created (random ENCRYPTION_KEY + BETTER_AUTH_SECRET + POSTGRES_PASSWORD)."
+    [[ "$PROJECT" != "vonzio" ]] && ok "Instance '${PROJECT}': isolated project, volumes (${PROJECT}_*) + network (${PROJECT}-network)."
     warn "Back up .env now — losing ENCRYPTION_KEY bricks your credential vault."
     # Only meaningful on a freshly generated .env — never rewrite a kept one.
     # NB: `if`, not `$PORTS_BUMPED && …` — the latter returns 1 when false, and
@@ -1091,6 +1152,7 @@ main() {
   trap 'on_error $LINENO' ERR
 
   announce_version
+  resolve_install_target   # resolve dir + PROJECT before preflight's port check
   preflight
   check_prereqs
   setup_source_tree
