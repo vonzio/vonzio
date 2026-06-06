@@ -22,7 +22,7 @@
 #
 # Flags:
 #   --help, -h          Show this header and exit.
-#   --version           Print the installer version.
+#   --version           Print the vonzio release this installer would install.
 #   --tag <tag>         Vonzio release to install (default: latest v* tag).
 #                       Also reads VONZIO_VERSION from the environment.
 #                       Example: --tag v0.1.3  or  VONZIO_VERSION=v0.1.3
@@ -54,7 +54,6 @@
 # -E (errtrace) so the ERR trap fires inside functions too.
 set -Eeuo pipefail
 
-readonly INSTALLER_VERSION="0.1.3"
 readonly REPO_SLUG="vonzio/vonzio"
 readonly REPO_URL="https://github.com/${REPO_SLUG}.git"
 # Raw-file + API bases for the source-free pull install: it fetches just the
@@ -594,7 +593,7 @@ show_help() {
 
 print_banner() {
   log ""
-  log "${C_BOLD}vonzio core${C_RESET} installer ${C_DIM}v${INSTALLER_VERSION}${C_RESET}"
+  log "${C_BOLD}vonzio core${C_RESET} installer"
   log "${C_DIM}https://github.com/vonzio/vonzio${C_RESET}"
   log ""
 }
@@ -1068,7 +1067,13 @@ main() {
 
   case "$ACTION" in
     help)    show_help; exit 0 ;;
-    version) log "vonzio installer v${INSTALLER_VERSION}"; exit 0 ;;
+    version)
+      # The installer is fetched fresh from `main` on every curl|bash, so it has
+      # no meaningful standalone version. Report the vonzio release it WOULD
+      # install instead — that's the version users actually care about.
+      local app; app="$(resolve_target_tag 2>/dev/null || true)"
+      log "vonzio core installer — installs vonzio core ${app:-<latest release>}"
+      exit 0 ;;
   esac
 
   print_banner
