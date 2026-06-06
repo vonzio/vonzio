@@ -120,6 +120,18 @@ setup() {
   [ -f "$marker" ]                   # wiped on explicit consent
 }
 
+@test "guard_existing_db: checks THIS instance's volume (PROJECT), not a global one" {
+  PROJECT="vz2"
+  inspected="$BATS_TEST_TMPDIR/inspected"
+  # Record the volume name inspected; report it as NOT present (return 1).
+  docker() { if [[ "$1 $2" == "volume inspect" ]]; then echo "$3" > "$inspected"; return 1; fi; return 0; }
+  export -f docker
+  run guard_existing_db
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]                       # a fresh instance volume → no prompt at all
+  [ "$(cat "$inspected")" = "vz2_pgdata" ]
+}
+
 # ─── announce_version ──────────────────────────────────────────────────
 @test "announce_version: resolves + caches the (pinned) version, no network" {
   IN_CLONE=false
