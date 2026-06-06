@@ -6,11 +6,13 @@ If you want multi-user invites, plans, billing, and an admin panel, those live i
 
 ## Requirements
 
+The default install **pulls prebuilt images**, so the host needs no build toolchain — just Docker and a few shell utilities:
+
 - **Docker** 24+ with Compose v2
-- **Node.js** 22+ (for `make better-auth-migrate` and host-mode dev)
-- **make**
+- **git**, **make**, **openssl** — the installer checks for these and offers to install any that are missing
 - An **Anthropic API key** (`sk-ant-...` from console.anthropic.com), an Anthropic subscription token (from claude.ai cookies), or an **Ollama Cloud API key**
-- ~2 GB free disk for the agent base image (built locally on first boot)
+- ~3 GB free disk for the pulled images + the postgres volume
+- **Node.js** 22+ — *optional*, only for host-mode dev (`make dev-oss`) and the CLI tools. A normal Docker install never needs it (the containers carry their own `node_modules`).
 
 ## Quickstart (one-liner)
 
@@ -18,9 +20,11 @@ If you want multi-user invites, plans, billing, and an admin panel, those live i
 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
 ```
 
-The installer handles everything below automatically — dep checks, secret generation, postgres, Better Auth schema, stack boot. Flags: `--dir <path>`, `--tag <tag>`, `--yes`, `--no-start`, `--uninstall`, `--help`.
+The installer handles everything below automatically — dep checks, secret generation, postgres, Better Auth schema, stack boot. Flags: `--dir <path>`, `--tag <tag>`, `--build`, `--yes`, `--no-start`, `--uninstall`, `--help`.
 
-By default, it installs the **latest tagged release**. Pin a specific version via `VONZIO_VERSION` (env) or `--tag` (flag):
+By default it **pulls vonzio's prebuilt multi-arch images** (amd64 + arm64) and brings the stack up with no compiling — usually under a minute on a warm machine. If no prebuilt image exists for the version you pick, it automatically falls back to building from source; pass `--build` to force that path (for contributors, or an unreleased ref).
+
+It installs the **latest tagged release** unless you pin a specific version via `VONZIO_VERSION` (env) or `--tag` (flag):
 
 ```bash
 VONZIO_VERSION=v0.1.3 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
@@ -51,13 +55,23 @@ You can paste those into `.env` directly. Don't lose them — `ENCRYPTION_KEY` d
 
 ### 2. Start the stack
 
-For Docker mode (recommended — single command, no host postgres needed):
+**Pull-based — prebuilt images, no build (recommended):**
+
+```bash
+make docker-pull-oss
+```
+
+This pulls the prebuilt `server` + `agent` images and starts the stack with its own internal postgres — no compiling on your machine. The server container's startup wrapper runs Better Auth's schema migration before launching the API, so the four Better Auth tables (`user`, `session`, `account`, `verification`) exist before the Drizzle migrations look for them. Pin a version with `VONZIO_IMAGE_TAG=0.3.9 make docker-pull-oss` (defaults to `latest`).
+
+In this mode the production server serves the built dashboard **and** the API on one port: open **`http://localhost:3000`**.
+
+**Build from source — for contributors / hot reload:**
 
 ```bash
 make docker-dev-oss
 ```
 
-The compose stack brings up its own postgres internally. The server container's startup wrapper runs Better Auth's schema migration before launching the API, so the four Better Auth tables (`user`, `session`, `account`, `verification`) exist before the Drizzle migrations look for them.
+Builds the images locally and runs the dashboard through Vite with hot reload. First boot builds the agent base image (~3 min cold on Apple Silicon, ~5 sec warm). Dashboard on **`http://localhost:5173`**, API on `:3000`.
 
 For host mode (faster iteration, requires you to manage postgres yourself):
 
@@ -78,9 +92,9 @@ make better-auth-migrate
 make dev-oss
 ```
 
-URL: `http://localhost:5173` (dashboard, both modes). API at `:3000`. No Traefik or wildcard DNS required in the OSS install.
+Host mode serves the dashboard via Vite on `http://localhost:5173`, API on `:3000`.
 
-First boot of `docker-dev-oss` builds the agent base image (~3 min cold on Apple Silicon, ~5 sec warm). Subsequent boots reuse the cached layer.
+**Which URL?** Pull-based (`make docker-pull-oss`) → **`:3000`** (the prod server serves the dashboard itself). Build-from-source or host mode (`make docker-dev-oss` / `make dev-oss`) → **`:5173`** (Vite). The installer's closing summary always prints the correct one for the mode it used. No Traefik or wildcard DNS required in the OSS install either way.
 
 ### 3. Walk through the wizards
 
@@ -105,6 +119,8 @@ make urls
 #   Webhooks    none — run `make dev-tunnel` for Slack/Telegram webhooks
 ```
 
+`make urls` reports the build-from-source / dev ports. On a **pull-based** install the dashboard and API share `http://localhost:3000` — that's the address to open.
+
 ## Local webhook testing (Slack / Telegram)
 
 Webhook-based integrations need a **public** URL to receive callbacks, which
@@ -127,13 +143,23 @@ matches.
 
 ## Updating
 
+**Pull-based install** — fetch the new release's images and restart:
+
+```bash
+VONZIO_IMAGE_TAG=<new-version> make docker-pull-oss   # e.g. 0.3.10
+```
+
+Or just re-run the one-liner — it installs the latest tagged release. No host rebuild, no `make better-auth-migrate` (the server image runs the schema migration at boot).
+
+**Build-from-source install** — pull the new code and rebuild:
+
 ```bash
 git pull
 make better-auth-migrate   # safe to re-run; only applies new Better Auth tables
 make docker-dev-oss        # rebuild + restart
 ```
 
-Migrations under `packages/core-server/src/db/migrations.ts` are applied automatically at boot.
+Either way, the data migrations under `packages/core-server/src/db/migrations.ts` are applied automatically at boot.
 
 ## Backup
 
@@ -209,7 +235,7 @@ Hard-refresh the browser.
 
 ### Agent base image build is slow on Apple Silicon
 
-First `make docker-dev-oss` runs `make agent-base-local`, which builds `ghcr.io/vonzio/vonzio/agent-base:latest` for your arch (3 min cold). Subsequent boots reuse the cached image.
+This only affects the **build-from-source** path (`make docker-dev-oss` / `--build`): first boot runs `make agent-base-local`, which builds `ghcr.io/vonzio/vonzio/agent-base:latest` for your arch (3 min cold). Subsequent boots reuse the cached image. The default **pull-based** install skips this entirely — it downloads the prebuilt image instead.
 
 ### "Cannot find native binding" for @tailwindcss/oxide in dev container
 
