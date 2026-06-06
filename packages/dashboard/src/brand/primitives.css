@@ -293,7 +293,9 @@
   border-bottom: 1px solid var(--vz-border);
   display: flex; align-items: center; gap: 12px;
 }
+.vz-panel__heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .vz-panel__title { font-size: 14px; font-weight: 500; color: var(--vz-ink); }
+.vz-panel__subtitle { font-size: 12px; font-weight: 400; color: var(--vz-muted-2); }
 .vz-panel__body  { padding: 18px; }
 
 /* ─── Avatar ─── */
