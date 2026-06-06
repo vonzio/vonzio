@@ -53,4 +53,8 @@ jobs:
       image: server
       dockerfile: docker/Dockerfile.server
       version: ${{ inputs.version }}
+      # Bake the release version into the image so /health (and the dashboard)
+      # report it instead of the Dockerfile's ARG default ("dev"). Only
+      # Dockerfile.server declares this ARG, so it's scoped to this job.
+      build_args: VONZIO_VERSION=${{ inputs.version }}
     secrets: inherit
