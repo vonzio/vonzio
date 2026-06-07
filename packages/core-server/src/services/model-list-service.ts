@@ -20,11 +20,12 @@
 import type { ProfileService } from "./profile-service.js";
 import type { ApiKeyService } from "./api-key-service.js";
 import { fetchOllamaModels } from "./ollama-service.js";
+import { fetchOpenAIModels } from "./openai-service.js";
 
 export interface ProfileModel {
   id: string;
   display_name: string | null;
-  provider: "anthropic" | "ollama";
+  provider: "anthropic" | "ollama" | "openai";
 }
 
 export type ModelListResult =
@@ -119,6 +120,14 @@ export class ModelListService {
           id: m.id,
           display_name: m.name ?? null,
           provider: "ollama" as const,
+        }));
+      } else if (apiKey.provider === "openai") {
+        if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
+        const openai = await fetchOpenAIModels(apiKey.api_key);
+        models = openai.map((m) => ({
+          id: m.id,
+          display_name: m.name ?? null,
+          provider: "openai" as const,
         }));
       } else {
         if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };

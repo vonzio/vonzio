@@ -625,7 +625,7 @@ export interface PluginModelList {
   listForProfile(profileId: string): Promise<
     | {
         ok: true;
-        models: Array<{ id: string; display_name: string | null; provider: "anthropic" | "ollama" }>;
+        models: Array<{ id: string; display_name: string | null; provider: "anthropic" | "ollama" | "openai" }>;
         profileDefault: string | null;
       }
     | { ok: false; status: number; error: string }

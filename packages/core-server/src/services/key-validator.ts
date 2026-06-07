@@ -20,6 +20,11 @@ export async function validateAnthropicKey(
     return validateOllamaKey(key);
   }
 
+  if (type === "openai") {
+    const { validateOpenAIKey } = await import("./openai-service.js");
+    return validateOpenAIKey(key);
+  }
+
   const headers: Record<string, string> = {
     "anthropic-version": "2023-06-01",
     "x-api-key": key,

@@ -85,6 +85,7 @@ RUN corepack enable && \
 # change; landing them in base means agent rebuilds don't need to re-copy.
 COPY docker/cleanup.sh /app/cleanup.sh
 COPY docker/ollama-proxy.cjs /app/ollama-proxy.cjs
+COPY docker/llm-gateway.cjs /app/llm-gateway.cjs
 COPY docker/git-credential-helper.sh /app/git-credential-helper.sh
 COPY docker/entrypoint.sh /app/entrypoint.sh
 COPY docker/fileserver.py /app/fileserver.py
