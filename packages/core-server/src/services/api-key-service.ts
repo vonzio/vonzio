@@ -10,7 +10,6 @@ export interface CreateApiKeyInput {
   name: string;
   provider: ProfileProvider;
   api_key?: string;
-  auth_token?: string;
   allowed_user_ids?: string[];
 }
 
@@ -33,7 +32,7 @@ export class ApiKeyService {
       name: input.name,
       provider: input.provider,
       encrypted_api_key: input.api_key ? encrypt(input.api_key, this.encryptionKey) : null,
-      encrypted_auth_token: input.auth_token ? encrypt(input.auth_token, this.encryptionKey) : null,
+      encrypted_auth_token: null,
       created_at: now,
       last_used_at: null,
     };
@@ -120,9 +119,6 @@ export class ApiKeyService {
     if (input.api_key !== undefined && input.api_key !== "••••••••") {
       updates.encrypted_api_key = input.api_key ? encrypt(input.api_key, this.encryptionKey) : null;
     }
-    if (input.auth_token !== undefined && input.auth_token !== "••••••••") {
-      updates.encrypted_auth_token = input.auth_token ? encrypt(input.auth_token, this.encryptionKey) : null;
-    }
 
     if (Object.keys(updates).length > 0) {
       await this.db.update(schema.anthropicKeys).set(updates).where(eq(schema.anthropicKeys.id, id));
@@ -197,9 +193,6 @@ export class ApiKeyService {
       api_key: redact
         ? (row.encrypted_api_key ? "••••••••" : undefined)
         : (row.encrypted_api_key ? decrypt(row.encrypted_api_key, this.encryptionKey) : undefined),
-      auth_token: redact
-        ? (row.encrypted_auth_token ? "••••••••" : undefined)
-        : (row.encrypted_auth_token ? decrypt(row.encrypted_auth_token, this.encryptionKey) : undefined),
       allowed_user_ids: allowedUserIds,
       created_at: row.created_at,
       last_used_at: row.last_used_at ?? undefined,

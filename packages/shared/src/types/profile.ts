@@ -1,4 +1,4 @@
-export const PROFILE_PROVIDERS = ["api_key", "subscription_token", "ollama"] as const;
+export const PROFILE_PROVIDERS = ["api_key", "ollama"] as const;
 export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
 
 export interface McpServerConfig {
@@ -47,7 +47,6 @@ export interface AnthropicKey {
   name: string;
   provider: ProfileProvider;
   api_key?: string;
-  auth_token?: string;
   allowed_user_ids: string[];
   created_at: string;
   last_used_at?: string;
@@ -95,7 +94,6 @@ export interface Profile {
 /** Profile joined with its API key credentials — used by orchestrator only */
 export interface ResolvedProfile extends Profile {
   resolved_api_key?: string;
-  resolved_auth_token?: string;
   resolved_provider: ProfileProvider;
 }
 

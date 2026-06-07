@@ -121,12 +121,11 @@ export class ModelListService {
           provider: "ollama" as const,
         }));
       } else {
-        const secret = apiKey.api_key ?? apiKey.auth_token;
-        if (!secret) return { ok: true, models: [], profileDefault: null };
+        if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
         const res = await fetch("https://api.anthropic.com/v1/models", {
           method: "GET",
           headers: {
-            "x-api-key": secret,
+            "x-api-key": apiKey.api_key,
             "anthropic-version": "2023-06-01",
           },
           signal: AbortSignal.timeout(ANTHROPIC_FETCH_TIMEOUT_MS),

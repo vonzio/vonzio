@@ -133,26 +133,26 @@ describe("ApiKeyService", () => {
   it("retrieves redacted key via get, decrypted via getWithSecrets", async () => {
     const created = await service.create({
       name: "test",
-      provider: "subscription_token",
-      auth_token: "oat-token-value",
+      provider: "api_key",
+      api_key: "sk-ant-test-value",
     });
 
     const redacted = await service.get(created.id);
     expect(redacted).not.toBeNull();
-    expect(redacted!.auth_token).toBe("••••••••");
+    expect(redacted!.api_key).toBe("••••••••");
 
     const full = await service.getWithSecrets(created.id);
-    expect(full!.auth_token).toBe("oat-token-value");
+    expect(full!.api_key).toBe("sk-ant-test-value");
   });
 
   it("lists keys with redacted secrets", async () => {
     await service.create({ name: "key-a", provider: "api_key", api_key: "secret-a" });
-    await service.create({ name: "key-b", provider: "subscription_token", auth_token: "secret-b" });
+    await service.create({ name: "key-b", provider: "api_key", api_key: "secret-b" });
 
     const list = await service.list();
     expect(list).toHaveLength(2);
     expect(list[0].api_key).toBe("••••••••");
-    expect(list[1].auth_token).toBe("••••••••");
+    expect(list[1].api_key).toBe("••••••••");
   });
 
   it("deletes an API key", async () => {

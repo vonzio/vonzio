@@ -43,17 +43,15 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
       Body: {
         name?: string;
         api_key?: string;
-        auth_token?: string;
-        provider?: "api_key" | "subscription_token";
+        provider?: "api_key";
       };
     }>("/admin/bootstrap", async (request, reply) => {
       const name = request.body?.name || "default";
       const apiKey = request.body?.api_key;
-      const authToken = request.body?.auth_token;
       const provider = request.body?.provider || "api_key";
 
-      if (!apiKey && !authToken) {
-        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "api_key or auth_token is required"));
+      if (!apiKey) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "api_key is required"));
       }
 
       // Create API key first, then profile referencing it
@@ -61,7 +59,6 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
         name: name + " Key",
         provider,
         api_key: apiKey,
-        auth_token: authToken,
       });
 
       const profile = await profileService.create({
@@ -195,20 +192,19 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
     });
 
     server.post<{
-      Body: { name: string; provider: "api_key" | "subscription_token"; api_key?: string; auth_token?: string; allowed_user_ids?: string[] };
+      Body: { name: string; provider: "api_key" | "ollama"; api_key?: string; allowed_user_ids?: string[] };
     }>("/admin/api-keys", async (request, reply) => {
-      const { name, provider, api_key, auth_token, allowed_user_ids } = request.body;
+      const { name, provider, api_key, allowed_user_ids } = request.body;
       if (!name || !provider) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "name and provider are required"));
       }
       const isShared = (request.body as Record<string, unknown>).shared === true;
-      const key = await apiKeyService.create({ name, provider, api_key, auth_token, allowed_user_ids }, isShared ? undefined : request.user!.id);
+      const key = await apiKeyService.create({ name, provider, api_key, allowed_user_ids }, isShared ? undefined : request.user!.id);
 
       // Validate key if provided
-      const rawKey = api_key ?? auth_token;
       let validation: { valid: boolean; error?: string } | undefined;
-      if (rawKey) {
-        validation = await validateAnthropicKey(rawKey, provider).catch(() => undefined);
+      if (api_key) {
+        validation = await validateAnthropicKey(api_key, provider).catch(() => undefined);
       }
 
       return reply.code(201).send({ ...key, validation });
@@ -216,7 +212,7 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
 
     server.patch<{
       Params: { id: string };
-      Body: { name?: string; provider?: "api_key" | "subscription_token"; api_key?: string; auth_token?: string; allowed_user_ids?: string[] };
+      Body: { name?: string; provider?: "api_key" | "ollama"; api_key?: string; allowed_user_ids?: string[] };
     }>("/admin/api-keys/:id", async (request, reply) => {
       const updated = await apiKeyService.update(request.params.id, request.body);
       if (!updated) {
@@ -241,11 +237,10 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
       if (!key) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "API key not found"));
       }
-      const rawKey = key.api_key ?? key.auth_token;
-      if (!rawKey) {
+      if (!key.api_key) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "API key has no credential stored"));
       }
-      const result = await validateAnthropicKey(rawKey, key.provider);
+      const result = await validateAnthropicKey(key.api_key, key.provider);
       return result;
     });
 
@@ -425,12 +420,11 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
       }
 
-      const key = resolved.resolved_api_key ?? resolved.resolved_auth_token;
-      if (!key) {
+      if (!resolved.resolved_api_key) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Profile has no linked API key"));
       }
 
-      const result = await validateAnthropicKey(key, resolved.resolved_provider);
+      const result = await validateAnthropicKey(resolved.resolved_api_key, resolved.resolved_provider);
       return { profile_id: resolved.id, ...result };
     });
 
