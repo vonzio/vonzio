@@ -186,9 +186,9 @@ export const userResourceRoutes = fp(
     });
 
     server.post<{
-      Body: { name: string; provider: "api_key" | "subscription_token" | "ollama"; api_key?: string; auth_token?: string };
+      Body: { name: string; provider: "api_key" | "ollama"; api_key?: string };
     }>("/v1/anthropic-keys", async (request, reply) => {
-      const { name, provider, api_key, auth_token } = request.body;
+      const { name, provider, api_key } = request.body;
       if (!name || !provider) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "name and provider are required"));
       }
@@ -200,15 +200,11 @@ export const userResourceRoutes = fp(
       // em-dashes, and zero-width spaces from copy-paste are the usual
       // culprits.
       const cleanApiKey = api_key?.trim();
-      const cleanAuthToken = auth_token?.trim();
       const nonAscii = /[^\x20-\x7e]/;
       if (cleanApiKey && nonAscii.test(cleanApiKey)) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "API key contains a non-ASCII character — re-copy from the source (smart quotes or hidden characters break HTTP headers)."));
       }
-      if (cleanAuthToken && nonAscii.test(cleanAuthToken)) {
-        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Auth token contains a non-ASCII character — re-copy from the source (smart quotes or hidden characters break HTTP headers)."));
-      }
-      const key = await apiKeyService.create({ name, provider, api_key: cleanApiKey, auth_token: cleanAuthToken }, request.user!.id);
+      const key = await apiKeyService.create({ name, provider, api_key: cleanApiKey }, request.user!.id);
 
       // Auto-create a default profile if user has none. Pass `provider`
       // through so an Ollama key produces an Ollama profile — without

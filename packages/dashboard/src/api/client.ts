@@ -427,7 +427,6 @@ export interface UserAnthropicKey {
   name: string;
   provider: string;
   api_key?: string;
-  auth_token?: string;
   allowed_user_ids: string[];
   created_at: string;
   last_used_at?: string;
@@ -438,7 +437,7 @@ export function fetchUserAnthropicKeys(): Promise<UserAnthropicKey[]> {
 }
 
 export function createUserAnthropicKey(body: {
-  name: string; provider: string; api_key?: string; auth_token?: string;
+  name: string; provider: string; api_key?: string;
 }): Promise<UserAnthropicKey> {
   return request("/anthropic-keys", { method: "POST", body: JSON.stringify(body) });
 }

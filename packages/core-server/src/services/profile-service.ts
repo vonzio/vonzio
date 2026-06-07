@@ -148,7 +148,6 @@ export class ProfileService {
     if (!profile) return null;
 
     let resolvedApiKey: string | undefined;
-    let resolvedAuthToken: string | undefined;
     let resolvedProvider: ProfileProvider = "api_key";
 
     if (this.apiKeyService && profile.api_key_id) {
@@ -156,7 +155,6 @@ export class ProfileService {
 
       if (apiKey) {
         resolvedApiKey = apiKey.api_key;
-        resolvedAuthToken = apiKey.auth_token;
         resolvedProvider = apiKey.provider;
       }
     }
@@ -164,7 +162,6 @@ export class ProfileService {
     return {
       ...profile,
       resolved_api_key: resolvedApiKey,
-      resolved_auth_token: resolvedAuthToken,
       resolved_provider: resolvedProvider,
     };
   }

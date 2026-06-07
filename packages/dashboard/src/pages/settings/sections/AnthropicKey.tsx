@@ -36,7 +36,7 @@ export function AnthropicKeySection() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<AnthropicKeyInfo | null>(null);
   const [keyName, setKeyName] = useState("");
-  const [provider, setProvider] = useState<"api_key" | "subscription_token" | "ollama">("api_key");
+  const [provider, setProvider] = useState<"api_key" | "ollama">("api_key");
   const [apiKey, setApiKey] = useState("");
   const [isSharedKey, setIsSharedKey] = useState(false);
   const [sharedWith, setSharedWith] = useState<string[]>([]);
@@ -71,7 +71,7 @@ export function AnthropicKeySection() {
     try {
       const body: Record<string, unknown> = {
         name: keyName, provider,
-        ...(provider === "subscription_token" ? { auth_token: apiKey } : { api_key: apiKey }),
+        api_key: apiKey,
       };
       if (isAdmin) {
         body.shared = isSharedKey;
@@ -89,8 +89,7 @@ export function AnthropicKeySection() {
     try {
       const body: Record<string, unknown> = { name: keyName };
       if (apiKey && apiKey !== "••••••••") {
-        if (provider === "subscription_token") body.auth_token = apiKey;
-        else body.api_key = apiKey;
+        body.api_key = apiKey;
       }
       if (!editingKey.user_id) body.allowed_user_ids = sharedWith;
       if (isAdmin) await updateAnthropicKey(editingKey.id, body as Parameters<typeof updateAnthropicKey>[1]);
@@ -190,7 +189,6 @@ export function AnthropicKeySection() {
 
   const providerOpts: SelectOption[] = [
     { value: "api_key", label: "Anthropic API key" },
-    { value: "subscription_token", label: "Subscription token" },
     ...(ollamaEnabled ? [{ value: "ollama", label: "Ollama Cloud" }] : []),
   ];
 
@@ -281,10 +279,10 @@ export function AnthropicKeySection() {
           <div>
             <SubLabel>Provider</SubLabel>
             <span style={{ fontSize: 13, color: "var(--vz-ink-3)" }}>
-              {editingKey?.provider === "ollama" ? "Ollama Cloud" : editingKey?.provider === "api_key" ? "Anthropic API key" : "Subscription token"}
+              {editingKey?.provider === "ollama" ? "Ollama Cloud" : "Anthropic API key"}
             </span>
           </div>
-          <Field label={editingKey?.provider === "ollama" ? "Ollama API key" : editingKey?.provider === "api_key" ? "API key" : "Auth token"} hint="Leave blank to keep the current value.">
+          <Field label={editingKey?.provider === "ollama" ? "Ollama API key" : "API key"} hint="Leave blank to keep the current value.">
             <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="••••••••" />
           </Field>
           {isAdmin && editingKey && editingKey.user_id && (
