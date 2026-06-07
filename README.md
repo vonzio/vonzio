@@ -34,7 +34,7 @@
 That isolation is the point. You get the autonomy of a hosted agent like Manus — but it runs on infrastructure you own, with a model and credentials you control. You bring a provider key; vonzio brings everything around the container: a chat dashboard, a session that remembers, MCP tools, integrations, and an embeddable widget.
 
 - **One container per conversation** — fresh, isolated, with a bind-mounted workspace; reused while warm, torn down when idle. A runaway or prompt-poisoned agent is contained to its own session.
-- **Provider-agnostic** — Anthropic (Claude Sonnet/Opus/Haiku), Anthropic subscription tokens, Ollama Cloud, or any OpenAI-compatible endpoint. Pick per profile or per workspace.
+- **Provider-agnostic** — Anthropic (Claude Sonnet/Opus/Haiku), Anthropic subscription tokens, Ollama Cloud (or any Anthropic-compatible gateway), and OpenAI / any OpenAI-compatible endpoint (translated in-container by a built-in gateway). Pick per profile or per workspace.
 - **Chat surface + widget** — full dashboard for direct use, plus a `/chat` embed you can drop into any page.
 - **Integrations** — GitHub, GitLab, Bitbucket, Slack, Telegram, Gmail; bank data (Teller) and more via external plugins.
 - **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria.

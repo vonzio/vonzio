@@ -14,7 +14,12 @@ vi.mock("./ollama-service.js", () => ({
   fetchOllamaModels: vi.fn(),
 }));
 
+vi.mock("./openai-service.js", () => ({
+  fetchOpenAIModels: vi.fn(),
+}));
+
 import { fetchOllamaModels } from "./ollama-service.js";
+import { fetchOpenAIModels } from "./openai-service.js";
 
 function makeServices(profile: unknown, apiKey: unknown) {
   return {
@@ -111,6 +116,24 @@ describe("ModelListService", () => {
         { id: "llama3", display_name: "Llama 3", provider: "ollama" },
         { id: "qwen2", display_name: null, provider: "ollama" },
       ]);
+    }
+    svc.stop();
+  });
+
+  it("delegates to fetchOpenAIModels for openai keys", async () => {
+    (fetchOpenAIModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: "gpt-x", name: "gpt-x" },
+    ]);
+
+    const { profileService, apiKeyService } = makeServices(
+      { id: "prof_3", name: "OpenAI", api_key_id: "key_openai", user_id: "user_1" },
+      { provider: "openai", api_key: "sk-openai-test", auth_token: null },
+    );
+    const svc = new ModelListService(profileService, apiKeyService);
+    const result = await svc.listForProfile("prof_3");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.models).toEqual([{ id: "gpt-x", display_name: "gpt-x", provider: "openai" }]);
     }
     svc.stop();
   });

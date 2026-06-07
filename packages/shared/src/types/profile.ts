@@ -1,4 +1,4 @@
-export const PROFILE_PROVIDERS = ["api_key", "subscription_token", "ollama"] as const;
+export const PROFILE_PROVIDERS = ["api_key", "subscription_token", "ollama", "openai"] as const;
 export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
 
 export interface McpServerConfig {

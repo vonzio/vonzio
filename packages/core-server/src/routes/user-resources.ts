@@ -186,7 +186,7 @@ export const userResourceRoutes = fp(
     });
 
     server.post<{
-      Body: { name: string; provider: "api_key" | "subscription_token" | "ollama"; api_key?: string; auth_token?: string };
+      Body: { name: string; provider: "api_key" | "subscription_token" | "ollama" | "openai"; api_key?: string; auth_token?: string };
     }>("/v1/anthropic-keys", async (request, reply) => {
       const { name, provider, api_key, auth_token } = request.body;
       if (!name || !provider) {
