@@ -22,3 +22,7 @@ export function createDB(url: string): DB {
 }
 
 export { schema };
+// Re-export the migration runner so consumers (e.g. SaaS test harnesses that
+// need the full core-server schema before layering their own migrations) can
+// apply it without a deep import into ./db/migrations.
+export { runMigrations } from "./migrations.js";
