@@ -243,6 +243,20 @@ export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker
           config.BETTER_AUTH_URL,
         ]
       : config.CORS_ORIGIN.split(",").map((o) => o.trim()),
+    // Cross-subdomain cookie sharing — set COOKIE_DOMAIN when the app
+    // spans subdomains (e.g. app.example.com + admin.example.com) and the
+    // session cookie needs to be readable from both. Leading dot required.
+    ...(config.COOKIE_DOMAIN ? {
+      advanced: {
+        crossSubDomainCookies: {
+          enabled: true,
+          domain: config.COOKIE_DOMAIN,
+        },
+        defaultCookieAttributes: {
+          sameSite: "lax",
+        },
+      },
+    } : {}),
   });
 
   return auth;

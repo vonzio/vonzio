@@ -42,6 +42,7 @@ export function OllamaModelPicker({ apiKeyId, value, onChange }: Props) {
         ...orphan,
         ...sortedModels.map((m) => ({ value: m.id, label: m.name })),
       ]}
+      searchable
     />
   );
 }
