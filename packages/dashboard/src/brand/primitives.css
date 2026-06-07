@@ -164,6 +164,11 @@
   padding: 6px;
   min-width: 180px;
   display: flex; flex-direction: column; gap: 1px;
+  /* Cap long lists (e.g. Ollama key with 60+ models) — callers can
+     override with an inline `maxHeight` when they need a different cap. */
+  max-height: min(60vh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .vz-menu__item {
   display: flex; align-items: center; gap: 10px;
@@ -286,7 +291,10 @@
   background: var(--vz-card);
   border: 1px solid var(--vz-border);
   border-radius: var(--vz-radius-xl);
-  overflow: hidden;
+  /* No `overflow: hidden` here — it would clip popover/menu children
+     (e.g. ProfileModelSelect's dropdown opens with position:absolute and
+     gets cut by the panel). No internal element has a background that
+     bleeds to the rounded edges, so the clip isn't needed visually. */
 }
 .vz-panel__header {
   padding: 14px 18px;
@@ -782,7 +790,14 @@
     "rail topbar"
     "rail main"
     "rail statusbar";
-  height: 100vh;
+  /* `position: fixed; inset: 0` removes the shell from body's normal flow.
+     Body becomes empty of flow content, so the browser can't scroll the
+     document — even when Chrome's focus model calls scrollIntoView() on a
+     focused control (e.g. the Auto-continue checkbox after toggling). All
+     scroll containment is forced into `.vz-app__main`, the only `overflow:
+     auto` element in the tree, which is exactly what we want. */
+  position: fixed;
+  inset: 0;
   background: var(--vz-page);
   color: var(--vz-ink);
 }
@@ -800,7 +815,26 @@
   background: var(--vz-page);
   min-width: 0;
 }
-.vz-app__main     { grid-area: main; overflow: auto; min-width: 0; }
+/* `min-height: 0` is critical — a grid item's default `min-height: auto`
+   lets its intrinsic min-content size grow the track beyond `1fr`, which
+   pushes the statusbar past 100vh and creates a phantom scroll area
+   below the footer (most visible on tabs with denser panels).
+   `overscroll-behavior: contain` stops scroll-chaining to the (locked)
+   document on Windows trackpads + iOS rubber-band. */
+.vz-app__main     { grid-area: main; overflow: auto; min-width: 0; min-height: 0; overscroll-behavior: contain; }
+
+/* Print: restore normal document flow so the form/page actually prints.
+   Without this, `.vz-app` stays `position: fixed` and the printed page
+   captures only the visible viewport snapshot. */
+@media print {
+  .vz-app {
+    position: static;
+    height: auto;
+    display: block;
+  }
+  .vz-app__rail, .vz-app__topbar, .vz-app__statusbar { display: none; }
+  .vz-app__main { overflow: visible; }
+}
 .vz-app__statusbar {
   grid-area: statusbar;
   display: flex; align-items: center; gap: 12px;
