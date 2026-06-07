@@ -1,5 +1,5 @@
 /**
- * Validates Anthropic API keys / subscription tokens by hitting a lightweight endpoint.
+ * Validates Anthropic / Ollama API keys by hitting a lightweight endpoint.
  */
 
 export interface KeyValidationResult {
@@ -22,13 +22,8 @@ export async function validateAnthropicKey(
 
   const headers: Record<string, string> = {
     "anthropic-version": "2023-06-01",
+    "x-api-key": key,
   };
-
-  if (type === "api_key") {
-    headers["x-api-key"] = key;
-  } else {
-    headers["Authorization"] = `Bearer ${key}`;
-  }
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/models", {

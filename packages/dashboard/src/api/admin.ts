@@ -31,7 +31,6 @@ export interface BootstrapResult {
 export function bootstrap(body: {
   name?: string;
   api_key?: string;
-  auth_token?: string;
   provider?: string;
 }): Promise<BootstrapResult> {
   return adminRequest("/bootstrap", {
@@ -126,7 +125,6 @@ export interface AnthropicKeyInfo {
   name: string;
   provider: string;
   api_key?: string;
-  auth_token?: string;
   allowed_user_ids: string[];
   created_at: string;
   last_used_at?: string;
@@ -141,7 +139,6 @@ export function createAnthropicKey(body: {
   name: string;
   provider: string;
   api_key?: string;
-  auth_token?: string;
 }): Promise<AnthropicKeyInfo> {
   return adminRequest("/api-keys", { method: "POST", body: JSON.stringify(body) });
 }
@@ -149,7 +146,6 @@ export function createAnthropicKey(body: {
 export function updateAnthropicKey(id: string, body: Partial<{
   name: string;
   api_key: string;
-  auth_token: string;
   allowed_user_ids: string[];
 }>): Promise<AnthropicKeyInfo> {
   return adminRequest(`/api-keys/${id}`, { method: "PATCH", body: JSON.stringify(body) });

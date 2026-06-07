@@ -77,7 +77,7 @@ describe("ModelListService", () => {
 
     const { profileService, apiKeyService } = makeServices(
       PROFILE_WITH_ANTHROPIC,
-      { provider: "anthropic", api_key: "sk-anth-test", auth_token: null },
+      { provider: "anthropic", api_key: "sk-anth-test" },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_1");
@@ -101,7 +101,7 @@ describe("ModelListService", () => {
 
     const { profileService, apiKeyService } = makeServices(
       PROFILE_WITH_OLLAMA,
-      { provider: "ollama", api_key: "http://localhost:11434", auth_token: null },
+      { provider: "ollama", api_key: "http://localhost:11434" },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_2");
@@ -118,7 +118,7 @@ describe("ModelListService", () => {
   it("returns ok:true with empty models when the Ollama key is missing", async () => {
     const { profileService, apiKeyService } = makeServices(
       PROFILE_WITH_OLLAMA,
-      { provider: "ollama", api_key: null, auth_token: null },
+      { provider: "ollama", api_key: null },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_2");
@@ -126,25 +126,11 @@ describe("ModelListService", () => {
     svc.stop();
   });
 
-  it("falls back from api_key to auth_token for Anthropic subscription-token keys", async () => {
-    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchSpy);
-    const { profileService, apiKeyService } = makeServices(
-      PROFILE_WITH_ANTHROPIC,
-      { provider: "anthropic", api_key: null, auth_token: "sk-ant-sub" },
-    );
-    const svc = new ModelListService(profileService, apiKeyService);
-    await svc.listForProfile("prof_1");
-    const headers = (fetchSpy.mock.calls as unknown as Array<[unknown, { headers: Record<string, string> }]>)[0][1].headers;
-    expect(headers["x-api-key"]).toBe("sk-ant-sub");
-    svc.stop();
-  });
-
   it("returns 502 when Anthropic responds non-2xx", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 401 })));
     const { profileService, apiKeyService } = makeServices(
       PROFILE_WITH_ANTHROPIC,
-      { provider: "anthropic", api_key: "bad", auth_token: null },
+      { provider: "anthropic", api_key: "bad" },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_1");
@@ -161,7 +147,7 @@ describe("ModelListService", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const { profileService, apiKeyService } = makeServices(
       PROFILE_WITH_ANTHROPIC,
-      { provider: "anthropic", api_key: "k", auth_token: null },
+      { provider: "anthropic", api_key: "k" },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     await svc.listForProfile("prof_1");
@@ -174,7 +160,7 @@ describe("ModelListService", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: [{ id: "claude-haiku-4-5", display_name: "Haiku 4.5" }] }), { status: 200 })));
     const { profileService, apiKeyService } = makeServices(
       { ...PROFILE_WITH_ANTHROPIC, model: "claude-sonnet-4-6" },
-      { provider: "anthropic", api_key: "k", auth_token: null },
+      { provider: "anthropic", api_key: "k" },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_1");
@@ -189,7 +175,7 @@ describe("ModelListService", () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("EHOSTUNREACH"); }));
     const { profileService, apiKeyService } = makeServices(
       PROFILE_WITH_ANTHROPIC,
-      { provider: "anthropic", api_key: "k", auth_token: null },
+      { provider: "anthropic", api_key: "k" },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_1");

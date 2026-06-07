@@ -121,7 +121,6 @@ async function addProfile(
       name: name + " Key",
       provider: "api_key",
       encrypted_api_key: encrypt(apiKey, encryptionKey),
-      encrypted_auth_token: null,
       created_at: new Date().toISOString(),
       last_used_at: null,
     });
@@ -160,7 +159,6 @@ async function bootstrap(
       name: keyName + " Key",
       provider: "api_key",
       encrypted_api_key: encrypt(anthropicKey, encryptionKey),
-      encrypted_auth_token: null,
       created_at: new Date().toISOString(),
       last_used_at: null,
     });
