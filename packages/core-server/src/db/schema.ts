@@ -65,6 +65,8 @@ export const workspaces = pgTable(
     volume_expires_at: text("volume_expires_at"),
     public_preview: boolean("public_preview").notNull().default(false),
     model_override: text("model_override"),
+    // Per-conversation key override (cross-key model selection). Null = profile key.
+    api_key_id_override: text("api_key_id_override"),
     last_run_model: text("last_run_model"),
     status: text("status", { enum: [...WORKSPACE_STATUSES] }).notNull(),
     last_active_at: text("last_active_at").notNull(),

@@ -21,6 +21,11 @@ export interface Workspace {
   volume_expires_at: string | null;
   public_preview: boolean;
   model_override: string | null;
+  /** Per-conversation API-key override. When set, this turn runs on this key's
+   *  credential/provider/base_url instead of the profile's attached key — lets
+   *  a workspace switch provider (e.g. Anthropic ↔ OpenAI) without changing the
+   *  agent. Paired with `model_override`. Null = use the profile's key. */
+  api_key_id_override: string | null;
   /** Model that produced the most recent completed turn. Used to detect a
    *  cross-model switch and trigger transcript replay (the SDK's resume
    *  doesn't carry context across model identity changes). */
