@@ -140,6 +140,8 @@ export interface WorkspaceSummary {
   created_at: string;
   expires_at: string;
   model_override: string | null;
+  /** Per-conversation API-key override (cross-key model selection). */
+  api_key_id_override: string | null;
   /** Set by core-server when the agent is routed through a SaaS VPN
    *  tunnel; absent/null otherwise. Drives the "VPN: <name>" pill in
    *  the workspace header. */
@@ -168,12 +170,25 @@ export function deleteWorkspace(id: string): Promise<{ status: string }> {
 
 export function updateWorkspace(
   id: string,
-  fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null },
+  fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; api_key_id_override?: string | null },
 ): Promise<WorkspaceSummary> {
   return request(`/workspaces/${id}`, {
     method: "PATCH",
     body: JSON.stringify(fields),
   });
+}
+
+/** Models grouped by each key the user can use — powers the workspace
+ *  composer's cross-key model picker. */
+export interface KeyModelGroup {
+  key_id: string;
+  key_name: string;
+  provider: string;
+  models: ProfileModel[];
+  error?: string;
+}
+export function fetchAllUserModels(): Promise<{ keys: KeyModelGroup[] }> {
+  return request("/me/models");
 }
 
 export interface SessionEvent {
