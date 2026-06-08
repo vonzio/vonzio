@@ -4,10 +4,11 @@ import "./login.css";
 /**
  * OSS post-signup onboarding wizard. Renders when a signed-in user has
  * zero profiles. Two steps:
- *   1. Pick credential — Anthropic API key or Ollama Cloud API key. Both
- *      submit to /v1/anthropic-keys with the right `provider` value; the
- *      endpoint auto-creates a default profile bound to that key with
- *      matching provider (routes/user-resources.ts).
+ *   1. Pick credential — Anthropic API key, OpenAI (or OpenAI-compatible)
+ *      key, or Ollama Cloud API key. All submit to /v1/anthropic-keys with
+ *      the right `provider` value; the endpoint auto-creates a default
+ *      profile bound to that key with matching provider
+ *      (routes/user-resources.ts).
  *   2. Pick default model — fetches /v1/profiles/:id/models so the user
  *      sees what the key actually has access to (Anthropic returns
  *      claude-*, Ollama returns the user's available Ollama Cloud
@@ -17,7 +18,7 @@ import "./login.css";
  * post-signup journey looks like one cohesive flow.
  */
 
-type CredentialKind = "anthropic_key" | "ollama";
+type CredentialKind = "anthropic_key" | "openai" | "ollama";
 
 const CRED_META: Record<CredentialKind, {
   label: string;
@@ -25,7 +26,7 @@ const CRED_META: Record<CredentialKind, {
   fieldLabel: string;
   placeholder: string;
   keyName: string;
-  provider: "api_key" | "ollama";
+  provider: "api_key" | "ollama" | "openai";
 }> = {
   anthropic_key: {
     label: "Anthropic API key",
@@ -34,6 +35,14 @@ const CRED_META: Record<CredentialKind, {
     placeholder: "sk-ant-...",
     keyName: "Anthropic API key",
     provider: "api_key",
+  },
+  openai: {
+    label: "OpenAI (or OpenAI-compatible)",
+    hint: "From platform.openai.com — starts with sk-. Also Azure / OpenRouter / vLLM / LM Studio via OPENAI_BASE_URL.",
+    fieldLabel: "OpenAI API key",
+    placeholder: "sk-...",
+    keyName: "OpenAI",
+    provider: "openai",
   },
   ollama: {
     label: "Ollama Cloud API key",
@@ -48,7 +57,7 @@ const CRED_META: Record<CredentialKind, {
 interface ProfileModel {
   id: string;
   display_name: string | null;
-  provider: "anthropic" | "ollama";
+  provider: "anthropic" | "ollama" | "openai";
 }
 
 export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boolean }) {
@@ -61,6 +70,10 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
   const [profileId, setProfileId] = useState<string | null>(null);
   const [kind, setKind] = useState<CredentialKind>("anthropic_key");
   const [secret, setSecret] = useState("");
+  // OpenAI-compatible endpoint override; only used when kind === "openai",
+  // and behind an "Advanced" disclosure so the default is OpenAI itself.
+  const [baseUrl, setBaseUrl] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,6 +96,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
           name: meta.keyName,
           provider: meta.provider,
           api_key: trimmed,
+          ...(kind === "openai" ? { base_url: baseUrl.trim() || undefined } : {}),
         }),
       });
       if (!res.ok) {
@@ -126,6 +140,10 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
             setKind={setKind}
             secret={secret}
             setSecret={setSecret}
+            baseUrl={baseUrl}
+            setBaseUrl={setBaseUrl}
+            showAdvanced={showAdvanced}
+            setShowAdvanced={setShowAdvanced}
             submitting={submitting}
             error={error}
             onSubmit={onCredentialSubmit}
@@ -146,12 +164,16 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
 }
 
 function CredentialStep({
-  kind, setKind, secret, setSecret, submitting, error, onSubmit,
+  kind, setKind, secret, setSecret, baseUrl, setBaseUrl, showAdvanced, setShowAdvanced, submitting, error, onSubmit,
 }: {
   kind: CredentialKind;
   setKind: (k: CredentialKind) => void;
   secret: string;
   setSecret: (s: string) => void;
+  baseUrl: string;
+  setBaseUrl: (s: string) => void;
+  showAdvanced: boolean;
+  setShowAdvanced: (v: boolean) => void;
   submitting: boolean;
   error: string | null;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
@@ -191,6 +213,31 @@ function CredentialStep({
             autoFocus
           />
         </label>
+
+        {kind === "openai" && (showAdvanced ? (
+          <label className="vz-field">
+            <span className="vz-field__label">Base URL</span>
+            <input
+              type="text"
+              className="vz-input"
+              placeholder="https://api.openai.com"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              autoComplete="off"
+            />
+            <span className="vz-field__hint" style={{ fontSize: "0.78rem", opacity: 0.6 }}>
+              For OpenAI-compatible endpoints (OpenRouter, Azure, vLLM, LM Studio). Leave blank for OpenAI.
+            </span>
+          </label>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(true)}
+            style={{ alignSelf: "flex-start", background: "none", border: 0, color: "var(--vz-muted, #888)", fontSize: "0.8rem", cursor: "pointer", padding: 0, fontFamily: "inherit" }}
+          >
+            + Advanced — use a custom OpenAI-compatible endpoint
+          </button>
+        ))}
 
         {error && <p className="login-error" role="alert">{error}</p>}
 

@@ -14,10 +14,16 @@ export interface KeyValidationResult {
 export async function validateAnthropicKey(
   key: string,
   type: import("@vonzio/shared").ProfileProvider = "api_key",
+  baseUrl?: string | null,
 ): Promise<KeyValidationResult> {
   if (type === "ollama") {
     const { validateOllamaKey } = await import("./ollama-service.js");
     return validateOllamaKey(key);
+  }
+
+  if (type === "openai") {
+    const { validateOpenAIKey } = await import("./openai-service.js");
+    return validateOpenAIKey(key, baseUrl);
   }
 
   const headers: Record<string, string> = {

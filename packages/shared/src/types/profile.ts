@@ -1,4 +1,4 @@
-export const PROFILE_PROVIDERS = ["api_key", "ollama"] as const;
+export const PROFILE_PROVIDERS = ["api_key", "ollama", "openai"] as const;
 export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
 
 export interface McpServerConfig {
@@ -47,6 +47,13 @@ export interface AnthropicKey {
   name: string;
   provider: ProfileProvider;
   api_key?: string;
+  /**
+   * OpenAI-compatible endpoint override (non-secret). Only meaningful for
+   * `provider: "openai"` — lets a single instance mix OpenAI proper with
+   * OpenRouter / Azure / vLLM / LM Studio per key. Null/undefined falls back
+   * to the server-wide `OPENAI_BASE_URL` (default https://api.openai.com).
+   */
+  base_url?: string | null;
   allowed_user_ids: string[];
   created_at: string;
   last_used_at?: string;
@@ -95,6 +102,8 @@ export interface Profile {
 export interface ResolvedProfile extends Profile {
   resolved_api_key?: string;
   resolved_provider: ProfileProvider;
+  /** OpenAI-compatible base URL from the resolved key (openai provider only). */
+  resolved_base_url?: string;
 }
 
 export interface CallerKey {

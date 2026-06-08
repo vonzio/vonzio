@@ -253,6 +253,38 @@ export const profileRoutes = fp(
         return { models: result.models };
       },
     );
+
+    // Models available for a specific API key — used by the agent editor so
+    // the model picker refreshes when the user changes the key dropdown
+    // BEFORE saving (the profile-scoped route above only sees the persisted
+    // key). Ownership reuses apiKeyService.list visibility (own + shared/org).
+    server.get<{ Params: { id: string } }>(
+      "/v1/anthropic-keys/:id/models",
+      {
+        schema: {
+          summary: "List models available to an API key",
+          description:
+            "Returns the model list for a given API key (resolving its provider + base URL server-side). " +
+            "Used by the agent editor to refresh the model picker live when the key selection changes.",
+          tags: ["Profiles"],
+          params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+        },
+      },
+      async (request, reply) => {
+        const visible = await apiKeyService.list(request.user!.id, request.user!.role);
+        if (!visible.some((k) => k.id === request.params.id)) {
+          return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "API key not found"));
+        }
+        const result = await modelListService.listForApiKey(request.params.id);
+        if (!result.ok) {
+          return reply.code(result.status).send(errorResponse(
+            result.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.BAD_REQUEST,
+            result.error,
+          ));
+        }
+        return { models: result.models };
+      },
+    );
   },
   { name: "profile-routes" },
 );

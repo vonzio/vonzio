@@ -652,6 +652,13 @@ const migrations: Migration[] = [
       );
     },
   },
+  {
+    version: 23,
+    description: "Add api_keys.base_url: per-key OpenAI-compatible endpoint override (OpenRouter/Azure/vLLM/LM Studio); null = server default",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS base_url TEXT`);
+    },
+  },
 ];
 
 /**

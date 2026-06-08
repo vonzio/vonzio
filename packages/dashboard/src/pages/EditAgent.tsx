@@ -421,8 +421,13 @@ export function EditAgent() {
                       options={apiKeyOptions}
                       value={apiKeyId}
                       onChange={(v) => {
+                        const oldKey = (availableApiKeys ?? []).find((k) => k.id === apiKeyId);
                         const newKey = (availableApiKeys ?? []).find((k) => k.id === v);
-                        if ((newKey?.provider === "ollama") !== isOllamaKey) setProfileModel("");
+                        // Models are provider-specific — carrying e.g. gpt-5.4
+                        // over to an Anthropic key shows a stale, invalid pick
+                        // (and a phantom "legacy" row). Clear it whenever the
+                        // provider changes; keep it across same-provider keys.
+                        if (newKey?.provider !== oldKey?.provider) setProfileModel("");
                         setApiKeyId(v);
                       }}
                     />
@@ -439,6 +444,7 @@ export function EditAgent() {
                       <Field label="Model">
                         <ProfileModelSelect
                           profileId={editingId}
+                          apiKeyId={apiKeyId || null}
                           value={profileModel}
                           onChange={setProfileModel}
                         />

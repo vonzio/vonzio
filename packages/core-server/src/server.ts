@@ -200,6 +200,9 @@ export async function buildServer(deps: ServerDeps) {
   // bot commands. One cache so the bot pickers don't repeatedly hit
   // upstream providers on each open.
   const modelListService = new ModelListService(profileService, apiKeyService);
+  // Drop a key's cached model list when its credential or base_url changes,
+  // so editing an OpenAI endpoint doesn't serve the old provider's models.
+  apiKeyService.setKeyChangeListener((id) => modelListService.invalidate(id));
   const toolFileService = new ToolFileService(db, config.TOOLS_DIR);
   const skillService = new SkillService(db, config.SKILLS_DIR);
   const subagentService = new SubagentService(db);
