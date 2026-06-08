@@ -142,8 +142,12 @@ export class ProfileService {
     return this.mapRow(rows[0], false);
   }
 
-  /** Get profile joined with its API key credentials — for orchestrator use */
-  async getResolved(id: string): Promise<ResolvedProfile | null> {
+  /** Get profile joined with its API key credentials — for orchestrator use.
+   *  `opts.apiKeyIdOverride` resolves the credential from a different key than
+   *  the profile's attached one (cross-key model selection) — the rest of the
+   *  profile (tools, prompt, MCP) is unchanged. Falls back to the profile's
+   *  key if the override is missing/inaccessible. */
+  async getResolved(id: string, opts?: { apiKeyIdOverride?: string | null }): Promise<ResolvedProfile | null> {
     const profile = await this.getWithSecrets(id);
     if (!profile) return null;
 
@@ -151,8 +155,15 @@ export class ProfileService {
     let resolvedProvider: ProfileProvider = "api_key";
     let resolvedBaseUrl: string | undefined;
 
-    if (this.apiKeyService && profile.api_key_id) {
-      const apiKey = await this.apiKeyService.getWithSecrets(profile.api_key_id);
+    const effectiveKeyId = opts?.apiKeyIdOverride || profile.api_key_id;
+    if (this.apiKeyService && effectiveKeyId) {
+      let apiKey = await this.apiKeyService.getWithSecrets(effectiveKeyId);
+      // Override key vanished (deleted/revoked) — fall back to the profile's
+      // own key so a stale per-conversation override doesn't leave the agent
+      // with no credential.
+      if (!apiKey && opts?.apiKeyIdOverride && profile.api_key_id && profile.api_key_id !== effectiveKeyId) {
+        apiKey = await this.apiKeyService.getWithSecrets(profile.api_key_id);
+      }
 
       if (apiKey) {
         resolvedApiKey = apiKey.api_key;

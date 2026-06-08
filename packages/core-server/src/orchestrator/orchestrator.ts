@@ -1301,7 +1301,13 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async fetchProfile(task: Task) {
-    const profile = await this.deps.profileService.getResolved(task.profile_id);
+    // Cross-key model selection: when the conversation carries an api_key_id
+    // override, resolve the profile's credential from that key instead (its
+    // provider + base_url too). resolveTaskModel already picks the matching
+    // model, and the cross-model-switch replay handles the SDK session reset.
+    const workspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
+    const apiKeyIdOverride = workspace?.api_key_id_override ?? null;
+    const profile = await this.deps.profileService.getResolved(task.profile_id, { apiKeyIdOverride });
     if (!profile) {
       throw new Error(`Profile ${task.profile_id} not found`);
     }

@@ -583,7 +583,7 @@ export async function buildServer(deps: ServerDeps) {
           ? coreDeps.recordTaskOrg(taskId, orgId)
           : Promise.resolve(),
     });
-    v1.register(workspaceRoutes, { workspaceService, profileService, eventLog, orchestrator });
+    v1.register(workspaceRoutes, { workspaceService, profileService, apiKeyService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
     v1.register(profileRoutes, {
       profileService,

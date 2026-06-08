@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
 import { WorkspaceService } from "../services/workspace-service.js";
 import type { ProfileService } from "../services/profile-service.js";
+import type { ApiKeyService } from "../services/api-key-service.js";
 import type { EventLog } from "../events/event-log.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
@@ -11,6 +12,9 @@ import { WORKSPACE_STATUSES, type Workspace, type WorkspaceStatus } from "@vonzi
 export interface WorkspaceRoutesOptions {
   workspaceService: WorkspaceService;
   profileService?: ProfileService;
+  /** Optional — used to validate a per-conversation api_key_id_override
+   *  belongs to the caller (cross-key model selection). */
+  apiKeyService?: ApiKeyService;
   eventLog?: EventLog;
   /** Optional — when present, GET responses are enriched with
    *  `attached_tunnel` for the chat header VPN pill. */
@@ -19,7 +23,7 @@ export interface WorkspaceRoutesOptions {
 
 export const workspaceRoutes = fp(
   async (server: FastifyInstance, opts: WorkspaceRoutesOptions) => {
-    const { workspaceService, profileService, eventLog, orchestrator } = opts;
+    const { workspaceService, profileService, apiKeyService, eventLog, orchestrator } = opts;
 
     const withTunnel = (w: Workspace): Workspace => {
       if (!orchestrator || !w.container_id) return w;
@@ -124,12 +128,13 @@ export const workspaceRoutes = fp(
 
     server.patch<{
       Params: { id: string };
-      Body: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null };
+      Body: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; api_key_id_override?: string | null };
     }>("/v1/workspaces/:id", {
       schema: {
         summary: "Update a workspace",
         description:
           "Patches user-mutable fields. Notable: `model_override` (per-workspace model picker — pass `null` to clear), " +
+          "`api_key_id_override` (run this conversation on a different key than the profile's — pass `null` to clear), " +
           "`starred`/`pinned`/`archived` for organization, `public_preview` to expose the preview iframe.",
         tags: ["Workspaces"],
         params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
@@ -144,6 +149,7 @@ export const workspaceRoutes = fp(
             tags: { type: "array", items: { type: "string" } },
             public_preview: { type: "boolean" },
             model_override: { type: "string", nullable: true },
+            api_key_id_override: { type: "string", nullable: true },
           },
         },
       },
@@ -155,9 +161,18 @@ export const workspaceRoutes = fp(
       if (!session || (!orgMatch && !isOwnerOrAdmin(request.user!, session.user_id))) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       }
-      const updated = await workspaceService.update(request.params.id, request.body as {
-        name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null;
-      }, { orgId: orgCtxId });
+      const body = request.body as {
+        name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; api_key_id_override?: string | null;
+      };
+      // A non-null key override must be a key the caller can actually use —
+      // reject ids outside their visibility (own + admin + shared/org).
+      if (body.api_key_id_override && apiKeyService) {
+        const visible = await apiKeyService.list(request.user!.id, request.user!.role);
+        if (!visible.some((k) => k.id === body.api_key_id_override)) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Unknown or inaccessible API key"));
+        }
+      }
+      const updated = await workspaceService.update(request.params.id, body, { orgId: orgCtxId });
       return updated;
     });
 

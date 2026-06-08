@@ -285,6 +285,40 @@ export const profileRoutes = fp(
         return { models: result.models };
       },
     );
+
+    // All models the user can reach, grouped by each of their keys. Powers the
+    // workspace composer's cross-key picker (pick a model from any provider,
+    // not just the agent's attached key). Each group's models come from the
+    // shared per-key cache; a key whose provider is unreachable returns an
+    // empty list + error rather than failing the whole response.
+    server.get(
+      "/v1/me/models",
+      {
+        schema: {
+          summary: "List models grouped by each of the caller's API keys",
+          description:
+            "Returns `{ keys: [{ key_id, key_name, provider, models[], error? }] }` across every key the user " +
+            "can use (own + shared/org). Used by the workspace model picker to select across providers.",
+          tags: ["Profiles"],
+        },
+      },
+      async (request) => {
+        const keys = await apiKeyService.list(request.user!.id, request.user!.role);
+        const groups = await Promise.all(
+          keys.map(async (k) => {
+            const result = await modelListService.listForApiKey(k.id);
+            return {
+              key_id: k.id,
+              key_name: k.name,
+              provider: k.provider,
+              models: result.ok ? result.models : [],
+              error: result.ok ? undefined : result.error,
+            };
+          }),
+        );
+        return { keys: groups };
+      },
+    );
   },
   { name: "profile-routes" },
 );
