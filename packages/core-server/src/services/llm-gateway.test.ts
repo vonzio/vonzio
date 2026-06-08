@@ -14,7 +14,8 @@ const gw = require("../../../../docker/llm-gateway.cjs") as {
   makeStreamTranslator: (m: string) => { push: (c: unknown) => string[]; end: () => string[] };
   mapFinishReason: (r: string | null) => string;
   parseContextLimit: (t: string) => number | null;
-  trimOpenAIToolsToFit: (oa: any, limit: number) => number;
+  trimOpenAIToolsToFit: (oa: any, limit: number) => { dropped: number; changed: boolean };
+  estimateTokens: (s: string) => number;
 };
 
 /** Parse the gateway's Anthropic SSE strings into {event, data} objects. */
@@ -201,10 +202,10 @@ describe("llm-gateway adaptive tool trimming", () => {
       ],
     };
     const before = oa.tools.length;
-    const dropped = gw.trimOpenAIToolsToFit(oa, 1200); // tiny budget
+    const { dropped } = gw.trimOpenAIToolsToFit(oa, 1200); // tiny budget
     expect(dropped).toBeGreaterThan(0);
     const kept = (oa.tools ?? []).map((t: any) => t.function.name);
-    // Whatever survived must be from the essential set, not the MCP tail.
+    // Core built-ins outrank the MCP tail under a tiny budget, so survivors are core.
     for (const name of kept) expect(name).not.toMatch(/^mcp__/);
     expect(before - kept.length).toBe(dropped);
   });
@@ -215,10 +216,42 @@ describe("llm-gateway adaptive tool trimming", () => {
       tools: [{ type: "function", function: { name: "Bash", description: "y".repeat(2000), parameters: {} } }],
       tool_choice: "auto",
     };
-    const dropped = gw.trimOpenAIToolsToFit(oa, 8192);
+    const { dropped } = gw.trimOpenAIToolsToFit(oa, 8192);
     expect(dropped).toBe(1);
     expect(oa.tools).toBeUndefined();
     expect(oa.tool_choice).toBeUndefined();
+  });
+
+  it("caps long descriptions before dropping tools (keeps all when capping fits)", () => {
+    const mk = (name: string) => ({ type: "function", function: { name, description: "d".repeat(5000), parameters: {} } });
+    const oa: any = {
+      messages: [{ role: "user", content: "hi" }],
+      tools: [mk("Bash"), mk("Read"), mk("mcp__x")],
+    };
+    // Too small for 3×5000-char descs, ample for 3 capped (≤600) ones.
+    const r = gw.trimOpenAIToolsToFit(oa, 1024 + 10 + 700);
+    expect(r.dropped).toBe(0);       // nothing dropped — capping alone fit
+    expect(r.changed).toBe(true);    // but we did change (capped), so retry
+    expect(oa.tools.length).toBe(3);
+    for (const t of oa.tools) expect(t.function.description.length).toBeLessThanOrEqual(601);
+  });
+
+  it("priority: core built-ins > MCP/configured > generic long tail", () => {
+    const mk = (name: string) => ({ type: "function", function: { name, description: "d".repeat(200), parameters: {} } });
+    const web = mk("WebSearch"); // generic long tail — dropped first
+    const mcp = mk("mcp__db__query"); // operator-configured — kept over long tail
+    const bash = mk("Bash"); // core — kept first
+    const oa: any = { messages: [{ role: "user", content: "hi" }], tools: [web, mcp, bash] };
+    // Budget == exactly Bash + mcp, so the long-tail WebSearch can't fit.
+    const cBash = gw.estimateTokens(JSON.stringify(bash));
+    const cMcp = gw.estimateTokens(JSON.stringify(mcp));
+    const msgTok = gw.estimateTokens(JSON.stringify(oa.messages));
+    const r = gw.trimOpenAIToolsToFit(oa, cBash + cMcp + msgTok + 1024);
+    expect(r.dropped).toBe(1);
+    const kept = (oa.tools ?? []).map((t: any) => t.function.name);
+    expect(kept).toContain("Bash");
+    expect(kept).toContain("mcp__db__query");
+    expect(kept).not.toContain("WebSearch");
   });
 
   it("resets a forced tool_choice to auto when that tool is trimmed away", () => {
