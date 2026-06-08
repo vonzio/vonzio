@@ -38,6 +38,35 @@ describe("llm-gateway request translation (Anthropic -> OpenAI)", () => {
     expect(oa.messages[1]).toEqual({ role: "user", content: "hi" });
   });
 
+  it("routes the token cap to max_completion_tokens for GPT-5 / o-series, max_tokens otherwise", () => {
+    // gpt-4* and OpenAI-compatible servers: legacy max_tokens
+    const legacy = gw.anthropicToOpenAIRequest({
+      model: "gpt-4o",
+      max_tokens: 256,
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(legacy.max_tokens).toBe(256);
+    expect(legacy.max_completion_tokens).toBeUndefined();
+
+    // GPT-5 family rejects max_tokens — must use max_completion_tokens
+    const gpt5 = gw.anthropicToOpenAIRequest({
+      model: "gpt-5.4",
+      max_tokens: 256,
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(gpt5.max_completion_tokens).toBe(256);
+    expect(gpt5.max_tokens).toBeUndefined();
+
+    // o-series reasoning models likewise
+    const o3 = gw.anthropicToOpenAIRequest({
+      model: "o3-mini",
+      max_tokens: 256,
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(o3.max_completion_tokens).toBe(256);
+    expect(o3.max_tokens).toBeUndefined();
+  });
+
   it("translates tools and tool_choice", () => {
     const oa = gw.anthropicToOpenAIRequest({
       model: "gpt-x",

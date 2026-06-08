@@ -135,10 +135,20 @@ function anthropicToOpenAIRequest(body) {
   const oa = {
     model: body.model,
     messages,
-    // Anthropic requires max_tokens; OpenAI treats it as optional. Forward it.
-    max_tokens: body.max_tokens,
     stream: !!body.stream,
   };
+  // Route the token cap to the field the target model accepts. OpenAI's
+  // GPT-5 and o-series reasoning models reject the legacy `max_tokens` and
+  // require `max_completion_tokens`; gpt-4* and most OpenAI-compatible
+  // servers (vLLM, LM Studio, OpenRouter) only understand `max_tokens`.
+  // Anthropic always sends `max_tokens`, so pick by target model family.
+  if (body.max_tokens != null) {
+    if (/^(o\d|gpt-5)/i.test(body.model || "")) {
+      oa.max_completion_tokens = body.max_tokens;
+    } else {
+      oa.max_tokens = body.max_tokens;
+    }
+  }
   if (oa.stream) oa.stream_options = { include_usage: true };
 
   if (Array.isArray(body.tools) && body.tools.length > 0) {
@@ -375,7 +385,7 @@ function upstreamRequest(method, url, headers, bodyBuf) {
   return new Promise((resolve, reject) => {
     const r = lib.request(
       url,
-      { method, headers: { ...headers, host: u.hostname } },
+      { method, headers: { ...headers, host: u.host } },
       (res) => resolve(res),
     );
     r.on("error", reject);
@@ -423,7 +433,19 @@ async function handleOpenAI(req, res) {
       });
       const tr = makeStreamTranslator(anthropicBody.model);
       let buf = "";
+      // [DONE] arrives mid-stream, but the upstream socket still fires "end"
+      // afterward. Without this guard both paths flush tr.end() + res.end(),
+      // re-writing message_delta/message_stop to an already-ended response
+      // (ERR_STREAM_WRITE_AFTER_END). finish() makes teardown happen once.
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        for (const ev of tr.end()) res.write(ev);
+        res.end();
+      };
       upstream.on("data", (chunk) => {
+        if (finished) return;
         buf += chunk.toString("utf8");
         const lines = buf.split("\n");
         buf = lines.pop() || "";
@@ -432,8 +454,8 @@ async function handleOpenAI(req, res) {
           if (!t.startsWith("data:")) continue;
           const payload = t.slice(5).trim();
           if (payload === "[DONE]") {
-            for (const ev of tr.end()) res.write(ev);
-            res.end();
+            finish();
+            upstream.destroy();
             return;
           }
           try {
@@ -444,11 +466,8 @@ async function handleOpenAI(req, res) {
           }
         }
       });
-      upstream.on("end", () => {
-        for (const ev of tr.end()) res.write(ev);
-        res.end();
-      });
-      upstream.on("error", () => res.end());
+      upstream.on("end", finish);
+      upstream.on("error", () => { if (!finished) { finished = true; res.end(); } });
       return;
     }
 
