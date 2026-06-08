@@ -149,6 +149,7 @@ export class ProfileService {
 
     let resolvedApiKey: string | undefined;
     let resolvedProvider: ProfileProvider = "api_key";
+    let resolvedBaseUrl: string | undefined;
 
     if (this.apiKeyService && profile.api_key_id) {
       const apiKey = await this.apiKeyService.getWithSecrets(profile.api_key_id);
@@ -156,6 +157,7 @@ export class ProfileService {
       if (apiKey) {
         resolvedApiKey = apiKey.api_key;
         resolvedProvider = apiKey.provider;
+        resolvedBaseUrl = apiKey.base_url ?? undefined;
       }
     }
 
@@ -163,6 +165,7 @@ export class ProfileService {
       ...profile,
       resolved_api_key: resolvedApiKey,
       resolved_provider: resolvedProvider,
+      resolved_base_url: resolvedBaseUrl,
     };
   }
 

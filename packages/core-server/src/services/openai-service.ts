@@ -21,8 +21,26 @@ export interface OpenAIModel {
   name: string;
 }
 
-export async function fetchOpenAIModels(apiKey: string): Promise<OpenAIModel[]> {
-  const res = await fetch(`${OPENAI_BASE_URL}/v1/models`, {
+/**
+ * Normalize a user-supplied OpenAI-compatible base URL to the host root that
+ * the gateway and these REST calls expect (they append `/v1/...`). Tolerates
+ * a pasted `/v1` suffix and trailing slashes, so `https://api.openai.com`,
+ * `https://api.openai.com/`, and `https://api.openai.com/v1` all resolve the
+ * same. An empty/blank value falls back to the server default.
+ */
+export function normalizeOpenAIBaseUrl(url?: string | null): string {
+  const trimmed = (url ?? "").trim();
+  let base = trimmed || OPENAI_BASE_URL;
+  // Tolerate a scheme-less paste like "api.x.ai" — without this the gateway's
+  // `new URL(target)` throws and the agent container crashes on first call.
+  // Default to https; an explicit http:// (local vLLM/LM Studio) is preserved.
+  if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
+  return base.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
+export async function fetchOpenAIModels(apiKey: string, baseUrl?: string | null): Promise<OpenAIModel[]> {
+  const root = normalizeOpenAIBaseUrl(baseUrl);
+  const res = await fetch(`${root}/v1/models`, {
     headers: { Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(10_000),
   });
@@ -33,9 +51,9 @@ export async function fetchOpenAIModels(apiKey: string): Promise<OpenAIModel[]> 
   return (data.data ?? []).map((m) => ({ id: m.id, name: m.id }));
 }
 
-export async function validateOpenAIKey(apiKey: string): Promise<{ valid: boolean; error?: string }> {
+export async function validateOpenAIKey(apiKey: string, baseUrl?: string | null): Promise<{ valid: boolean; error?: string }> {
   try {
-    await fetchOpenAIModels(apiKey);
+    await fetchOpenAIModels(apiKey, baseUrl);
     return { valid: true };
   } catch (err) {
     return { valid: false, error: err instanceof Error ? err.message : String(err) };

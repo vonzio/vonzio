@@ -186,9 +186,9 @@ export const userResourceRoutes = fp(
     });
 
     server.post<{
-      Body: { name: string; provider: "api_key" | "ollama" | "openai"; api_key?: string };
+      Body: { name: string; provider: "api_key" | "ollama" | "openai"; api_key?: string; base_url?: string };
     }>("/v1/anthropic-keys", async (request, reply) => {
-      const { name, provider, api_key } = request.body;
+      const { name, provider, api_key, base_url } = request.body;
       if (!name || !provider) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "name and provider are required"));
       }
@@ -204,7 +204,10 @@ export const userResourceRoutes = fp(
       if (cleanApiKey && nonAscii.test(cleanApiKey)) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "API key contains a non-ASCII character — re-copy from the source (smart quotes or hidden characters break HTTP headers)."));
       }
-      const key = await apiKeyService.create({ name, provider, api_key: cleanApiKey }, request.user!.id);
+      const key = await apiKeyService.create(
+        { name, provider, api_key: cleanApiKey, base_url: provider === "openai" ? base_url?.trim() || null : null },
+        request.user!.id,
+      );
 
       // Auto-create a default profile if user has none. Pass `provider`
       // through so an Ollama key produces an Ollama profile — without
@@ -218,6 +221,49 @@ export const userResourceRoutes = fp(
       }
 
       return reply.code(201).send(key);
+    });
+
+    // Validate a credential WITHOUT saving — powers the "Test connection"
+    // button in the add/edit dialog. Accepts raw entered values (add form, or
+    // a freshly-typed key in the edit form) and/or an existing key id (edit
+    // form with the key left masked). The form's base_url always wins so a
+    // changed endpoint is tested even when the key itself is unchanged.
+    server.post<{
+      Body: { provider?: "api_key" | "ollama" | "openai"; api_key?: string; base_url?: string | null; id?: string };
+    }>("/v1/anthropic-keys/validate", async (request, reply) => {
+      const { validateAnthropicKey } = await import("../services/key-validator.js");
+      const { provider, api_key, base_url, id } = request.body;
+
+      let keyToTest = api_key && api_key.trim() && api_key !== "••••••••" ? api_key.trim() : undefined;
+      let providerToTest = provider;
+      let baseToTest = base_url;
+
+      // Fall back to the stored secret when the key field is masked/blank.
+      if (!keyToTest && id) {
+        // Use the same visibility as the by-key models route (own + admin +
+        // shared/org-granted) — an inline owner-only check would 404 on shared
+        // keys the user is legitimately allowed to use.
+        const visible = await apiKeyService.list(request.user!.id, request.user!.role);
+        if (!visible.some((k) => k.id === id)) {
+          return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "API key not found"));
+        }
+        const stored = await apiKeyService.getWithSecrets(id);
+        if (!stored?.api_key) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "This key has no stored credential to test"));
+        }
+        keyToTest = stored.api_key;
+        providerToTest = providerToTest ?? stored.provider;
+        if (baseToTest === undefined) baseToTest = stored.base_url;
+      }
+
+      if (!keyToTest) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Enter a key to test"));
+      }
+      const nonAscii = /[^\x20-\x7e]/;
+      if (nonAscii.test(keyToTest)) {
+        return { valid: false, error: "Key contains a non-ASCII character — re-copy from the source." };
+      }
+      return validateAnthropicKey(keyToTest, providerToTest ?? "api_key", baseToTest);
     });
 
     server.patch<{ Params: { id: string } }>("/v1/anthropic-keys/:id", async (request, reply) => {

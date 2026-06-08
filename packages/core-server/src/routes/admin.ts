@@ -192,19 +192,20 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
     });
 
     server.post<{
-      Body: { name: string; provider: "api_key" | "ollama"; api_key?: string; allowed_user_ids?: string[] };
+      Body: { name: string; provider: "api_key" | "ollama" | "openai"; api_key?: string; base_url?: string; allowed_user_ids?: string[] };
     }>("/admin/api-keys", async (request, reply) => {
-      const { name, provider, api_key, allowed_user_ids } = request.body;
+      const { name, provider, api_key, base_url, allowed_user_ids } = request.body;
       if (!name || !provider) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "name and provider are required"));
       }
       const isShared = (request.body as Record<string, unknown>).shared === true;
-      const key = await apiKeyService.create({ name, provider, api_key, allowed_user_ids }, isShared ? undefined : request.user!.id);
+      const cleanBaseUrl = provider === "openai" ? base_url?.trim() || null : null;
+      const key = await apiKeyService.create({ name, provider, api_key, base_url: cleanBaseUrl, allowed_user_ids }, isShared ? undefined : request.user!.id);
 
       // Validate key if provided
       let validation: { valid: boolean; error?: string } | undefined;
       if (api_key) {
-        validation = await validateAnthropicKey(api_key, provider).catch(() => undefined);
+        validation = await validateAnthropicKey(api_key, provider, cleanBaseUrl).catch(() => undefined);
       }
 
       return reply.code(201).send({ ...key, validation });
@@ -212,7 +213,7 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
 
     server.patch<{
       Params: { id: string };
-      Body: { name?: string; provider?: "api_key" | "ollama"; api_key?: string; allowed_user_ids?: string[] };
+      Body: { name?: string; provider?: "api_key" | "ollama" | "openai"; api_key?: string; base_url?: string | null; allowed_user_ids?: string[] };
     }>("/admin/api-keys/:id", async (request, reply) => {
       const updated = await apiKeyService.update(request.params.id, request.body);
       if (!updated) {
@@ -240,7 +241,7 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
       if (!key.api_key) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "API key has no credential stored"));
       }
-      const result = await validateAnthropicKey(key.api_key, key.provider);
+      const result = await validateAnthropicKey(key.api_key, key.provider, key.base_url);
       return result;
     });
 
@@ -424,7 +425,7 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Profile has no linked API key"));
       }
 
-      const result = await validateAnthropicKey(resolved.resolved_api_key, resolved.resolved_provider);
+      const result = await validateAnthropicKey(resolved.resolved_api_key, resolved.resolved_provider, resolved.resolved_base_url);
       return { profile_id: resolved.id, ...result };
     });
 

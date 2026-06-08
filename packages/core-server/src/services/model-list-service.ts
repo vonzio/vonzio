@@ -80,6 +80,13 @@ export class ModelListService {
     clearInterval(this.cleanupInterval);
   }
 
+  /** Drop the cached model list for a key. Call when its credential or
+   *  base_url changes so the next lookup reflects the new endpoint instead
+   *  of serving the old provider's models for up to the TTL. */
+  invalidate(apiKeyId: string): void {
+    this.cache.delete(apiKeyId);
+  }
+
   /**
    * Fetch the models a profile can use. Returns `{ ok: true, models: [] }`
    * (NOT an error) for the "no API key configured" case — the UI should
@@ -123,7 +130,7 @@ export class ModelListService {
         }));
       } else if (apiKey.provider === "openai") {
         if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
-        const openai = await fetchOpenAIModels(apiKey.api_key);
+        const openai = await fetchOpenAIModels(apiKey.api_key, apiKey.base_url);
         models = openai.map((m) => ({
           id: m.id,
           display_name: m.name ?? null,
