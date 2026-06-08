@@ -1,61 +1,57 @@
 /**
- * ModelPicker — composer-footer pill that lets a user pick a per-workspace
- * model override. Loads available models from the active profile and falls
- * back to a hardcoded set when the endpoint is unreachable or empty.
+ * ModelPicker — composer-footer pill for the per-conversation model.
+ *
+ * Lists every model the user can reach, grouped by API key/provider (not just
+ * the agent's attached key), so a workspace can switch provider mid-chat. A
+ * selection reports both the model and the key it came from; picking a model
+ * from a key other than the profile's sets a per-conversation key override.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchProfileModels, type ProfileModel } from "../api/client.js";
+import { fetchAllUserModels, type ProfileModel, type KeyModelGroup } from "../api/client.js";
 import { Icon } from "../brand/components.js";
 import { MODEL_DISPLAY_FALLBACK } from "../lib/model-display.js";
 
 interface Props {
-  profileId: string;
+  /** The profile's attached key — selecting a model from it clears the override. */
+  profileApiKeyId: string | null;
   profileDefaultModel: string | null;
+  /** Current per-conversation model override (null = profile default). */
   value: string | null;
-  onChange: (model: string | null) => void;
+  /** Current per-conversation key override (null = profile's key). */
+  apiKeyIdOverride: string | null;
+  /** (model, apiKeyId) — apiKeyId is null when the model belongs to the profile's key. */
+  onChange: (model: string | null, apiKeyId: string | null) => void;
   disabled?: boolean;
 }
 
-// Keep ProfileModel-shaped fallbacks (with provider) so the dropdown renders
-// even when the API is unreachable. Names come from the shared display map.
 const FALLBACK_MODELS: ProfileModel[] = Object.entries(MODEL_DISPLAY_FALLBACK).map(
   ([id, display_name]) => ({ id, display_name, provider: "anthropic" as const }),
 );
 
-function displayFor(model: ProfileModel | undefined, id: string | null): string | null {
-  if (!id) return null;
-  if (model?.display_name) return model.display_name;
-  if (model?.id) return model.id;
-  return id;
-}
-
-export function ModelPicker({ profileId, profileDefaultModel, value, onChange, disabled }: Props) {
-  const [models, setModels] = useState<ProfileModel[]>([]);
+export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKeyIdOverride, onChange, disabled }: Props) {
+  const [groups, setGroups] = useState<KeyModelGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
-  // Async-load models for the current profile.
+  // Load models across all of the user's keys. Degrade to a hardcoded set
+  // under the profile's key when the endpoint is unreachable or empty.
   useEffect(() => {
-    if (!profileId) {
-      setModels([]);
-      return;
-    }
     let cancelled = false;
     setLoading(true);
-    fetchProfileModels(profileId)
+    const fallback: KeyModelGroup[] = [
+      { key_id: profileApiKeyId ?? "", key_name: "Models", provider: "anthropic", models: FALLBACK_MODELS },
+    ];
+    fetchAllUserModels()
       .then((res) => {
         if (cancelled) return;
-        if (res.models && res.models.length > 0) {
-          setModels(res.models);
-        } else {
-          setModels(FALLBACK_MODELS);
-        }
+        const withModels = (res.keys ?? []).filter((g) => g.models.length > 0);
+        setGroups(withModels.length > 0 ? withModels : fallback);
       })
       .catch(() => {
-        if (!cancelled) setModels(FALLBACK_MODELS);
+        if (!cancelled) setGroups(fallback);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -63,7 +59,7 @@ export function ModelPicker({ profileId, profileDefaultModel, value, onChange, d
     return () => {
       cancelled = true;
     };
-  }, [profileId]);
+  }, [profileApiKeyId]);
 
   // Close menu on outside click.
   useEffect(() => {
@@ -75,47 +71,54 @@ export function ModelPicker({ profileId, profileDefaultModel, value, onChange, d
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  // Auto-focus the search input when the menu opens; clear the query on close.
+  // Auto-focus search on open; clear query on close.
   useEffect(() => {
     if (open) {
-      // Delay one tick so the input is in the DOM before we focus.
       const t = setTimeout(() => searchRef.current?.focus(), 0);
       return () => clearTimeout(t);
     }
     setQuery("");
   }, [open]);
 
-  // Filter models by case-insensitive substring match against id + display name.
-  // Memoized — re-running on every parent re-render is wasted work for a 30+
-  // item Ollama list, even if cheap.
-  const filteredModels = useMemo(() => {
+  // Filter within each group; drop groups with no matches.
+  const filteredGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return models;
-    return models.filter(
-      (m) => m.id.toLowerCase().includes(q) || (m.display_name?.toLowerCase().includes(q) ?? false),
-    );
-  }, [models, query]);
+    if (!q) return groups;
+    return groups
+      .map((g) => ({
+        ...g,
+        models: g.models.filter(
+          (m) => m.id.toLowerCase().includes(q) || (m.display_name?.toLowerCase().includes(q) ?? false),
+        ),
+      }))
+      .filter((g) => g.models.length > 0);
+  }, [groups, query]);
 
-  // Resolve the active model: override > profile default > "default".
-  const overrideModel = value ? models.find((m) => m.id === value) : undefined;
-  const defaultModel = profileDefaultModel
-    ? models.find((m) => m.id === profileDefaultModel)
-    : undefined;
+  // The key whose model is currently effective (override, else profile's).
+  const effectiveKeyId = apiKeyIdOverride ?? profileApiKeyId;
+  const allModels = useMemo(() => groups.flatMap((g) => g.models), [groups]);
+  const currentModel = value ? allModels.find((m) => m.id === value) : undefined;
+  const defaultModel = profileDefaultModel ? allModels.find((m) => m.id === profileDefaultModel) : undefined;
   const resolvedLabel =
-    displayFor(overrideModel, value) ??
-    displayFor(defaultModel, profileDefaultModel) ??
-    "default";
+    (value ? currentModel?.display_name ?? value : defaultModel?.display_name ?? profileDefaultModel) ?? "default";
 
-  const overridden = !!value;
-  const pillBg = overridden
-    ? "color-mix(in srgb, var(--vz-sodium) 10%, transparent)"
-    : "transparent";
+  const overridden = !!value || !!apiKeyIdOverride;
+  const pillBg = overridden ? "color-mix(in srgb, var(--vz-sodium) 10%, transparent)" : "transparent";
   const pillColor = overridden ? "var(--vz-sodium)" : "var(--vz-muted-2)";
   const pillBorder = overridden
     ? "1px solid color-mix(in srgb, var(--vz-sodium) 30%, transparent)"
     : "1px solid transparent";
 
-  if (loading && models.length === 0) {
+  const showHeaders = groups.length > 1;
+  const totalFiltered = filteredGroups.reduce((n, g) => n + g.models.length, 0);
+  const firstMatch = filteredGroups.find((g) => g.models.length > 0)?.models[0];
+  const firstMatchGroup = filteredGroups.find((g) => g.models.length > 0);
+  // The override to persist for a group: null when it's the profile's own key
+  // (no override) OR an empty fallback id, so we never store a junk "" override.
+  const overrideKeyFor = (keyId: string): string | null =>
+    keyId && keyId !== profileApiKeyId ? keyId : null;
+
+  if (loading && groups.length === 0) {
     return (
       <span
         style={{
@@ -136,9 +139,6 @@ export function ModelPicker({ profileId, profileDefaultModel, value, onChange, d
       <button
         type="button"
         onMouseDown={(e) => {
-          // Stop the document mousedown handler from racing with our state
-          // update — without this, parents that reach for focus on click
-          // can intercept and re-close the menu in the same event.
           if (!disabled) e.stopPropagation();
         }}
         onClick={(e) => {
@@ -177,27 +177,16 @@ export function ModelPicker({ profileId, profileDefaultModel, value, onChange, d
             bottom: "calc(100% + 4px)",
             left: 0,
             minWidth: 240,
-            maxWidth: 320,
-            // Cap height so long lists (Ollama can return 30+ models) don't
-            // run off the top of the viewport. The footer + search bar stay
-            // fixed; only the option list scrolls.
+            maxWidth: 340,
             maxHeight: "min(60vh, 420px)",
             zIndex: 30,
             display: "flex",
             flexDirection: "column",
             padding: 0,
           }}
-          // Same belt-and-suspenders pattern as the brand Select primitive.
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {/* Search filter — focused on open. Esc closes the menu. */}
-          <div
-            style={{
-              padding: "8px 8px 6px",
-              borderBottom: "1px solid var(--vz-border)",
-              flexShrink: 0,
-            }}
-          >
+          <div style={{ padding: "8px 8px 6px", borderBottom: "1px solid var(--vz-border)", flexShrink: 0 }}>
             <input
               ref={searchRef}
               type="text"
@@ -207,9 +196,9 @@ export function ModelPicker({ profileId, profileDefaultModel, value, onChange, d
                 if (e.key === "Escape") {
                   e.preventDefault();
                   setOpen(false);
-                } else if (e.key === "Enter" && filteredModels.length > 0) {
+                } else if (e.key === "Enter" && firstMatch && firstMatchGroup) {
                   e.preventDefault();
-                  onChange(filteredModels[0].id);
+                  onChange(firstMatch.id, overrideKeyFor(firstMatchGroup.key_id));
                   setOpen(false);
                 }
               }}
@@ -229,80 +218,73 @@ export function ModelPicker({ profileId, profileDefaultModel, value, onChange, d
             />
           </div>
 
-          {/* Scrollable option list */}
-          <div
-            style={{
-              overflowY: "auto",
-              flex: 1,
-              padding: 6,
-              display: "flex",
-              flexDirection: "column",
-              gap: 1,
-            }}
-          >
-            {filteredModels.length === 0 ? (
-              <div
-                className="vz-menu__item"
-                style={{ color: "var(--vz-muted-2)", cursor: "default" }}
-              >
-                {models.length === 0 ? "no models available" : "no match"}
+          <div style={{ overflowY: "auto", flex: 1, padding: 6, display: "flex", flexDirection: "column", gap: 1 }}>
+            {totalFiltered === 0 ? (
+              <div className="vz-menu__item" style={{ color: "var(--vz-muted-2)", cursor: "default" }}>
+                {allModels.length === 0 ? "no models available" : "no match"}
               </div>
             ) : (
-              filteredModels.map((m) => {
-                const isActive = value === m.id;
-                const isProfileDefault = !value && profileDefaultModel === m.id;
-                const label = m.display_name ?? m.id;
-                return (
-                  <div
-                    key={m.id}
-                    role="option"
-                    aria-selected={isActive}
-                    className={`vz-menu__item ${isActive ? "vz-menu__item--active" : ""}`}
-                    // Pick on mousedown so selection commits before any blur/click
-                    // race; close synchronously inside the same event.
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onChange(m.id);
-                      setOpen(false);
-                    }}
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <span style={{ flex: 1 }}>{label}</span>
-                    {isProfileDefault && (
-                      <span
-                        style={{
-                          fontFamily: "var(--vz-font-mono)",
-                          fontSize: 10,
-                          color: "var(--vz-muted-2)",
-                          letterSpacing: "0.04em",
+              filteredGroups.map((g) => (
+                <div key={`${g.key_id || "profile"}:${g.provider}`} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  {showHeaders && (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "6px 10px 3px",
+                        fontFamily: "var(--vz-font-mono)",
+                        fontSize: 10,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                        color: "var(--vz-muted-2)",
+                      }}
+                    >
+                      <span style={{ fontWeight: 600, color: "var(--vz-muted)" }}>{g.key_name}</span>
+                      <span style={{ opacity: 0.6 }}>· {g.provider}</span>
+                    </div>
+                  )}
+                  {g.models.map((m) => {
+                    const isActive = value === m.id && g.key_id === effectiveKeyId;
+                    const isProfileDefault = !value && profileDefaultModel === m.id && g.key_id === profileApiKeyId;
+                    const label = m.display_name ?? m.id;
+                    return (
+                      <div
+                        key={`${g.key_id}:${m.id}`}
+                        role="option"
+                        aria-selected={isActive}
+                        className={`vz-menu__item ${isActive ? "vz-menu__item--active" : ""}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onChange(m.id, overrideKeyFor(g.key_id));
+                          setOpen(false);
                         }}
+                        style={{ display: "flex", alignItems: "center", gap: 8 }}
                       >
-                        default
-                      </span>
-                    )}
-                  </div>
-                );
-              })
+                        <span style={{ flex: 1 }}>{label}</span>
+                        {isProfileDefault && (
+                          <span style={{ fontFamily: "var(--vz-font-mono)", fontSize: 10, color: "var(--vz-muted-2)", letterSpacing: "0.04em" }}>
+                            default
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))
             )}
           </div>
 
-          {/* Footer: reset action stays pinned outside the scroll area */}
           {overridden && (
-            <div
-              style={{
-                borderTop: "1px solid var(--vz-border)",
-                padding: 6,
-                flexShrink: 0,
-              }}
-            >
+            <div style={{ borderTop: "1px solid var(--vz-border)", padding: 6, flexShrink: 0 }}>
               <div
                 role="option"
                 className="vz-menu__item"
                 onMouseDown={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  onChange(null);
+                  onChange(null, null);
                   setOpen(false);
                 }}
                 style={{

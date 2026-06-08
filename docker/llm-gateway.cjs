@@ -171,6 +171,87 @@ function anthropicToOpenAIRequest(body) {
 }
 
 // ---------------------------------------------------------------------------
+// Adaptive tool trimming
+//
+// The Claude Agent SDK advertises its full tool catalog (built-ins + MCP) on
+// every request — easily ~20k tokens of OpenAI function schema. Small-context
+// OpenAI-compatible models (e.g. an 8k model) reject that before any chat.
+// Rather than uniformly stripping tools (which would needlessly cripple large
+// models like Grok/GPT-5), we send everything first and only trim when a model
+// rejects the request for exceeding its context window — keeping the most
+// useful tools and dropping the long tail to fit, then retrying once.
+// ---------------------------------------------------------------------------
+
+// Rough token estimate (≈ 4 chars/token) — good enough for budgeting.
+function estimateTokens(str) {
+  return Math.ceil((str || "").length / 4);
+}
+
+// Parse a provider "context length exceeded" error and return the model's
+// token limit, or null if this isn't a context-window error. Handles OpenAI's
+// "maximum context length is 8192 tokens" plus the generic
+// context_length_exceeded code; falls back to a conservative 8192 when the
+// error is clearly about context but no number is given.
+function parseContextLimit(errText) {
+  const text = String(errText || "");
+  const m = text.match(/maximum context length is\s+(\d+)/i) || text.match(/context length of\s+(\d+)/i);
+  if (m) return parseInt(m[1], 10);
+  if (/context_length_exceeded|maximum context|reduce the length of the (?:messages|prompt)/i.test(text)) {
+    return 8192;
+  }
+  return null;
+}
+
+// Built-in tools kept first when trimming, most load-bearing for an agent.
+// Unknown/MCP tools sort after these (dropped first when over budget).
+const TOOL_PRIORITY = [
+  "Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS",
+  "TodoWrite", "Task", "WebFetch", "WebSearch", "NotebookEdit",
+];
+
+// Drop lowest-priority tools from an OpenAI request so messages + tools fit the
+// model's context window. Mutates oa.tools; returns the number dropped.
+function trimOpenAIToolsToFit(oa, contextLimit) {
+  if (!Array.isArray(oa.tools) || oa.tools.length === 0) return 0;
+  const msgTokens = estimateTokens(JSON.stringify(oa.messages || []));
+  // Reserve headroom for the model's reply + estimation slop.
+  const RESERVE = 1024;
+  let budget = contextLimit - msgTokens - RESERVE;
+  if (budget < 0) budget = 0;
+
+  const rank = (t) => {
+    const i = TOOL_PRIORITY.indexOf(t.function && t.function.name);
+    return i === -1 ? TOOL_PRIORITY.length : i;
+  };
+  const annotated = oa.tools.map((t, idx) => ({ t, idx, rank: rank(t), tok: estimateTokens(JSON.stringify(t)) }));
+  annotated.sort((a, b) => a.rank - b.rank || a.idx - b.idx);
+
+  const kept = [];
+  let used = 0;
+  for (const e of annotated) {
+    if (used + e.tok <= budget) {
+      kept.push(e);
+      used += e.tok;
+    }
+  }
+  const dropped = oa.tools.length - kept.length;
+  kept.sort((a, b) => a.idx - b.idx); // restore original order among survivors
+  if (kept.length === 0) {
+    delete oa.tools;
+    delete oa.tool_choice;
+  } else {
+    oa.tools = kept.map((e) => e.t);
+    // If tool_choice forces a specific function that we just dropped, the retry
+    // would 400 ("tool not found"). Fall back to "auto" in that case.
+    const forced = oa.tool_choice && oa.tool_choice.function && oa.tool_choice.function.name;
+    if (forced && !oa.tools.some((t) => t.function && t.function.name === forced)) {
+      oa.tool_choice = "auto";
+    }
+  }
+  return dropped;
+}
+
+// ---------------------------------------------------------------------------
 // Response translation: OpenAI -> Anthropic (non-streaming)
 // ---------------------------------------------------------------------------
 
@@ -410,13 +491,43 @@ async function handleOpenAI(req, res) {
       return;
     }
     const wantStream = !!anthropicBody.stream;
-    const oaBody = Buffer.from(JSON.stringify(anthropicToOpenAIRequest(anthropicBody)));
-    const upstream = await upstreamRequest(
-      "POST",
-      `${TARGET}/v1/chat/completions`,
-      { authorization: auth, "content-type": "application/json", "content-length": Buffer.byteLength(oaBody) },
-      oaBody,
-    );
+    const oa = anthropicToOpenAIRequest(anthropicBody);
+    const send = (body) => {
+      const buf = Buffer.from(JSON.stringify(body));
+      return upstreamRequest(
+        "POST",
+        `${TARGET}/v1/chat/completions`,
+        { authorization: auth, "content-type": "application/json", "content-length": Buffer.byteLength(buf) },
+        buf,
+      );
+    };
+    let upstream = await send(oa);
+
+    // Adaptive tool trim: if the model rejects the request for exceeding its
+    // context window, drop lowest-priority tools to fit and retry ONCE. Only
+    // fires on the error, so large-context models are never trimmed. Disable
+    // with LLM_GATEWAY_NO_TOOL_TRIM=1.
+    if (
+      (upstream.statusCode === 400 || upstream.statusCode === 413 || upstream.statusCode === 422) &&
+      process.env.LLM_GATEWAY_NO_TOOL_TRIM !== "1" &&
+      Array.isArray(oa.tools) && oa.tools.length > 0
+    ) {
+      const errText = (await readAll(upstream)).toString("utf8");
+      const limit = parseContextLimit(errText);
+      const dropped = limit ? trimOpenAIToolsToFit(oa, limit) : 0;
+      if (dropped > 0) {
+        console.error(`[llm-gateway] context limit ${limit}: dropped ${dropped} tool(s) to fit, retrying`);
+        upstream = await send(oa);
+      } else {
+        // Not a context error, or nothing left to trim — surface as-is,
+        // preserving the upstream status + content-type.
+        res.writeHead(upstream.statusCode, {
+          "content-type": upstream.headers["content-type"] || "application/json",
+        });
+        res.end(errText);
+        return;
+      }
+    }
 
     if (upstream.statusCode >= 400) {
       // surface the upstream error body as-is (helps debugging in the UI)
@@ -563,6 +674,9 @@ module.exports = {
   systemToText,
   translateToolChoice,
   mapFinishReason,
+  estimateTokens,
+  parseContextLimit,
+  trimOpenAIToolsToFit,
 };
 
 if (require.main === module) startServer();
