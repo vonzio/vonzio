@@ -659,6 +659,13 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS base_url TEXT`);
     },
   },
+  {
+    version: 24,
+    description: "Add workspaces.api_key_id_override: per-conversation key override (cross-key model selection); null = profile key",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS api_key_id_override TEXT`);
+    },
+  },
 ];
 
 /**

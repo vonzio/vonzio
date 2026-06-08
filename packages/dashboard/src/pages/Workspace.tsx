@@ -62,6 +62,8 @@ export function Workspace() {
   // on turn one. Cleared whenever the profile changes (a model only makes
   // sense relative to a profile's API key / provider).
   const [pendingModelOverride, setPendingModelOverride] = useState<string | null>(null);
+  // Paired key override for the pre-workspace pick (cross-key model selection).
+  const [pendingKeyOverride, setPendingKeyOverride] = useState<string | null>(null);
   const entitlements = useEntitlements();
   const composerSlots = getComposerSlots().filter(
     (s) => !s.entitlement || entitlements.includes(s.entitlement),
@@ -481,6 +483,7 @@ export function Workspace() {
     setPanelTab("preview");
     setSelectedProfileId(defaultProfileId);
     setPendingModelOverride(null);
+    setPendingKeyOverride(null);
     navigate("/", { replace: true });
     // Auto-focus the input after render
     setTimeout(() => inputRef.current?.focus(), 100);
@@ -518,14 +521,15 @@ export function Workspace() {
       // Critical: AWAIT the update so the override is persisted before the
       // first turn fires — without await, the first chat.send() races and
       // may dispatch with the profile default instead of the user's pick.
-      if (pendingModelOverride !== null) {
+      if (pendingModelOverride !== null || pendingKeyOverride !== null) {
         try {
-          await update(sessionId, { model_override: pendingModelOverride });
+          await update(sessionId, { model_override: pendingModelOverride, api_key_id_override: pendingKeyOverride });
         } catch {
           // Persistence failure is non-fatal — the worst case is the first
           // turn uses the profile default. We still want to send.
         }
         setPendingModelOverride(null);
+        setPendingKeyOverride(null);
       }
 
       setTimeout(() => {
@@ -700,6 +704,7 @@ export function Workspace() {
                             // profile's API key/provider — switching profile
                             // discards any in-flight model pick.
                             setPendingModelOverride(null);
+                            setPendingKeyOverride(null);
                           }}
                         />
                       )}
@@ -968,7 +973,7 @@ export function Workspace() {
                     >
                       {activeProfile?.id && (
                         <ModelPicker
-                          profileId={activeProfile.id}
+                          profileApiKeyId={activeProfile.api_key_id ?? null}
                           profileDefaultModel={activeProfile.model ?? null}
                           // Pre-workspace: show the pending pick if any (else
                           // the profile default). Post-workspace: persisted
@@ -979,14 +984,20 @@ export function Workspace() {
                               ? activeWorkspace?.model_override ?? null
                               : pendingModelOverride
                           }
-                          onChange={(model) => {
+                          apiKeyIdOverride={
+                            activeWorkspaceId
+                              ? activeWorkspace?.api_key_id_override ?? null
+                              : pendingKeyOverride
+                          }
+                          onChange={(model, apiKeyId) => {
                             if (activeWorkspaceId) {
-                              update(activeWorkspaceId, { model_override: model });
+                              update(activeWorkspaceId, { model_override: model, api_key_id_override: apiKeyId });
                             } else {
                               // Stashed; applied in handleSend() right after
                               // the workspace is created so the first turn
                               // honors the user's choice.
                               setPendingModelOverride(model);
+                              setPendingKeyOverride(apiKeyId);
                             }
                           }}
                         />

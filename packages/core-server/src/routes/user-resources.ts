@@ -240,11 +240,8 @@ export const userResourceRoutes = fp(
 
       // Fall back to the stored secret when the key field is masked/blank.
       if (!keyToTest && id) {
-        // Use the same visibility as the by-key models route (own + admin +
-        // shared/org-granted) — an inline owner-only check would 404 on shared
-        // keys the user is legitimately allowed to use.
-        const visible = await apiKeyService.list(request.user!.id, request.user!.role);
-        if (!visible.some((k) => k.id === id)) {
+        // Same visibility as the by-key model routes (own + admin + shared/org).
+        if (!(await apiKeyService.isAccessible(id, request.user!.id, request.user!.role))) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "API key not found"));
         }
         const stored = await apiKeyService.getWithSecrets(id);

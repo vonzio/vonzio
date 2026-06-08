@@ -13,6 +13,8 @@ const gw = require("../../../../docker/llm-gateway.cjs") as {
   openAIToAnthropicResponse: (b: unknown, m: string) => any;
   makeStreamTranslator: (m: string) => { push: (c: unknown) => string[]; end: () => string[] };
   mapFinishReason: (r: string | null) => string;
+  parseContextLimit: (t: string) => number | null;
+  trimOpenAIToolsToFit: (oa: any, limit: number) => number;
 };
 
 /** Parse the gateway's Anthropic SSE strings into {event, data} objects. */
@@ -175,5 +177,64 @@ describe("llm-gateway streaming translation (OpenAI SSE -> Anthropic SSE)", () =
     expect(jsonDelta?.data.delta.partial_json).toBe('{"a":1}');
     const msgDelta = events.find((e) => e.event === "message_delta");
     expect(msgDelta?.data.delta.stop_reason).toBe("tool_use");
+  });
+});
+
+describe("llm-gateway adaptive tool trimming", () => {
+  it("parseContextLimit reads the model's limit (or null for non-context errors)", () => {
+    expect(gw.parseContextLimit("This model's maximum context length is 8192 tokens. However...")).toBe(8192);
+    expect(gw.parseContextLimit('{"code":"context_length_exceeded"}')).toBe(8192); // fallback
+    expect(gw.parseContextLimit('{"error":"Incorrect API key provided"}')).toBeNull();
+    expect(gw.parseContextLimit("")).toBeNull();
+  });
+
+  it("trimOpenAIToolsToFit keeps essential tools first and drops the long tail to fit", () => {
+    // 30 fat tools (~ a few hundred tokens each via a long description).
+    const desc = "x".repeat(800);
+    const mk = (name: string) => ({ type: "function", function: { name, description: desc, parameters: { type: "object", properties: {} } } });
+    const oa: any = {
+      model: "small",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [
+        ...["mcp__a", "mcp__b", "mcp__c"].map(mk), // unknown/MCP — dropped first
+        mk("Bash"), mk("Read"), mk("Write"), mk("Edit"), mk("Grep"),
+      ],
+    };
+    const before = oa.tools.length;
+    const dropped = gw.trimOpenAIToolsToFit(oa, 1200); // tiny budget
+    expect(dropped).toBeGreaterThan(0);
+    const kept = (oa.tools ?? []).map((t: any) => t.function.name);
+    // Whatever survived must be from the essential set, not the MCP tail.
+    for (const name of kept) expect(name).not.toMatch(/^mcp__/);
+    expect(before - kept.length).toBe(dropped);
+  });
+
+  it("trimOpenAIToolsToFit drops all tools (and tool_choice) when nothing fits", () => {
+    const oa: any = {
+      messages: [{ role: "user", content: "x".repeat(40000) }], // huge prompt
+      tools: [{ type: "function", function: { name: "Bash", description: "y".repeat(2000), parameters: {} } }],
+      tool_choice: "auto",
+    };
+    const dropped = gw.trimOpenAIToolsToFit(oa, 8192);
+    expect(dropped).toBe(1);
+    expect(oa.tools).toBeUndefined();
+    expect(oa.tool_choice).toBeUndefined();
+  });
+
+  it("resets a forced tool_choice to auto when that tool is trimmed away", () => {
+    const oa: any = {
+      messages: [{ role: "user", content: "hi" }],
+      tools: [
+        { type: "function", function: { name: "Bash", description: "run a command", parameters: {} } }, // small, kept
+        { type: "function", function: { name: "mcp__rare", description: "z".repeat(4000), parameters: {} } }, // fat, dropped
+      ],
+      tool_choice: { type: "function", function: { name: "mcp__rare" } },
+    };
+    // Budget fits the small Bash tool but not the fat mcp__rare one.
+    gw.trimOpenAIToolsToFit(oa, 1024 + 10 + 120);
+    const names = (oa.tools ?? []).map((t: any) => t.function.name);
+    expect(names).toContain("Bash");
+    expect(names).not.toContain("mcp__rare");
+    expect(oa.tool_choice).toBe("auto");
   });
 });

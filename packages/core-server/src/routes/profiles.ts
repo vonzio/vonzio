@@ -271,8 +271,7 @@ export const profileRoutes = fp(
         },
       },
       async (request, reply) => {
-        const visible = await apiKeyService.list(request.user!.id, request.user!.role);
-        if (!visible.some((k) => k.id === request.params.id)) {
+        if (!(await apiKeyService.isAccessible(request.params.id, request.user!.id, request.user!.role))) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "API key not found"));
         }
         const result = await modelListService.listForApiKey(request.params.id);
@@ -283,6 +282,47 @@ export const profileRoutes = fp(
           ));
         }
         return { models: result.models };
+      },
+    );
+
+    // All models the user can reach, grouped by each of their keys. Powers the
+    // workspace composer's cross-key picker (pick a model from any provider,
+    // not just the agent's attached key). Each group's models come from the
+    // shared per-key cache; a key whose provider is unreachable returns an
+    // empty list + error rather than failing the whole response.
+    server.get(
+      "/v1/me/models",
+      {
+        schema: {
+          summary: "List models grouped by each of the caller's API keys",
+          description:
+            "Returns `{ keys: [{ key_id, key_name, provider, models[], error? }] }` across every key the user " +
+            "can use (own + shared/org). Used by the workspace model picker to select across providers.",
+          tags: ["Profiles"],
+        },
+      },
+      async (request) => {
+        const keys = await apiKeyService.list(request.user!.id, request.user!.role);
+        // Per-key fetches each carry their own ~10s upstream timeout. Cap the
+        // aggregate so one slow/unreachable provider can't stall the picker —
+        // a laggard returns empty with an error and the reachable providers
+        // render immediately (cached results return instantly on next open).
+        const SOFT_TIMEOUT_MS = 3000;
+        const groups = await Promise.all(
+          keys.map(async (k) => {
+            const base = { key_id: k.id, key_name: k.name, provider: k.provider };
+            const result = await Promise.race([
+              modelListService.listForApiKey(k.id),
+              new Promise<{ ok: false; error: string }>((resolve) =>
+                setTimeout(() => resolve({ ok: false, error: "Timed out listing models" }), SOFT_TIMEOUT_MS),
+              ),
+            ]);
+            return result.ok
+              ? { ...base, models: result.models, error: undefined }
+              : { ...base, models: [], error: result.error };
+          }),
+        );
+        return { keys: groups };
       },
     );
   },

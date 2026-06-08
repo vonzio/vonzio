@@ -171,10 +171,24 @@ export class ApiKeyService {
     await this.db.update(schema.profiles)
       .set({ api_key_id: null })
       .where(eq(schema.profiles.api_key_id, id));
+    // Clear any per-conversation key overrides pinned to this key so workspaces
+    // fall back cleanly to their profile's key (resolve also guards this).
+    await this.db.update(schema.workspaces)
+      .set({ api_key_id_override: null })
+      .where(eq(schema.workspaces.api_key_id_override, id));
     // Junction table rows are cascade-deleted by FK constraint
     const result = await this.db.delete(schema.anthropicKeys).where(eq(schema.anthropicKeys.id, id)).returning();
     this.onKeyChanged?.(id);
     return { deleted: result.length > 0 };
+  }
+
+  /** Whether `id` is a key the user may use — own + admin + shared/org-granted,
+   *  the same visibility as list(). Centralizes the access check that routes
+   *  gating a key id (model listing, validate, per-conversation key override)
+   *  would otherwise each inline. */
+  async isAccessible(id: string, userId: string, userRole?: string): Promise<boolean> {
+    const visible = await this.list(userId, userRole);
+    return visible.some((k) => k.id === id);
   }
 
   /** Get the first API key accessible to a user — for auto-assignment */
