@@ -89,6 +89,8 @@ export const anthropicKeys = pgTable(
     provider: text("provider", { enum: [...PROFILE_PROVIDERS] }).notNull(),
     encrypted_api_key: text("encrypted_api_key"),
     encrypted_auth_token: text("encrypted_auth_token"),
+    // OpenAI-compatible endpoint override (non-secret); null = server default.
+    base_url: text("base_url"),
     created_at: text("created_at").notNull(),
     last_used_at: text("last_used_at"),
     org_id: text("org_id"),

@@ -31,7 +31,7 @@
 
 vonzio runs agents in fresh Docker containers — one per conversation. You bring a credential for any supported model provider; vonzio brings the orchestration: a chat UI, a workspace for files, a session that remembers, MCP tools, integrations, and an embeddable chat widget.
 
-- **Provider-agnostic** — Anthropic (Claude Sonnet/Opus/Haiku), Anthropic subscription tokens, Ollama Cloud, and any OpenAI-compatible endpoint. Pick per profile or per workspace.
+- **Provider-agnostic** — Anthropic (Claude Sonnet/Opus/Haiku), Ollama Cloud (or any Anthropic-compatible gateway), and OpenAI / any OpenAI-compatible endpoint (translated in-container by a built-in gateway). Pick per profile or per workspace.
 - **Containerized sessions** — each conversation runs in its own Docker container with a bind-mounted workspace
 - **Chat surface + widget** — full dashboard for direct use, plus a `/chat` embed you can drop into any page
 - **Integrations** — GitHub, GitLab, Bitbucket, Slack, Telegram, Gmail; bank data (Teller) and more via external plugins

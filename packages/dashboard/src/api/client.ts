@@ -273,11 +273,17 @@ export function deleteProfile(id: string): Promise<{ status: string }> {
 export interface ProfileModel {
   id: string;
   display_name: string | null;
-  provider: "anthropic" | "ollama";
+  provider: "anthropic" | "ollama" | "openai";
 }
 
 export function fetchProfileModels(profileId: string): Promise<{ models: ProfileModel[] }> {
   return request(`/profiles/${encodeURIComponent(profileId)}/models`);
+}
+
+/** Models for a specific API key — lets the agent editor refresh the picker
+ *  when the key dropdown changes before the profile is saved. */
+export function fetchModelsForApiKey(apiKeyId: string): Promise<{ models: ProfileModel[] }> {
+  return request(`/anthropic-keys/${encodeURIComponent(apiKeyId)}/models`);
 }
 
 // --- User-facing Tools, Skills, Subagents, Git Providers ---
@@ -427,6 +433,7 @@ export interface UserAnthropicKey {
   name: string;
   provider: string;
   api_key?: string;
+  base_url?: string | null;
   allowed_user_ids: string[];
   created_at: string;
   last_used_at?: string;
@@ -437,13 +444,22 @@ export function fetchUserAnthropicKeys(): Promise<UserAnthropicKey[]> {
 }
 
 export function createUserAnthropicKey(body: {
-  name: string; provider: string; api_key?: string;
+  name: string; provider: string; api_key?: string; base_url?: string;
 }): Promise<UserAnthropicKey> {
   return request("/anthropic-keys", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function updateUserAnthropicKey(id: string, body: Record<string, unknown>): Promise<UserAnthropicKey> {
   return request(`/anthropic-keys/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+/** Validate a credential without saving — for the dialog's "Test connection"
+ *  button. Pass raw entered values, and/or an `id` to fall back to the stored
+ *  secret when the key field is left masked. */
+export function validateUserAnthropicKey(body: {
+  provider?: string; api_key?: string; base_url?: string | null; id?: string;
+}): Promise<{ valid: boolean; error?: string }> {
+  return request("/anthropic-keys/validate", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function deleteUserAnthropicKey(id: string): Promise<{ status: string }> {

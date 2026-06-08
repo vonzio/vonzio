@@ -27,12 +27,18 @@
  * entry shows; user can pin a specific version after the first save.
  */
 import { useEffect, useRef, useState } from "react";
-import { fetchProfileModels, type ProfileModel } from "../api/client.js";
+import { fetchProfileModels, fetchModelsForApiKey, type ProfileModel } from "../api/client.js";
 import { Icon } from "../brand/components.js";
 
 interface Props {
   /** Existing profile's id. Omit when creating a new profile (live list unavailable). */
   profileId?: string | null;
+  /**
+   * Currently-selected API key id. When provided, the live list is fetched
+   * for THIS key and refreshes whenever it changes — so the editor's model
+   * picker reflects an unsaved key switch (takes precedence over profileId).
+   */
+  apiKeyId?: string | null;
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
@@ -56,6 +62,7 @@ const LEGACY_ALIAS_LABEL: Record<string, string> = {
 
 export function ProfileModelSelect({
   profileId,
+  apiKeyId,
   value,
   onChange,
   disabled,
@@ -77,7 +84,15 @@ export function ProfileModelSelect({
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!profileId) {
+    // Prefer the selected key (refreshes live on key change, works before the
+    // profile is saved); fall back to the profile-scoped fetch (used where no
+    // key id is threaded, incl. the SaaS org editor's `fetcher` override).
+    const load = apiKeyId
+      ? () => fetchModelsForApiKey(apiKeyId)
+      : profileId
+        ? () => (fetcher ?? fetchProfileModels)(profileId)
+        : null;
+    if (!load) {
       setModels([]);
       setFetchError(false);
       return;
@@ -85,8 +100,7 @@ export function ProfileModelSelect({
     let cancelled = false;
     setLoading(true);
     setFetchError(false);
-    const doFetch = fetcher ?? fetchProfileModels;
-    doFetch(profileId)
+    load()
       .then((res) => {
         if (!cancelled) setModels(res.models ?? []);
       })
@@ -102,7 +116,13 @@ export function ProfileModelSelect({
     return () => {
       cancelled = true;
     };
-  }, [profileId]);
+    // Intentionally NOT keyed on `fetcher`: callers (incl. the SaaS org editor)
+    // pass an inline arrow whose identity changes every render — including it
+    // would refetch the model list on every parent render. `fetcher` only
+    // varies the endpoint, which is stable per mount, so the profile/key deps
+    // are the real triggers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, apiKeyId]);
 
   useEffect(() => {
     if (!open) return;
@@ -256,7 +276,7 @@ export function ProfileModelSelect({
             >
               Loading models…
             </div>
-          ) : models.length === 0 && !profileId ? (
+          ) : models.length === 0 && !profileId && !apiKeyId ? (
             <div
               style={{
                 padding: "10px 12px",

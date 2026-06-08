@@ -10,13 +10,14 @@ import {
 } from "../../../api/admin.js";
 import {
   fetchUserAnthropicKeys, createUserAnthropicKey, updateUserAnthropicKey, deleteUserAnthropicKey,
+  validateUserAnthropicKey,
 } from "../../../api/client.js";
 import {
   Button, Field, Input, Select, Checkbox, Toggle,
   Badge, Modal, EmptyState, DataTable,
   type DataColumn, type SelectOption,
 } from "../../../brand/components.js";
-import { formatDate, hasFlag } from "../../../lib/utils.js";
+import { formatDate } from "../../../lib/utils.js";
 import { authClient } from "../../../lib/auth-client.js";
 import { useUser } from "../../../contexts/UserContext.js";
 import { ErrorBanner, SubLabel } from "./_shared.js";
@@ -28,7 +29,6 @@ import { ErrorBanner, SubLabel } from "./_shared.js";
 export function AnthropicKeySection() {
   const currentUser = useUser();
   const isAdmin = currentUser.role === "admin";
-  const ollamaEnabled = (window as { __VONZIO_OLLAMA_ENABLED?: boolean }).__VONZIO_OLLAMA_ENABLED && hasFlag(currentUser.feature_flags, "ollama");
   const { data: keys, loading, refetch } = useApi<AnthropicKeyInfo[]>(() => fetchUserAnthropicKeys() as Promise<AnthropicKeyInfo[]>, []);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -36,8 +36,16 @@ export function AnthropicKeySection() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<AnthropicKeyInfo | null>(null);
   const [keyName, setKeyName] = useState("");
-  const [provider, setProvider] = useState<"api_key" | "ollama">("api_key");
+  const [provider, setProvider] = useState<"api_key" | "ollama" | "openai">("api_key");
   const [apiKey, setApiKey] = useState("");
+  // OpenAI-compatible endpoint override; only sent/shown for the openai
+  // provider, and tucked behind an "Advanced" disclosure so the common case
+  // (OpenAI itself) stays clean. Auto-expanded when editing a key that has one.
+  const [baseUrl, setBaseUrl] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  // "Test connection" result for the add/edit dialog (validate without saving).
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ valid: boolean; error?: string } | null>(null);
   const [isSharedKey, setIsSharedKey] = useState(false);
   const [sharedWith, setSharedWith] = useState<string[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -58,13 +66,32 @@ export function AnthropicKeySection() {
     }).catch(() => {});
   }, [isAdmin]);
 
-  const resetForm = () => { setKeyName(""); setProvider("api_key"); setApiKey(""); setIsSharedKey(false); setShowForm(false); };
+  const resetForm = () => { setKeyName(""); setProvider("api_key"); setApiKey(""); setBaseUrl(""); setShowAdvanced(false); setTestResult(null); setIsSharedKey(false); setShowForm(false); };
 
   const openEditor = (k: AnthropicKeyInfo) => {
     setEditingKey(k); setKeyName(k.name); setProvider(k.provider as typeof provider);
-    setApiKey(""); setSharedWith(k.allowed_user_ids ?? []); setEditorOpen(true);
+    setApiKey(""); setBaseUrl(k.base_url ?? ""); setShowAdvanced(!!k.base_url); setTestResult(null); setSharedWith(k.allowed_user_ids ?? []); setEditorOpen(true);
   };
-  const closeEditor = () => { setEditorOpen(false); setEditingKey(null); };
+  const closeEditor = () => { setEditorOpen(false); setEditingKey(null); setTestResult(null); };
+
+  // Validate the credential without saving. Sends the entered values plus the
+  // editing id (so a masked key falls back to the stored secret server-side).
+  const handleTest = async () => {
+    setTesting(true); setTestResult(null);
+    try {
+      const result = await validateUserAnthropicKey({
+        provider,
+        api_key: apiKey || undefined,
+        base_url: provider === "openai" ? (baseUrl.trim() || null) : undefined,
+        id: editingKey?.id,
+      });
+      setTestResult(result);
+    } catch (e) {
+      setTestResult({ valid: false, error: e instanceof Error ? e.message : "Test failed" });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleCreate = async () => {
     setError("");
@@ -73,6 +100,7 @@ export function AnthropicKeySection() {
         name: keyName, provider,
         api_key: apiKey,
       };
+      if (provider === "openai") body.base_url = baseUrl.trim() || null;
       if (isAdmin) {
         body.shared = isSharedKey;
         await createAnthropicKey(body as Parameters<typeof createAnthropicKey>[0]);
@@ -91,6 +119,7 @@ export function AnthropicKeySection() {
       if (apiKey && apiKey !== "••••••••") {
         body.api_key = apiKey;
       }
+      if (editingKey.provider === "openai") body.base_url = baseUrl.trim() || null;
       if (!editingKey.user_id) body.allowed_user_ids = sharedWith;
       if (isAdmin) await updateAnthropicKey(editingKey.id, body as Parameters<typeof updateAnthropicKey>[1]);
       else await updateUserAnthropicKey(editingKey.id, body as Record<string, unknown>);
@@ -189,7 +218,8 @@ export function AnthropicKeySection() {
 
   const providerOpts: SelectOption[] = [
     { value: "api_key", label: "Anthropic API key" },
-    ...(ollamaEnabled ? [{ value: "ollama", label: "Ollama Cloud" }] : []),
+    { value: "openai", label: "OpenAI (or OpenAI-compatible)" },
+    { value: "ollama", label: "Ollama Cloud" },
   ];
 
   return (
@@ -234,14 +264,37 @@ export function AnthropicKeySection() {
           <Field label="Provider">
             <Select options={providerOpts} value={provider} onChange={(v) => setProvider(v as typeof provider)} />
           </Field>
-          <Field label={provider === "ollama" ? "Ollama API key" : provider === "api_key" ? "Anthropic API key" : "Auth token"}>
+          <Field label={provider === "ollama" ? "Ollama API key" : provider === "openai" ? "OpenAI API key" : provider === "api_key" ? "Anthropic API key" : "Auth token"}>
             <Input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={provider === "ollama" ? "Enter Ollama key" : provider === "api_key" ? "sk-ant-api03-…" : "Enter token"}
+              placeholder={provider === "ollama" ? "Enter Ollama key" : provider === "openai" ? "sk-…" : provider === "api_key" ? "sk-ant-api03-…" : "Enter token"}
             />
           </Field>
+          {provider === "openai" && (showAdvanced ? (
+            <Field label="Base URL" hint="OpenAI-compatible endpoint (OpenRouter, Azure, vLLM, LM Studio). Leave blank for OpenAI.">
+              <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com" />
+            </Field>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(true)}
+              style={{ alignSelf: "flex-start", background: "none", border: 0, color: "var(--vz-muted)", fontSize: 12.5, cursor: "pointer", padding: 0, fontFamily: "inherit" }}
+            >
+              + Advanced — use a custom OpenAI-compatible endpoint
+            </button>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Button variant="ghost" size="sm" onClick={handleTest} disabled={testing || (!editingKey && !apiKey.trim())}>
+              {testing ? "Testing…" : "Test connection"}
+            </Button>
+            {testResult && (
+              <span style={{ fontSize: 12.5, color: testResult.valid ? "var(--vz-ok, #2faa6a)" : "var(--vz-fail)" }}>
+                {testResult.valid ? "✓ Valid — provider reachable" : `✗ ${testResult.error ?? "Invalid key"}`}
+              </span>
+            )}
+          </div>
           {isAdmin && (
             <Toggle checked={isSharedKey} onChange={setIsSharedKey}>
               Shared key — available to users you grant access to
@@ -279,12 +332,35 @@ export function AnthropicKeySection() {
           <div>
             <SubLabel>Provider</SubLabel>
             <span style={{ fontSize: 13, color: "var(--vz-ink-3)" }}>
-              {editingKey?.provider === "ollama" ? "Ollama Cloud" : "Anthropic API key"}
+              {editingKey?.provider === "ollama" ? "Ollama Cloud" : editingKey?.provider === "openai" ? "OpenAI (or OpenAI-compatible)" : "Anthropic API key"}
             </span>
           </div>
-          <Field label={editingKey?.provider === "ollama" ? "Ollama API key" : "API key"} hint="Leave blank to keep the current value.">
+          <Field label={editingKey?.provider === "ollama" ? "Ollama API key" : editingKey?.provider === "openai" ? "OpenAI API key" : "API key"} hint="Leave blank to keep the current value.">
             <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="••••••••" />
           </Field>
+          {editingKey?.provider === "openai" && (showAdvanced ? (
+            <Field label="Base URL" hint="OpenAI-compatible endpoint (OpenRouter, Azure, vLLM, LM Studio). Leave blank for OpenAI.">
+              <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com" />
+            </Field>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(true)}
+              style={{ alignSelf: "flex-start", background: "none", border: 0, color: "var(--vz-muted)", fontSize: 12.5, cursor: "pointer", padding: 0, fontFamily: "inherit" }}
+            >
+              + Advanced — use a custom OpenAI-compatible endpoint
+            </button>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Button variant="ghost" size="sm" onClick={handleTest} disabled={testing}>
+              {testing ? "Testing…" : "Test connection"}
+            </Button>
+            {testResult && (
+              <span style={{ fontSize: 12.5, color: testResult.valid ? "var(--vz-ok, #2faa6a)" : "var(--vz-fail)" }}>
+                {testResult.valid ? "✓ Valid — provider reachable" : `✗ ${testResult.error ?? "Invalid key"}`}
+              </span>
+            )}
+          </div>
           {isAdmin && editingKey && editingKey.user_id && (
             <div>
               <SubLabel>Owner</SubLabel>

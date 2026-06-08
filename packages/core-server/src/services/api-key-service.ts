@@ -10,14 +10,24 @@ export interface CreateApiKeyInput {
   name: string;
   provider: ProfileProvider;
   api_key?: string;
+  /** OpenAI-compatible endpoint override (openai provider only). */
+  base_url?: string | null;
   allowed_user_ids?: string[];
 }
 
 export class ApiKeyService {
+  private onKeyChanged?: (id: string) => void;
+
   constructor(
     private db: DrizzleDB,
     private encryptionKey: string,
   ) {}
+
+  /** Register a hook fired when a key's stored config changes (update/delete)
+   *  so dependent caches (e.g. the model-list cache) can invalidate. */
+  setKeyChangeListener(fn: (id: string) => void): void {
+    this.onKeyChanged = fn;
+  }
 
   async create(input: CreateApiKeyInput, userId?: string): Promise<AnthropicKey> {
     const id = `apk_${nanoid()}`;
@@ -33,6 +43,7 @@ export class ApiKeyService {
       provider: input.provider,
       encrypted_api_key: input.api_key ? encrypt(input.api_key, this.encryptionKey) : null,
       encrypted_auth_token: null,
+      base_url: input.base_url || null,
       created_at: now,
       last_used_at: null,
     };
@@ -119,6 +130,7 @@ export class ApiKeyService {
     if (input.api_key !== undefined && input.api_key !== "••••••••") {
       updates.encrypted_api_key = input.api_key ? encrypt(input.api_key, this.encryptionKey) : null;
     }
+    if (input.base_url !== undefined) updates.base_url = (typeof input.base_url === "string" ? input.base_url.trim() : input.base_url) || null;
 
     if (Object.keys(updates).length > 0) {
       await this.db.update(schema.anthropicKeys).set(updates).where(eq(schema.anthropicKeys.id, id));
@@ -150,6 +162,7 @@ export class ApiKeyService {
       }
     }
 
+    this.onKeyChanged?.(id);
     return this.get(id);
   }
 
@@ -160,6 +173,7 @@ export class ApiKeyService {
       .where(eq(schema.profiles.api_key_id, id));
     // Junction table rows are cascade-deleted by FK constraint
     const result = await this.db.delete(schema.anthropicKeys).where(eq(schema.anthropicKeys.id, id)).returning();
+    this.onKeyChanged?.(id);
     return { deleted: result.length > 0 };
   }
 
@@ -193,6 +207,10 @@ export class ApiKeyService {
       api_key: redact
         ? (row.encrypted_api_key ? "••••••••" : undefined)
         : (row.encrypted_api_key ? decrypt(row.encrypted_api_key, this.encryptionKey) : undefined),
+      // base_url is non-secret config — returned in both redacted and
+      // with-secrets reads so the editor can show it and the orchestrator
+      // can resolve it.
+      base_url: row.base_url ?? null,
       allowed_user_ids: allowedUserIds,
       created_at: row.created_at,
       last_used_at: row.last_used_at ?? undefined,

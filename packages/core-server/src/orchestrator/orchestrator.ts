@@ -799,6 +799,10 @@ export class Orchestrator extends EventEmitter {
     if (env?.OLLAMA_TARGET_URL) {
       await this.runSetupCommands(containerId, ["node /app/ollama-proxy.cjs &\nsleep 0.3"], env);
     }
+    // Start the OpenAI translating gateway if this profile uses an OpenAI(-compatible) key.
+    if (env?.LLM_GATEWAY_MODE) {
+      await this.runSetupCommands(containerId, ["node /app/llm-gateway.cjs &\nsleep 0.3"], env);
+    }
 
     // For session mode, look up the SDK's session ID from prior runs.
     // On first turn: don't pass session_id (SDK generates its own UUID).
@@ -1310,7 +1314,7 @@ export class Orchestrator extends EventEmitter {
     return { serveraddress: reg.url, username: reg.username, password: reg.password };
   }
 
-  private async buildEnvFromProfile(profile: { resolved_api_key?: string; resolved_provider?: string; git_provider_id?: string; git_provider_ids?: string[]; id: string; user_id?: string | null }): Promise<Record<string, string>> {
+  private async buildEnvFromProfile(profile: { resolved_api_key?: string; resolved_provider?: string; resolved_base_url?: string; git_provider_id?: string; git_provider_ids?: string[]; id: string; user_id?: string | null }): Promise<Record<string, string>> {
     // Inject the secrets granted to this profile — system vars (API key,
     // git tokens) override below. Per-agent scoping (feature #17): a secret
     // with scope='all' goes to every profile; scope='agents' only to those
@@ -1325,6 +1329,19 @@ export class Orchestrator extends EventEmitter {
       env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
       const { OLLAMA_BASE_URL } = await import("../services/ollama-service.js");
       env.OLLAMA_TARGET_URL = OLLAMA_BASE_URL;
+    } else if (profile.resolved_provider === "openai" && profile.resolved_api_key) {
+      // The Claude Agent SDK still speaks the Anthropic Messages API; the
+      // in-container llm-gateway translates it to OpenAI Chat Completions and
+      // forwards to LLM_GATEWAY_TARGET_URL.
+      env.ANTHROPIC_API_KEY = profile.resolved_api_key;
+      env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
+      env.LLM_GATEWAY_MODE = "openai";
+      // Per-key endpoint override (OpenRouter/Azure/vLLM/LM Studio); falls
+      // back to the server-wide OPENAI_BASE_URL when the key has none.
+      const { OPENAI_BASE_URL, normalizeOpenAIBaseUrl } = await import("../services/openai-service.js");
+      env.LLM_GATEWAY_TARGET_URL = profile.resolved_base_url
+        ? normalizeOpenAIBaseUrl(profile.resolved_base_url)
+        : OPENAI_BASE_URL;
     } else if (profile.resolved_api_key) {
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
     } else {
