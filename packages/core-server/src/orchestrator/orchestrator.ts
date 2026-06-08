@@ -800,8 +800,26 @@ export class Orchestrator extends EventEmitter {
       await this.runSetupCommands(containerId, ["node /app/ollama-proxy.cjs &\nsleep 0.3"], env);
     }
     // Start the OpenAI translating gateway if this profile uses an OpenAI(-compatible) key.
+    // The container is reused across turns and a cross-key switch changes
+    // LLM_GATEWAY_TARGET_URL — so restart the gateway when the upstream changed
+    // (or it died). Otherwise the stale gateway (bound to :11434; EADDRINUSE
+    // makes a naive re-start exit) keeps routing to the previous provider's
+    // endpoint. PID + target files avoid a procps dependency and skip needless
+    // restarts when the upstream is unchanged.
     if (env?.LLM_GATEWAY_MODE) {
-      await this.runSetupCommands(containerId, ["node /app/llm-gateway.cjs &\nsleep 0.3"], env);
+      await this.runSetupCommands(containerId, [
+        'NEW="$LLM_GATEWAY_TARGET_URL"\n' +
+        'if [ "$(cat /tmp/llm-gateway.target 2>/dev/null)" = "$NEW" ] && kill -0 "$(cat /tmp/llm-gateway.pid 2>/dev/null)" 2>/dev/null; then\n' +
+        "  :\n" +
+        "else\n" +
+        '  kill "$(cat /tmp/llm-gateway.pid 2>/dev/null)" 2>/dev/null\n' +
+        "  sleep 0.2\n" +
+        "  node /app/llm-gateway.cjs &\n" +
+        "  echo $! > /tmp/llm-gateway.pid\n" +
+        '  printf %s "$NEW" > /tmp/llm-gateway.target\n' +
+        "  sleep 0.3\n" +
+        "fi",
+      ], env);
     }
 
     // For session mode, look up the SDK's session ID from prior runs.
