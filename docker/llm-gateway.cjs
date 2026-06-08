@@ -241,6 +241,12 @@ function trimOpenAIToolsToFit(oa, contextLimit) {
     delete oa.tool_choice;
   } else {
     oa.tools = kept.map((e) => e.t);
+    // If tool_choice forces a specific function that we just dropped, the retry
+    // would 400 ("tool not found"). Fall back to "auto" in that case.
+    const forced = oa.tool_choice && oa.tool_choice.function && oa.tool_choice.function.name;
+    if (forced && !oa.tools.some((t) => t.function && t.function.name === forced)) {
+      oa.tool_choice = "auto";
+    }
   }
   return dropped;
 }
@@ -502,7 +508,7 @@ async function handleOpenAI(req, res) {
     // fires on the error, so large-context models are never trimmed. Disable
     // with LLM_GATEWAY_NO_TOOL_TRIM=1.
     if (
-      upstream.statusCode === 400 &&
+      (upstream.statusCode === 400 || upstream.statusCode === 413 || upstream.statusCode === 422) &&
       process.env.LLM_GATEWAY_NO_TOOL_TRIM !== "1" &&
       Array.isArray(oa.tools) && oa.tools.length > 0
     ) {
@@ -513,8 +519,11 @@ async function handleOpenAI(req, res) {
         console.error(`[llm-gateway] context limit ${limit}: dropped ${dropped} tool(s) to fit, retrying`);
         upstream = await send(oa);
       } else {
-        // Not a context error, or nothing left to trim — surface as-is.
-        res.writeHead(400, { "content-type": "application/json" });
+        // Not a context error, or nothing left to trim — surface as-is,
+        // preserving the upstream status + content-type.
+        res.writeHead(upstream.statusCode, {
+          "content-type": upstream.headers["content-type"] || "application/json",
+        });
         res.end(errText);
         return;
       }

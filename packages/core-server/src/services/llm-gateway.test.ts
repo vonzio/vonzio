@@ -220,4 +220,21 @@ describe("llm-gateway adaptive tool trimming", () => {
     expect(oa.tools).toBeUndefined();
     expect(oa.tool_choice).toBeUndefined();
   });
+
+  it("resets a forced tool_choice to auto when that tool is trimmed away", () => {
+    const oa: any = {
+      messages: [{ role: "user", content: "hi" }],
+      tools: [
+        { type: "function", function: { name: "Bash", description: "run a command", parameters: {} } }, // small, kept
+        { type: "function", function: { name: "mcp__rare", description: "z".repeat(4000), parameters: {} } }, // fat, dropped
+      ],
+      tool_choice: { type: "function", function: { name: "mcp__rare" } },
+    };
+    // Budget fits the small Bash tool but not the fat mcp__rare one.
+    gw.trimOpenAIToolsToFit(oa, 1024 + 10 + 120);
+    const names = (oa.tools ?? []).map((t: any) => t.function.name);
+    expect(names).toContain("Bash");
+    expect(names).not.toContain("mcp__rare");
+    expect(oa.tool_choice).toBe("auto");
+  });
 });
