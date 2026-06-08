@@ -202,26 +202,52 @@ function parseContextLimit(errText) {
   return null;
 }
 
-// Built-in tools kept first when trimming, most load-bearing for an agent.
-// Unknown/MCP tools sort after these (dropped first when over budget).
-const TOOL_PRIORITY = [
-  "Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS",
-  "TodoWrite", "Task", "WebFetch", "WebSearch", "NotebookEdit",
-];
+// Core built-in tools — the agent's "hands". Kept first when trimming and
+// ordered by load-bearingness. NOT an exhaustive built-in list: anything not
+// here and not an MCP tool is the droppable long tail (TodoWrite, Task, Web*,
+// NotebookEdit, …). MCP tools (mcp__*) are explicitly configured by the
+// operator, so they rank ABOVE that long tail (see `rank`).
+const TOOL_PRIORITY = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS"];
 
-// Drop lowest-priority tools from an OpenAI request so messages + tools fit the
-// model's context window. Mutates oa.tools; returns the number dropped.
+// Cap each tool description to this many chars before dropping whole tools —
+// most of the ~20k is verbose prose, and a capped description keeps the
+// capability while shrinking the schema.
+const MAX_TOOL_DESC = 600;
+
+// Make an OpenAI request fit the model's context window, least-destructive
+// first: (1) cap verbose tool descriptions, then (2) drop lowest-priority tools
+// if still over. Mutates oa. Returns { dropped, changed } — `changed` is true
+// whenever anything was modified (so the caller knows a retry is worthwhile,
+// even when no whole tool was dropped).
 function trimOpenAIToolsToFit(oa, contextLimit) {
-  if (!Array.isArray(oa.tools) || oa.tools.length === 0) return 0;
+  if (!Array.isArray(oa.tools) || oa.tools.length === 0) return { dropped: 0, changed: false };
   const msgTokens = estimateTokens(JSON.stringify(oa.messages || []));
   // Reserve headroom for the model's reply + estimation slop.
   const RESERVE = 1024;
-  let budget = contextLimit - msgTokens - RESERVE;
-  if (budget < 0) budget = 0;
+  const budget = Math.max(0, contextLimit - msgTokens - RESERVE);
 
+  // Pass 1 — cap descriptions. Often enough on its own, and keeps every tool.
+  let capped = false;
+  for (const t of oa.tools) {
+    const d = t.function && t.function.description;
+    if (typeof d === "string" && d.length > MAX_TOOL_DESC) {
+      t.function.description = d.slice(0, MAX_TOOL_DESC) + "…";
+      capped = true;
+    }
+  }
+  if (estimateTokens(JSON.stringify(oa.tools)) <= budget) {
+    return { dropped: 0, changed: capped };
+  }
+
+  // Pass 2 — drop lowest-priority tools. Priority tiers (lower = kept first):
+  //   0..N-1  core built-ins (TOOL_PRIORITY) — the agent's hands
+  //   N       MCP / operator-configured tools (mcp__*) — deliberate intent
+  //   N+1     everything else (generic built-in long tail) — dropped first
   const rank = (t) => {
-    const i = TOOL_PRIORITY.indexOf(t.function && t.function.name);
-    return i === -1 ? TOOL_PRIORITY.length : i;
+    const name = (t.function && t.function.name) || "";
+    const i = TOOL_PRIORITY.indexOf(name);
+    if (i !== -1) return i;
+    return name.startsWith("mcp__") ? TOOL_PRIORITY.length : TOOL_PRIORITY.length + 1;
   };
   const annotated = oa.tools.map((t, idx) => ({ t, idx, rank: rank(t), tok: estimateTokens(JSON.stringify(t)) }));
   annotated.sort((a, b) => a.rank - b.rank || a.idx - b.idx);
@@ -248,7 +274,7 @@ function trimOpenAIToolsToFit(oa, contextLimit) {
       oa.tool_choice = "auto";
     }
   }
-  return dropped;
+  return { dropped, changed: capped || dropped > 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -514,9 +540,9 @@ async function handleOpenAI(req, res) {
     ) {
       const errText = (await readAll(upstream)).toString("utf8");
       const limit = parseContextLimit(errText);
-      const dropped = limit ? trimOpenAIToolsToFit(oa, limit) : 0;
-      if (dropped > 0) {
-        console.error(`[llm-gateway] context limit ${limit}: dropped ${dropped} tool(s) to fit, retrying`);
+      const trim = limit ? trimOpenAIToolsToFit(oa, limit) : { dropped: 0, changed: false };
+      if (trim.changed) {
+        console.error(`[llm-gateway] context limit ${limit}: capped descriptions${trim.dropped ? ` + dropped ${trim.dropped} tool(s)` : ""} to fit, retrying`);
         upstream = await send(oa);
       } else {
         // Not a context error, or nothing left to trim — surface as-is,
