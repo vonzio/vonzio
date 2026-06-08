@@ -271,8 +271,7 @@ export const profileRoutes = fp(
         },
       },
       async (request, reply) => {
-        const visible = await apiKeyService.list(request.user!.id, request.user!.role);
-        if (!visible.some((k) => k.id === request.params.id)) {
+        if (!(await apiKeyService.isAccessible(request.params.id, request.user!.id, request.user!.role))) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "API key not found"));
         }
         const result = await modelListService.listForApiKey(request.params.id);
@@ -304,16 +303,23 @@ export const profileRoutes = fp(
       },
       async (request) => {
         const keys = await apiKeyService.list(request.user!.id, request.user!.role);
+        // Per-key fetches each carry their own ~10s upstream timeout. Cap the
+        // aggregate so one slow/unreachable provider can't stall the picker —
+        // a laggard returns empty with an error and the reachable providers
+        // render immediately (cached results return instantly on next open).
+        const SOFT_TIMEOUT_MS = 3000;
         const groups = await Promise.all(
           keys.map(async (k) => {
-            const result = await modelListService.listForApiKey(k.id);
-            return {
-              key_id: k.id,
-              key_name: k.name,
-              provider: k.provider,
-              models: result.ok ? result.models : [],
-              error: result.ok ? undefined : result.error,
-            };
+            const base = { key_id: k.id, key_name: k.name, provider: k.provider };
+            const result = await Promise.race([
+              modelListService.listForApiKey(k.id),
+              new Promise<{ ok: false; error: string }>((resolve) =>
+                setTimeout(() => resolve({ ok: false, error: "Timed out listing models" }), SOFT_TIMEOUT_MS),
+              ),
+            ]);
+            return result.ok
+              ? { ...base, models: result.models, error: undefined }
+              : { ...base, models: [], error: result.error };
           }),
         );
         return { keys: groups };

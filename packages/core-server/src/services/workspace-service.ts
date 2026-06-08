@@ -117,7 +117,7 @@ export class WorkspaceService {
       if (fields.tags !== undefined) workspace.tags = fields.tags;
       if (fields.public_preview !== undefined) workspace.public_preview = fields.public_preview;
       if (fields.model_override !== undefined) workspace.model_override = fields.model_override;
-      if (fields.api_key_id_override !== undefined) workspace.api_key_id_override = fields.api_key_id_override;
+      if (fields.api_key_id_override !== undefined) workspace.api_key_id_override = fields.api_key_id_override || null;
       if (fields.last_run_model !== undefined) workspace.last_run_model = fields.last_run_model;
     }
 
@@ -129,7 +129,7 @@ export class WorkspaceService {
     if (fields.tags !== undefined) dbUpdate.tags = fields.tags;
     if (fields.public_preview !== undefined) dbUpdate.public_preview = fields.public_preview;
     if (fields.model_override !== undefined) dbUpdate.model_override = fields.model_override;
-    if (fields.api_key_id_override !== undefined) dbUpdate.api_key_id_override = fields.api_key_id_override;
+    if (fields.api_key_id_override !== undefined) dbUpdate.api_key_id_override = fields.api_key_id_override || null;
     if (fields.last_run_model !== undefined) dbUpdate.last_run_model = fields.last_run_model;
 
     if (Object.keys(dbUpdate).length > 0) {

@@ -809,11 +809,18 @@ export class Orchestrator extends EventEmitter {
     if (env?.LLM_GATEWAY_MODE) {
       await this.runSetupCommands(containerId, [
         'NEW="$LLM_GATEWAY_TARGET_URL"\n' +
-        'if [ "$(cat /tmp/llm-gateway.target 2>/dev/null)" = "$NEW" ] && kill -0 "$(cat /tmp/llm-gateway.pid 2>/dev/null)" 2>/dev/null; then\n' +
-        "  :\n" +
+        'OLD="$(cat /tmp/llm-gateway.pid 2>/dev/null)"\n' +
+        'if [ "$(cat /tmp/llm-gateway.target 2>/dev/null)" = "$NEW" ] && kill -0 "$OLD" 2>/dev/null; then\n' +
+        "  :\n" +  // already running with the right upstream — nothing to do
         "else\n" +
-        '  kill "$(cat /tmp/llm-gateway.pid 2>/dev/null)" 2>/dev/null\n' +
-        "  sleep 0.2\n" +
+        // Only kill if the recorded PID is actually our gateway (guards against
+        // a recycled PID now belonging to an unrelated process).
+        '  if [ -n "$OLD" ] && grep -qa llm-gateway "/proc/$OLD/cmdline" 2>/dev/null; then\n' +
+        '    kill "$OLD" 2>/dev/null\n' +
+        // Wait for it to actually exit (≤1s) so the new one doesn't hit
+        // EADDRINUSE on :11434 and exit — fixed sleeps race.
+        '    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$OLD" 2>/dev/null || break; sleep 0.1; done\n' +
+        "  fi\n" +
         "  node /app/llm-gateway.cjs &\n" +
         "  echo $! > /tmp/llm-gateway.pid\n" +
         '  printf %s "$NEW" > /tmp/llm-gateway.target\n' +
@@ -1321,8 +1328,11 @@ export class Orchestrator extends EventEmitter {
   private async fetchProfile(task: Task) {
     // Cross-key model selection: when the conversation carries an api_key_id
     // override, resolve the profile's credential from that key instead (its
-    // provider + base_url too). resolveTaskModel already picks the matching
-    // model, and the cross-model-switch replay handles the SDK session reset.
+    // provider + base_url too). The matching model comes separately from
+    // workspace.model_override (resolveTaskModel) — the (model, key) pair is
+    // set together by the picker, NOT guaranteed at this layer; a mismatched
+    // pair would just error at the provider. The cross-model-switch replay
+    // handles the SDK session reset when the model id changes.
     const workspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
     const apiKeyIdOverride = workspace?.api_key_id_override ?? null;
     const profile = await this.deps.profileService.getResolved(task.profile_id, { apiKeyIdOverride });

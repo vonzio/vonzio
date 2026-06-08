@@ -113,6 +113,10 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
   const totalFiltered = filteredGroups.reduce((n, g) => n + g.models.length, 0);
   const firstMatch = filteredGroups.find((g) => g.models.length > 0)?.models[0];
   const firstMatchGroup = filteredGroups.find((g) => g.models.length > 0);
+  // The override to persist for a group: null when it's the profile's own key
+  // (no override) OR an empty fallback id, so we never store a junk "" override.
+  const overrideKeyFor = (keyId: string): string | null =>
+    keyId && keyId !== profileApiKeyId ? keyId : null;
 
   if (loading && groups.length === 0) {
     return (
@@ -194,7 +198,7 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
                   setOpen(false);
                 } else if (e.key === "Enter" && firstMatch && firstMatchGroup) {
                   e.preventDefault();
-                  onChange(firstMatch.id, firstMatchGroup.key_id === profileApiKeyId ? null : firstMatchGroup.key_id);
+                  onChange(firstMatch.id, overrideKeyFor(firstMatchGroup.key_id));
                   setOpen(false);
                 }
               }}
@@ -221,7 +225,7 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
               </div>
             ) : (
               filteredGroups.map((g) => (
-                <div key={g.key_id || g.key_name} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                <div key={`${g.key_id || "profile"}:${g.provider}`} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                   {showHeaders && (
                     <div
                       style={{
@@ -253,7 +257,7 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
                         onMouseDown={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          onChange(m.id, g.key_id === profileApiKeyId ? null : g.key_id);
+                          onChange(m.id, overrideKeyFor(g.key_id));
                           setOpen(false);
                         }}
                         style={{ display: "flex", alignItems: "center", gap: 8 }}

@@ -167,8 +167,7 @@ export const workspaceRoutes = fp(
       // A non-null key override must be a key the caller can actually use —
       // reject ids outside their visibility (own + admin + shared/org).
       if (body.api_key_id_override && apiKeyService) {
-        const visible = await apiKeyService.list(request.user!.id, request.user!.role);
-        if (!visible.some((k) => k.id === body.api_key_id_override)) {
+        if (!(await apiKeyService.isAccessible(body.api_key_id_override, request.user!.id, request.user!.role))) {
           return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Unknown or inaccessible API key"));
         }
       }
