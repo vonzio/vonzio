@@ -12,10 +12,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Runner selection is configurable: set the repository/org variable
+# CI_RUNNER_LABELS (e.g. "self-hosted" or a custom label) to route CI to your
+# own runners; unset, it defaults to GitHub-hosted ubuntu-latest. Lets a
+# self-hoster (or the SaaS superset) move CI off metered minutes without
+# editing this file per-job.
 jobs:
   typecheck:
     name: typecheck
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -41,7 +46,7 @@ jobs:
 
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       postgres:
@@ -117,7 +122,7 @@ jobs:
     # 2. CVEs in OS layer or bundled CLIs (git, gh, jq, chromium, etc.).
     # 3. CVEs introduced by new app dependencies.
     name: image build+scan (${{ matrix.image.name }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       # Run both even if one fails -- we want to see all findings.
@@ -209,7 +214,7 @@ jobs:
     # verifies credentials against the source provider where possible
     # to cut false positives.
     name: secret scan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
     timeout-minutes: 5
     # Pull requests only -- a push-to-main scan would just confirm
     # what we already merged. Branch protection prevents direct pushes
@@ -242,7 +247,7 @@ jobs:
     # Lint install.sh (shellcheck) AND unit-test it (bats) so we catch shell
     # footguns + dep-handling regressions before community users hit them.
     name: install.sh lint + test
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
