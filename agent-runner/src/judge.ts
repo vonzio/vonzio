@@ -70,8 +70,9 @@ export async function judgeGoal(p: JudgePayload): Promise<GoalVerdict> {
     permissionMode: "bypassPermissions",
     maxTurns: 14,
     model: p.model,
-    // Verification is bounded — default to low effort to keep judge cost down.
-    effort: p.effort ?? "low",
+    // Only set effort when provided — some models reject the param (mirrors the
+    // agent). Verification is bounded by maxTurns + read-only tools anyway.
+    ...(p.effort ? { effort: p.effort } : {}),
     thinking: { type: "adaptive" },
     cwd: "/workspace",
     // Don't load the project's CLAUDE.md / hooks / skills into the judge —
