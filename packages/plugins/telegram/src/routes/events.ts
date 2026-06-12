@@ -115,6 +115,16 @@ export interface TelegramEventsRoutesOptions {
   // task:* subscriptions inside setupTelegramRelay; replaces the
   // direct orchestrator.on(...) calls the file used to do.
   sessionEvents: SessionEvents;
+  // Runs inbound-webhook dispatch within the context of the paired
+  // user (the principal). OSS: pass-through. SaaS: pins the user's
+  // tenancy so the workspace `startNewSession` creates gets org-tagged
+  // (otherwise the insert hits the cp-server NOT NULL org_id check and
+  // the `/new` silently fails). Tenancy-agnostic by design — we only
+  // hand it a userId.
+  runForPrincipal: <T>(
+    principal: { userId: string },
+    fn: () => Promise<T>,
+  ) => Promise<T>;
 }
 
 
@@ -588,11 +598,17 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
       }
 
       try {
-        if (update.message) {
-          await handleMessage(integration, cfg, update.message);
-        } else if (update.callback_query) {
-          await handleCallbackQuery(integration, cfg, update.callback_query);
-        }
+        // Dispatch within the paired user's principal context so any
+        // session/workspace this webhook creates is attributed (and,
+        // on SaaS, org-tagged) — the webhook itself is unauthenticated,
+        // so there's no request-level org context to inherit.
+        await opts.runForPrincipal({ userId: integration.user_id }, async () => {
+          if (update.message) {
+            await handleMessage(integration, cfg, update.message);
+          } else if (update.callback_query) {
+            await handleCallbackQuery(integration, cfg, update.callback_query);
+          }
+        });
       } catch (err) {
         server.log.error({ err, update }, "Telegram webhook handler failed");
       }
