@@ -132,6 +132,7 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
       modelListService: ctx.core.modelList,
       sessionEvents: ctx.sessionEvents,
       http: ctx.http,
+      runForPrincipal: ctx.core.runForPrincipal,
     });
 
     // Real notification handler -- resolves req.recipient (integration

@@ -21,6 +21,7 @@ import { createAuth, mountBetterAuth, type ExtraAuthHooks } from "./auth/better-
 import { fromNodeHeaders } from "better-auth/node";
 import { userAuthHook, adminOnlyHook } from "./auth/user-auth.js";
 import { buildDefaultCoreDeps } from "./lib/build-core-deps.js";
+import { runWithOrgId } from "./lib/active-org.js";
 import { InMemoryTaskQueue } from "./queue/in-memory.js";
 import { SlidingWindowRateLimiter } from "./rate-limit/sliding-window.js";
 import { ConcurrencyLimiter } from "./rate-limit/concurrency-limiter.js";
@@ -901,6 +902,18 @@ export async function buildServer(deps: ServerDeps) {
       // logic can ask "is this session reachable?" without reading
       // plugin-owned tables.
       sessionPresence,
+      // Principal-context wrapper for plugins that initiate sessions
+      // from inbound chat/webhooks (no request context). Resolves the
+      // principal's org via the SaaS seam and pins it with runWithOrgId
+      // so downstream workspace inserts get org-tagged. OSS:
+      // resolveOrgIdForUser is undefined -> null -> runWithOrgId is a
+      // pass-through, preserving org_id=null behaviour.
+      runForPrincipal: async (principal, fn) => {
+        const orgId = coreDeps.resolveOrgIdForUser
+          ? await coreDeps.resolveOrgIdForUser(principal.userId)
+          : null;
+        return runWithOrgId(orgId, fn);
+      },
     });
     void scope; // unused -- see comment above
   });

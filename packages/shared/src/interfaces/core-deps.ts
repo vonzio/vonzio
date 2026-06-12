@@ -89,4 +89,19 @@ export interface CoreDeps {
    * so the dashboard can segment "Your agents" vs "Team agents".
    */
   materializedOrgProfileIds?: (profileIds: string[]) => Promise<Set<string>>;
+  /**
+   * Optional — given a user id with NO request context (an inbound
+   * chat webhook, a background event), return the org_id to pin for
+   * the duration of that work. cp-server resolves the user's default
+   * (personal) org so workspace inserts initiated from outside the
+   * dashboard — e.g. a Telegram `/new` — get tagged like any HTTP/WS
+   * path. OSS leaves this undefined; the principal runs un-pinned and
+   * downstream writes get org_id=null (existing OSS behaviour).
+   *
+   * This is the no-request-context counterpart to the permissive HTTP
+   * org middleware (which keys off `request.user`) and the WS / task
+   * paths (which wrap dispatch in `runWithOrgId`). Consumed by the
+   * plugin loader's `ctx.core.runForPrincipal` wrapper.
+   */
+  resolveOrgIdForUser?: (userId: string) => Promise<string | null>;
 }

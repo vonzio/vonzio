@@ -61,6 +61,10 @@ const PROPERTY_SURFACES: ReadonlyArray<{ cap: PluginCapability; key: keyof Plugi
   { cap: "dashboard.push", key: "connectionManager" },
   { cap: "images.rewrite", key: "imageRewriter" },
   { cap: "models.list", key: "modelList" },
+  // runForPrincipal is an infra wrapper for session-initiating plugins;
+  // reuse the sessions.register grant rather than mint a new capability
+  // (keeps the approved builtins manifest unchanged).
+  { cap: "sessions.register", key: "runForPrincipal" },
 ];
 
 /** Method-level core surfaces: each method gated by its own capability.
