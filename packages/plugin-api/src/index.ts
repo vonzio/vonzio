@@ -768,6 +768,27 @@ export interface PluginCore {
    * pulling in the wider type tree.
    */
   profileResolver: PluginProfileResolver;
+
+  /**
+   * Run `fn` within the runtime context of an inbound principal — the
+   * external end-user a webhook or chat event is acting on behalf of.
+   * Plugins that initiate sessions from outside the dashboard (e.g. a
+   * Telegram `/new`) wrap their event dispatch in this so the runtime
+   * can attribute any downstream writes (session register, task
+   * submit) to that principal.
+   *
+   * Deliberately tenancy-agnostic: the plugin only names a `userId`.
+   * In OSS this runs `fn` directly (no-op wrapper). A SaaS runtime can
+   * resolve the principal's tenancy and pin it so workspace inserts
+   * get tagged uniformly — the plugin never has to know orgs exist.
+   *
+   * Gated by the same capability as `sessionLifecycle.register`
+   * (`sessions.register`) — only session-initiating plugins need it.
+   */
+  runForPrincipal<T>(
+    principal: { userId: string },
+    fn: () => Promise<T>,
+  ): Promise<T>;
 }
 
 /** Minimal logger contract. Backed by core's pino logger at runtime. */
