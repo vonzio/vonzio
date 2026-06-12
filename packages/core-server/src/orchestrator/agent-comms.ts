@@ -14,7 +14,8 @@ export type GoalStopReason =
   | "max_iterations"
   | "budget"
   | "no_progress"
-  | "judge_error";
+  | "judge_error"
+  | "agent_error";
 
 /** Independent judge request — dispatched in place of a TaskPayload to run the
  *  completion judge inside the container (where model access lives). */

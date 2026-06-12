@@ -767,12 +767,8 @@ export class Orchestrator extends EventEmitter {
           { taskId: task.id, sessionId: task.session_id, iteration, maxIterations, totalCost },
           "Goal not yet met — continuing session",
         );
-        // Keep task:continuing for back-compat with existing UI/consumers.
-        this.emit("task:continuing", task.id, task.session_id, {
-          continuation: iteration,
-          max_continuations: maxIterations,
-          total_cost_usd: totalCost,
-        });
+        // Note: goal_eval (above) is the round signal for the UI; we no longer
+        // also emit task:continuing here (it produced a duplicate timeline line).
 
         const continuationTask: Task = {
           ...task,
@@ -780,7 +776,19 @@ export class Orchestrator extends EventEmitter {
           attempt: 1,
         };
 
-        result = await this.runAgent(continuationTask, containerId, profile, env, true);
+        // A continuation turn can hard-error (runAgent throws). Bail gracefully:
+        // keep the work from prior rounds, emit goal_stop, and let completeTask
+        // finish with the last good result rather than failing the whole task.
+        try {
+          result = await this.runAgent(continuationTask, containerId, profile, env, true);
+        } catch (err) {
+          this.log.warn(
+            { taskId: task.id, sessionId: task.session_id, iteration, err },
+            "continuation turn failed — stopping goal loop",
+          );
+          stopGoal("agent_error");
+          break;
+        }
         this.deps.sessionRegistry.updateActivity(task.session_id);
         totalCost += result.cost_usd;
       }

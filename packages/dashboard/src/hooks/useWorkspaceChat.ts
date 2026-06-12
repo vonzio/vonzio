@@ -258,6 +258,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           budget: "Stopped — reached the budget limit",
           no_progress: "Stopped — no further progress",
           judge_error: "Stopped — completion check unavailable",
+          agent_error: "Stopped — a turn failed",
         };
         const label = `${human[reason] ?? `Goal loop stopped (${reason})`}${cost !== undefined ? ` · $${cost.toFixed(2)}` : ""}`;
         log(`[${ts()}] ${label}`);
