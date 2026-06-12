@@ -28,6 +28,7 @@
       "profiles.read",
       "profiles.resolve",
       "workspaces.read",
+      "workspaces.write",
       "auth.gate",
       "presence.register",
       "tasks.submit",
