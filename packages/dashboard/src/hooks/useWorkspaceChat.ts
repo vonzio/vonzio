@@ -135,7 +135,12 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         }
         break;
       case "tool_use": {
+        // End the current assistant segment at the tool boundary: clear the
+        // buffer AND drop the streaming bubble id, so any text after the tool
+        // starts a NEW bubble below the tool call (preserves order) instead of
+        // overwriting the pre-tool text in its original position.
         streamBufferRef.current = "";
+        streamingMsgIdRef.current = null;
         setStreaming(false);
         setAgentStatus({ state: "tool", tool: (msg.tool as string) ?? "" });
         const toolName = msg.tool as string;
@@ -181,7 +186,10 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         break;
       }
       case "tool_result": {
+        // Same as tool_use: end the assistant segment at the boundary so
+        // post-tool text starts a fresh bubble in the right order.
         streamBufferRef.current = "";
+        streamingMsgIdRef.current = null;
         setStreaming(false);
         const toolOutput = (msg.output as string) ?? "";
         const resultTool = msg.tool as string;
