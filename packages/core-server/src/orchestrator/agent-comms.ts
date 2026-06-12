@@ -2,9 +2,36 @@ import type { ContainerManager } from "@vonzio/shared";
 import type { McpServerConfig } from "@vonzio/shared";
 import type { TaskAttachment } from "@vonzio/shared";
 
+export interface GoalVerdict {
+  done: boolean;
+  missing: string[];
+  progress_made: boolean;
+  rationale: string;
+}
+
+export type GoalStopReason =
+  | "done"
+  | "max_iterations"
+  | "budget"
+  | "no_progress"
+  | "judge_error";
+
+/** Independent judge request — dispatched in place of a TaskPayload to run the
+ *  completion judge inside the container (where model access lives). */
+export interface JudgePayload {
+  goal: string;
+  acceptance_criteria?: string[];
+  agent_result: string;
+  prior_missing?: string[];
+  model: string;
+  effort?: string;
+}
+
 export interface AgentMessage {
-  type: "init" | "token" | "tool_use" | "tool_result" | "result" | "error" | "exit" | "ask_user";
+  type: "init" | "token" | "tool_use" | "tool_result" | "result" | "error" | "exit" | "ask_user" | "verdict";
   session_id?: string;
+  /** Set on `verdict` messages from a judge-mode dispatch. */
+  verdict?: GoalVerdict;
   text?: string;
   tool?: string;
   input?: Record<string, unknown>;
@@ -90,6 +117,36 @@ export class AgentCommunicator {
     } finally {
       this.activeExecs.delete(containerId);
     }
+  }
+
+  /**
+   * Run the independent completion judge inside the container (a single model
+   * call via the same env/gateway the agent uses) and resolve with its verdict.
+   * Throws if the judge errors or produces no verdict.
+   */
+  async judge(
+    containerId: string,
+    judge: JudgePayload,
+    env?: Record<string, string>,
+  ): Promise<GoalVerdict> {
+    const stdin = JSON.stringify({ judge }) + "\n";
+    const stream = this.manager.execInContainer(
+      containerId,
+      ["node", "/app/dist/index.js"],
+      stdin,
+      env,
+    );
+    for await (const line of stream) {
+      let msg: AgentMessage | null = null;
+      try {
+        msg = JSON.parse(line) as AgentMessage;
+      } catch {
+        continue; // ignore non-JSON (stderr) lines
+      }
+      if (msg.type === "verdict" && msg.verdict) return msg.verdict;
+      if (msg.type === "error") throw new Error(msg.error ?? "judge error");
+    }
+    throw new Error("judge produced no verdict");
   }
 
   async abort(containerId: string, keepContainer = false): Promise<void> {

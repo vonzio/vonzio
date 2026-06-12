@@ -26,6 +26,15 @@ async function main() {
   }
 
   try {
+    // Judge mode: a payload with a `judge` field runs the completion judge
+    // (a single model call) instead of an agent turn, and emits one verdict.
+    if (payload && typeof payload === "object" && payload.judge) {
+      const { judgeGoal } = await import("./judge.js");
+      const verdict = await judgeGoal(payload.judge);
+      emit({ type: "verdict", verdict });
+      emit({ type: "exit", code: 0 });
+      return;
+    }
     await runTask(payload);
     emit({ type: "exit", code: 0 });
   } catch (err) {

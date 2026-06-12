@@ -39,9 +39,43 @@ export interface TaskPayload {
   attachments?: Attachment[];
 }
 
+export interface GoalVerdict {
+  /** True only when every acceptance criterion is demonstrably met. */
+  done: boolean;
+  /** Outstanding items still required to meet the goal. */
+  missing: string[];
+  /** Whether this round made meaningful progress vs the previous one. */
+  progress_made: boolean;
+  /** One-line justification for the verdict. */
+  rationale: string;
+}
+
+/**
+ * A judge request. When the runner receives a payload with a `judge` field it
+ * runs the independent completion judge instead of an agent turn, and emits a
+ * single `verdict` message. The orchestrator dispatches this between
+ * continuation rounds so the model call happens where model access lives.
+ */
+export interface JudgePayload {
+  goal: string;
+  acceptance_criteria?: string[];
+  /** The agent's final reported result for the latest iteration. */
+  agent_result: string;
+  /** What the previous round still had outstanding. */
+  prior_missing?: string[];
+  model: string;
+  effort?: string;
+}
+
+/** Top-level stdin payload: either an agent task or a judge request. */
+export interface JudgeRequest {
+  judge: JudgePayload;
+}
+
 export interface RunnerMessage {
-  type: "init" | "token" | "tool_use" | "tool_result" | "result" | "error" | "exit" | "ask_user";
+  type: "init" | "token" | "tool_use" | "tool_result" | "result" | "error" | "exit" | "ask_user" | "verdict";
   session_id?: string;
+  verdict?: GoalVerdict;
   text?: string;
   tool?: string;
   input?: Record<string, unknown>;

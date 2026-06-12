@@ -18,7 +18,8 @@ import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
 import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
-import { AgentCommunicator, type AgentMessage, type TaskPayload } from "./agent-comms.js";
+import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
+import { decideGoalNext } from "./goal-loop.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
 import type { ProfileService } from "../services/profile-service.js";
@@ -684,60 +685,120 @@ export class Orchestrator extends EventEmitter {
     let result = await this.runAgent(task, containerId, profile, env, !needsInit);
     this.deps.sessionRegistry.updateActivity(task.session_id);
 
-    // Auto-continue: if the agent hit max_turns and the profile has auto_continue enabled,
-    // keep dispatching continuation turns in the same session.
+    // Goal loop: when the profile opts into auto-continue, keep working the
+    // warm session until an INDEPENDENT judge confirms the goal is met (or a
+    // stop condition trips). This replaces the old "stopped under max_turns =
+    // done" heuristic — the judge decides completion regardless of why the
+    // agent stopped, and continuations carry the specific outstanding items.
     if (profile.auto_continue && task.session_id) {
-      const effectiveMaxTurns = task.max_turns ?? profile.max_turns ?? this.deps.config.maxTurns;
-      const maxContinuations = profile.max_continuations ?? 5;
+      const maxIterations = profile.max_continuations ?? 5;
       const budgetCap = profile.continuation_budget_usd ?? Infinity;
-      let continuationCount = 0;
+      const judgeModel = task.model ?? profile.model ?? "claude-opus-4-8";
+      const judgeEffort = task.effort ?? profile.effort ?? undefined;
+      const goal = task.prompt;
+      // Per-message acceptance criteria arrive with the composer override in a
+      // later phase; for now the judge evaluates against the goal itself.
+      const criteria: string[] | undefined = undefined;
+
+      let iteration = 0;
       let totalCost = result.cost_usd;
+      let prevProgress = true;
+      let priorMissing: string[] | undefined;
 
-      while (
-        result.turns >= effectiveMaxTurns &&
-        continuationCount < maxContinuations &&
-        totalCost < budgetCap
-      ) {
-        continuationCount++;
-        this.log.info(
-          { taskId: task.id, sessionId: task.session_id, continuation: continuationCount, maxContinuations, totalCost },
-          "Auto-continuing session",
+      const stopGoal = (reason: GoalStopReason, verdict?: GoalVerdict) => {
+        this.emit("task:goal_stop", task.id, task.session_id, {
+          reason,
+          iteration,
+          total_cost_usd: totalCost,
+          verdict,
+        });
+      };
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // Judge the latest result inside the container (model access lives there).
+        let verdict: GoalVerdict | null = null;
+        for (let attempt = 0; attempt < 2 && !verdict; attempt++) {
+          try {
+            verdict = await this.agentComms.judge(
+              containerId,
+              {
+                goal,
+                acceptance_criteria: criteria,
+                agent_result: result.text,
+                prior_missing: priorMissing,
+                model: judgeModel,
+                effort: judgeEffort,
+              },
+              env,
+            );
+          } catch (err) {
+            this.log.warn(
+              { taskId: task.id, attempt, err },
+              "goal judge call failed",
+            );
+          }
+        }
+        if (!verdict) {
+          // Judge unavailable after a retry — keep the work done, stop looping.
+          stopGoal("judge_error");
+          break;
+        }
+
+        this.emit("task:goal_eval", task.id, task.session_id, { iteration, verdict });
+
+        const decision = decideGoalNext(
+          verdict,
+          { iteration, totalCost, prevProgress },
+          { maxIterations, budgetCap },
         );
+        if (decision.action === "stop") { stopGoal(decision.reason, verdict); break; }
 
+        prevProgress = verdict.progress_made;
+        priorMissing = verdict.missing;
+        iteration++;
+
+        this.log.info(
+          { taskId: task.id, sessionId: task.session_id, iteration, maxIterations, totalCost },
+          "Goal not yet met — continuing session",
+        );
+        // Keep task:continuing for back-compat with existing UI/consumers.
         this.emit("task:continuing", task.id, task.session_id, {
-          continuation: continuationCount,
-          max_continuations: maxContinuations,
+          continuation: iteration,
+          max_continuations: maxIterations,
           total_cost_usd: totalCost,
         });
 
-        // Build a continuation task that resumes in the same session
         const continuationTask: Task = {
           ...task,
-          prompt: "Continue working on the task. Review your previous progress and continue where you left off.",
+          prompt: this.buildContinuationPrompt(verdict.missing),
           attempt: 1,
         };
 
         result = await this.runAgent(continuationTask, containerId, profile, env, true);
         this.deps.sessionRegistry.updateActivity(task.session_id);
         totalCost += result.cost_usd;
-
-        // If agent finished before hitting max_turns, it's done on its own
-        if (result.turns < effectiveMaxTurns) {
-          this.log.info(
-            { taskId: task.id, continuation: continuationCount, turns: result.turns },
-            "Agent finished within turn limit during auto-continue",
-          );
-          break;
-        }
       }
 
-      // Merge total cost into final result
-      if (continuationCount > 0) {
-        result = { ...result, cost_usd: totalCost };
-      }
+      // Merge total cost into the final result.
+      result = { ...result, cost_usd: totalCost };
     }
 
     await this.completeTask(task, result);
+  }
+
+  /** Continuation prompt for a goal-loop round — carries the judge's specific
+   *  outstanding items so the agent works the gaps, not a vague "keep going". */
+  private buildContinuationPrompt(missing: string[]): string {
+    const items = missing.length > 0
+      ? missing.map((m) => `- ${m}`).join("\n")
+      : "- (re-check the goal's acceptance criteria and finish anything incomplete)";
+    return [
+      "You have NOT finished the goal yet. An independent review found these items still outstanding:",
+      items,
+      "",
+      "Continue working until the goal is genuinely met. Do not stop or summarise as complete until it is done.",
+    ].join("\n");
   }
 
   /** Create a session container, optionally mounting named volumes for persistent sessions. */
