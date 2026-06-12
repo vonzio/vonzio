@@ -1,32 +1,28 @@
 import type { GoalVerdict, JudgePayload } from "./types.js";
 
-const VERDICT_TOOL = {
-  name: "submit_verdict",
-  description:
-    "Record your verdict on whether the agent has fully achieved the goal against every acceptance criterion.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      done: {
-        type: "boolean",
-        description:
-          "True ONLY if every acceptance criterion is demonstrably met by the agent's reported result. If any criterion is unmet, partially done, or merely promised ('I will next…'), this is false.",
-      },
-      missing: {
-        type: "array",
-        items: { type: "string" },
-        description: "Concrete outstanding items still required to meet the goal. Empty when done.",
-      },
-      progress_made: {
-        type: "boolean",
-        description:
-          "True if this round moved the goal meaningfully closer vs. what was previously outstanding.",
-      },
-      rationale: { type: "string", description: "One-line justification for the verdict." },
+/** Structured verdict the judge must emit as its final output. */
+const VERDICT_SCHEMA = {
+  type: "object",
+  properties: {
+    done: {
+      type: "boolean",
+      description:
+        "True ONLY if every acceptance criterion is verifiably met by what's actually in the workspace.",
     },
-    required: ["done", "missing", "progress_made", "rationale"],
+    missing: {
+      type: "array",
+      items: { type: "string" },
+      description: "Concrete outstanding items still required. Empty when done.",
+    },
+    progress_made: {
+      type: "boolean",
+      description: "True if this round moved the goal meaningfully closer.",
+    },
+    rationale: { type: "string", description: "One-line justification, citing what you checked." },
   },
-};
+  required: ["done", "missing", "progress_made", "rationale"],
+  additionalProperties: false,
+} as const;
 
 function buildPrompt(p: JudgePayload): string {
   const criteria =
@@ -38,59 +34,74 @@ function buildPrompt(p: JudgePayload): string {
       ? `\nPreviously outstanding:\n${p.prior_missing.map((m) => `  - ${m}`).join("\n")}\n`
       : "";
   return [
-    "You are an impartial completion judge. Be skeptical: assume the goal is NOT done",
-    "unless the agent's reported result clearly demonstrates each acceptance criterion.",
-    "You cannot inspect the workspace — judge only from the reported result. A result that",
-    "describes intentions, next steps, or partial work is NOT done.",
+    "You are an impartial completion judge. The agent did its work in the",
+    "workspace (current directory). VERIFY each acceptance criterion against what",
+    "is ACTUALLY there — use Read/Grep/Glob to open the relevant files and confirm",
+    "they exist and contain what's required. Do NOT rely on the agent's summary;",
+    "the agent describing or claiming something is not proof — check the files.",
+    "Keep it focused: inspect only what the criteria require.",
     "",
     `GOAL:\n  ${p.goal}`,
     "",
     `ACCEPTANCE CRITERIA:\n${criteria}`,
     prior,
-    "AGENT'S REPORTED RESULT:",
+    "The agent reported (for context only — verify it):",
     "----",
-    p.agent_result || "(empty — the agent produced no final result)",
+    p.agent_result || "(the agent produced no final summary)",
     "----",
     "",
-    "Call submit_verdict with your assessment.",
+    "After inspecting the workspace, output your verdict.",
   ].join("\n");
 }
 
 /**
- * Independent completion judge — a single tool-forced Messages call with fresh
- * context (NOT the agent's session), run INSIDE the container so it uses the
- * same model access the agent does (ANTHROPIC_API_KEY / the in-container gateway
- * at ANTHROPIC_BASE_URL), i.e. provider-agnostic. Throws on API/parse failure.
+ * Independent completion judge. Runs INSIDE the agent's container via the same
+ * claude-agent-sdk path the agent uses (so it's provider-agnostic — Anthropic
+ * key or the in-container gateway both work) and is given READ-ONLY tools so it
+ * verifies the actual workspace artifacts rather than trusting the agent's
+ * claims. Returns the structured verdict; throws on failure (caller degrades).
  */
 export async function judgeGoal(p: JudgePayload): Promise<GoalVerdict> {
-  const mod = await import("@anthropic-ai/sdk");
-  const Anthropic = (mod as { default?: unknown }).default ?? mod;
-  // Env-based auth — same creds/base-url the agent SDK uses in this container.
-  const client = new (Anthropic as new () => {
-    messages: {
-      create: (body: Record<string, unknown>) => Promise<{ content: Array<Record<string, unknown>> }>;
-    };
-  })();
+  const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
-  const body: Record<string, unknown> = {
+  const options: Record<string, unknown> = {
+    // Read-only inspection only — the judge must never mutate the workspace.
+    allowedTools: ["Read", "Grep", "Glob"],
+    permissionMode: "bypassPermissions",
+    maxTurns: 14,
     model: p.model,
-    max_tokens: 1024,
-    tools: [VERDICT_TOOL],
-    tool_choice: { type: "tool", name: "submit_verdict" },
-    messages: [{ role: "user", content: buildPrompt(p) }],
+    // Verification is bounded — default to low effort to keep judge cost down.
+    effort: p.effort ?? "low",
+    thinking: { type: "adaptive" },
+    cwd: "/workspace",
+    // Don't load the project's CLAUDE.md / hooks / skills into the judge —
+    // it's a neutral verifier, not the agent.
+    settingSources: [],
+    outputFormat: { type: "json_schema", schema: VERDICT_SCHEMA },
   };
-  if (p.effort) body.output_config = { effort: p.effort };
 
-  const resp = await client.messages.create(body);
-  const block = resp.content.find((b) => b.type === "tool_use");
-  if (!block || typeof block.input !== "object" || block.input === null) {
-    throw new Error("judge returned no verdict tool call");
+  const q = query({ prompt: buildPrompt(p), options });
+
+  let raw: unknown;
+  for await (const message of q as AsyncIterable<Record<string, unknown>>) {
+    if (message.type === "result") {
+      if (message.subtype === "success") {
+        // json_schema output may surface as a parsed object or a JSON string.
+        raw = (message as Record<string, unknown>).structured_output ?? (message as Record<string, unknown>).result;
+      }
+      break;
+    }
   }
-  const v = block.input as Record<string, unknown>;
+
+  const v = typeof raw === "string" ? JSON.parse(raw) : raw;
+  if (!v || typeof v !== "object") {
+    throw new Error("judge produced no verdict");
+  }
+  const r = v as Record<string, unknown>;
   return {
-    done: Boolean(v.done),
-    missing: Array.isArray(v.missing) ? (v.missing as string[]) : [],
-    progress_made: Boolean(v.progress_made),
-    rationale: typeof v.rationale === "string" ? v.rationale : "",
+    done: Boolean(r.done),
+    missing: Array.isArray(r.missing) ? (r.missing as string[]) : [],
+    progress_made: Boolean(r.progress_made),
+    rationale: typeof r.rationale === "string" ? r.rationale : "",
   };
 }
