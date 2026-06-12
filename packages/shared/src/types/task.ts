@@ -81,6 +81,11 @@ export interface Task {
   retry?: RetryPolicy;
   /** In-memory only — not stored in DB. Passed from WS/API to orchestrator. */
   attachments?: TaskAttachment[];
+  /** In-memory only. Per-message goal-loop override; undefined → the profile's
+   *  auto_continue default decides. */
+  goal_mode?: boolean;
+  /** In-memory only. Acceptance criteria the completion judge evaluates. */
+  acceptance_criteria?: string[];
 
   created_at: string;
   started_at?: string;

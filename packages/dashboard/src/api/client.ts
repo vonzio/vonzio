@@ -261,6 +261,8 @@ export interface ProfileSummary {
   model?: string | null;
   default_tools: string[];
   concurrency_limit: number;
+  /** Profile default for the composer's "Run until done" (goal-loop) toggle. */
+  auto_continue?: boolean;
   user_id?: string | null;
   /** SaaS-only — true when this row was materialized from an
    *  org_profile (team-shared agent). Read-only for members. */

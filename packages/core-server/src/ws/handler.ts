@@ -99,6 +99,8 @@ const ORCHESTRATOR_EVENTS = [
   "task:failed",
   "task:container",
   "task:continuing",
+  "task:goal_eval",
+  "task:goal_stop",
 ] as const;
 
 export function setupWsHandler(
@@ -140,6 +142,14 @@ export function setupWsHandler(
 
   orchestrator.on("task:continuing", (taskId: string, sessionId: string | undefined, info: { continuation: number; max_continuations: number; total_cost_usd: number }) => {
     relayToSubscribers(taskId, sessionId, { type: "turn.continuing", task_id: taskId, session_id: sessionId, ...info });
+  });
+
+  // Goal-loop events: a judge verdict per round, and the final stop reason.
+  orchestrator.on("task:goal_eval", (taskId: string, sessionId: string | undefined, info: { iteration: number; verdict: unknown }) => {
+    relayToSubscribers(taskId, sessionId, { type: "goal_eval", task_id: taskId, session_id: sessionId, ...info });
+  });
+  orchestrator.on("task:goal_stop", (taskId: string, sessionId: string | undefined, info: { reason: string; iteration: number; total_cost_usd: number; verdict?: unknown }) => {
+    relayToSubscribers(taskId, sessionId, { type: "goal_stop", task_id: taskId, session_id: sessionId, ...info });
   });
 
   orchestrator.on("task:done", async (taskId: string, sessionId: string | undefined, result?: { text: string }) => {
@@ -578,6 +588,10 @@ export function setupWsHandler(
             // session.turn isn't in ClientMessage's discriminated union yet —
             // the field is validated by submitTaskSchema upstream.
             attachments: (msg as Record<string, unknown>).attachments as TaskAttachment[] | undefined,
+            // Per-message goal-loop override (composer "Run until done" toggle +
+            // acceptance criteria). Undefined goal_mode → profile default decides.
+            goal_mode: (msg as Record<string, unknown>).goal_mode as boolean | undefined,
+            acceptance_criteria: (msg as Record<string, unknown>).acceptance_criteria as string[] | undefined,
           },
           await getUserProfileIds(user.id),
         );

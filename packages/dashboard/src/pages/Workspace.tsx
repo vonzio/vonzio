@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square } from "lucide-react";
+import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
@@ -74,6 +74,11 @@ export function Workspace() {
   });
   const [pendingNew, setPendingNew] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Goal-loop composer override. null = follow the profile's auto_continue
+  // default; true/false = explicit per-message choice. `goalCriteria` is the
+  // optional acceptance-criteria text (one per line).
+  const [goalModeOverride, setGoalModeOverride] = useState<boolean | null>(null);
+  const [goalCriteria, setGoalCriteria] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const isMobile = useIsMobile();
   const isNarrow = useIsNarrow();
@@ -242,6 +247,14 @@ export function Workspace() {
     profiles?.find((p) => p.id === selectedProfileId) ??
     profiles?.[0];
   const profileName = activeProfile?.name ?? "Default";
+
+  // Effective goal-loop ("Run until done") state: explicit composer override
+  // wins, else the profile's auto_continue default. Criteria are one per line.
+  const effectiveGoalMode = goalModeOverride ?? (activeProfile?.auto_continue ?? false);
+  const goalCriteriaList = goalCriteria
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const defaultProfileId = profiles?.[0]?.id ?? "";
   const hasApiKey = activeProfile?.api_key_id ? true : false;
 
@@ -533,13 +546,13 @@ export function Workspace() {
       }
 
       setTimeout(() => {
-        chat.send(text, atts);
+        chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList });
         refetch();
       }, 100);
       return;
     }
 
-    chat.send(text, atts);
+    chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList });
   }
 
   async function handleLogout() {
@@ -893,6 +906,27 @@ export function Workspace() {
                     </div>
                   )}
 
+                  {/* Goal-loop acceptance criteria (shown when "Run until done"
+                      is on) — one criterion per line; the judge checks these. */}
+                  {effectiveGoalMode && (
+                    <textarea
+                      value={goalCriteria}
+                      onChange={(e) => setGoalCriteria(e.target.value)}
+                      placeholder="Acceptance criteria (optional, one per line) — what 'done' means"
+                      rows={2}
+                      className="w-full resize-none mb-2 text-xs focus:outline-none"
+                      style={{
+                        color: "var(--vz-ink)",
+                        fontFamily: "var(--vz-font-sans)",
+                        background: "var(--vz-mute)",
+                        border: "1px solid var(--vz-border)",
+                        borderRadius: "var(--vz-radius-sm)",
+                        padding: "6px 8px",
+                        lineHeight: 1.5,
+                      }}
+                    />
+                  )}
+
                   {/* Textarea */}
                   <textarea
                     ref={inputRef}
@@ -948,6 +982,30 @@ export function Workspace() {
                         e.target.value = "";
                       }}
                     />
+
+                    {/* "Run until done" (goal-loop) toggle — the agent keeps
+                        working until an independent judge says the goal is met.
+                        Defaults to the profile's auto_continue; click to override
+                        for this message. */}
+                    <button
+                      type="button"
+                      onClick={() => setGoalModeOverride(!effectiveGoalMode)}
+                      title={effectiveGoalMode ? "Run until done: ON — agent loops until the goal is judged complete" : "Run until done: off"}
+                      aria-pressed={effectiveGoalMode}
+                      style={{
+                        height: 28, padding: "0 8px", borderRadius: "var(--vz-radius-sm)",
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        background: effectiveGoalMode ? "var(--vz-accent, #00BFA5)" : "var(--vz-mute)",
+                        border: `1px solid ${effectiveGoalMode ? "var(--vz-accent, #00BFA5)" : "var(--vz-border)"}`,
+                        color: effectiveGoalMode ? "#fff" : "var(--vz-muted)",
+                        cursor: "pointer", fontSize: 11, fontWeight: 500,
+                        fontFamily: "var(--vz-font-sans)",
+                        transition: "color var(--vz-fast) var(--vz-ease), background var(--vz-fast) var(--vz-ease), border-color var(--vz-fast) var(--vz-ease)",
+                      }}
+                    >
+                      <Target className="w-3.5 h-3.5" />
+                      Run until done
+                    </button>
 
                     {/* Meta line: model picker · workspace context. Must be a
                         <div> (the ModelPicker renders a block-level wrapper

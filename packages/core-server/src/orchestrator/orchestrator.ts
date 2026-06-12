@@ -685,20 +685,25 @@ export class Orchestrator extends EventEmitter {
     let result = await this.runAgent(task, containerId, profile, env, !needsInit);
     this.deps.sessionRegistry.updateActivity(task.session_id);
 
-    // Goal loop: when the profile opts into auto-continue, keep working the
-    // warm session until an INDEPENDENT judge confirms the goal is met (or a
-    // stop condition trips). This replaces the old "stopped under max_turns =
-    // done" heuristic — the judge decides completion regardless of why the
-    // agent stopped, and continuations carry the specific outstanding items.
-    if (profile.auto_continue && task.session_id) {
+    // Goal loop: keep working the warm session until an INDEPENDENT judge
+    // confirms the goal is met (or a stop condition trips). This replaces the
+    // old "stopped under max_turns = done" heuristic — the judge decides
+    // completion regardless of why the agent stopped, and continuations carry
+    // the specific outstanding items. Enabled by the per-message composer
+    // override (task.goal_mode) when set, otherwise the profile's auto_continue
+    // default.
+    const goalModeOn = task.goal_mode ?? profile.auto_continue;
+    if (goalModeOn && task.session_id) {
       const maxIterations = profile.max_continuations ?? 5;
       const budgetCap = profile.continuation_budget_usd ?? Infinity;
       const judgeModel = task.model ?? profile.model ?? "claude-opus-4-8";
       const judgeEffort = task.effort ?? profile.effort ?? undefined;
       const goal = task.prompt;
-      // Per-message acceptance criteria arrive with the composer override in a
-      // later phase; for now the judge evaluates against the goal itself.
-      const criteria: string[] | undefined = undefined;
+      // Per-message acceptance criteria from the composer (optional).
+      const criteria: string[] | undefined =
+        task.acceptance_criteria && task.acceptance_criteria.length > 0
+          ? task.acceptance_criteria
+          : undefined;
 
       let iteration = 0;
       let totalCost = result.cost_usd;

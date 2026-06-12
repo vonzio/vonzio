@@ -235,6 +235,35 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         setAgentStatus({ state: "thinking" });
         break;
       }
+
+      case "goal_eval": {
+        // Independent judge verdict for one goal-loop round.
+        const v = (msg.verdict ?? {}) as { done?: boolean; missing?: string[]; rationale?: string };
+        const iteration = (msg.iteration as number) ?? 0;
+        const label = v.done
+          ? `✓ Goal met — ${v.rationale ?? ""}`.trim()
+          : `Goal review (round ${iteration + 1}): not done — ${(v.missing && v.missing.length > 0) ? v.missing.join("; ") : (v.rationale ?? "continuing")}`;
+        log(`[${ts()}] ${label}`);
+        setMessages((prev) => [...prev, { id: nextId(), role: "system", content: label, timestamp: new Date() }]);
+        break;
+      }
+
+      case "goal_stop": {
+        // The goal loop ended — surface the reason + total cost.
+        const reason = (msg.reason as string) ?? "stopped";
+        const cost = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : undefined;
+        const human: Record<string, string> = {
+          done: "Goal complete",
+          max_iterations: "Stopped — reached the continuation limit",
+          budget: "Stopped — reached the budget limit",
+          no_progress: "Stopped — no further progress",
+          judge_error: "Stopped — completion check unavailable",
+        };
+        const label = `${human[reason] ?? `Goal loop stopped (${reason})`}${cost !== undefined ? ` · $${cost.toFixed(2)}` : ""}`;
+        log(`[${ts()}] ${label}`);
+        setMessages((prev) => [...prev, { id: nextId(), role: "system", content: label, timestamp: new Date() }]);
+        break;
+      }
       case "done":
       case "turn.done": {
         if (suppressNextAssistantRef.current) {
@@ -432,7 +461,11 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     }
   }, [sessionId]);
 
-  const send = useCallback((text: string, attachments?: Array<{ type: "image" | "document"; media_type: string; data: string; name: string }>) => {
+  const send = useCallback((
+    text: string,
+    attachments?: Array<{ type: "image" | "document"; media_type: string; data: string; name: string }>,
+    opts?: { goal_mode?: boolean; acceptance_criteria?: string[] },
+  ) => {
     const hasContent = text.trim().length > 0 || (attachments && attachments.length > 0);
     if (!hasContent || !wsRef.current || !currentSessionIdRef.current) return;
     setMessages((prev) => [...prev, {
@@ -447,6 +480,9 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       session_id: currentSessionIdRef.current,
       message: text,
       ...(attachments && attachments.length > 0 && { attachments }),
+      // Per-message goal-loop override (composer "Run until done" toggle).
+      ...(opts?.goal_mode !== undefined && { goal_mode: opts.goal_mode }),
+      ...(opts?.acceptance_criteria && opts.acceptance_criteria.length > 0 && { acceptance_criteria: opts.acceptance_criteria }),
     }));
   }, []);
 
