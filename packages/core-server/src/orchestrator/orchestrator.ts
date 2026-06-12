@@ -721,58 +721,80 @@ export class Orchestrator extends EventEmitter {
 
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        // Judge the latest result inside the container (model access lives there).
-        let verdict: GoalVerdict | null = null;
-        for (let attempt = 0; attempt < 2 && !verdict; attempt++) {
-          try {
-            verdict = await this.agentComms.judge(
-              containerId,
-              {
-                goal,
-                acceptance_criteria: criteria,
-                agent_result: result.text,
-                prior_missing: priorMissing,
-                model: judgeModel,
-                effort: judgeEffort,
-              },
-              env,
-            );
-          } catch (err) {
-            this.log.warn(
-              { taskId: task.id, attempt, err },
-              "goal judge call failed",
-            );
+        const wasCutoff = result.max_turns_hit === true;
+        let verdict: GoalVerdict;
+
+        if (wasCutoff) {
+          // The round was cut off by the per-round turn limit — not done by
+          // definition, so skip the (blind) judge call and just continue. The
+          // round/budget caps still apply so a perpetually-cut-off run can't
+          // loop forever; a cutoff counts as progress (it won't trip no_progress).
+          verdict = {
+            done: false,
+            missing: ["reached the per-round turn limit — resuming"],
+            progress_made: true,
+            rationale: "Turn limit reached; resuming the session.",
+          };
+          this.emit("task:goal_eval", task.id, task.session_id, { iteration, verdict });
+          if (iteration >= maxIterations) { stopGoal("max_iterations", verdict); break; }
+          if (totalCost >= budgetCap) { stopGoal("budget", verdict); break; }
+          prevProgress = true;
+          priorMissing = undefined;
+        } else {
+          // Voluntary stop — ask the independent judge whether the goal is met.
+          let judged: GoalVerdict | null = null;
+          for (let attempt = 0; attempt < 2 && !judged; attempt++) {
+            try {
+              judged = await this.agentComms.judge(
+                containerId,
+                {
+                  goal,
+                  acceptance_criteria: criteria,
+                  agent_result: result.text,
+                  prior_missing: priorMissing,
+                  model: judgeModel,
+                  effort: judgeEffort,
+                },
+                env,
+              );
+            } catch (err) {
+              this.log.warn({ taskId: task.id, attempt, err }, "goal judge call failed");
+            }
           }
+          if (!judged) {
+            // Judge unavailable after a retry — keep the work done, stop looping.
+            stopGoal("judge_error");
+            break;
+          }
+          verdict = judged;
+          this.emit("task:goal_eval", task.id, task.session_id, { iteration, verdict });
+
+          const decision = decideGoalNext(
+            verdict,
+            { iteration, totalCost, prevProgress },
+            { maxIterations, budgetCap },
+          );
+          if (decision.action === "stop") { stopGoal(decision.reason, verdict); break; }
+
+          prevProgress = verdict.progress_made;
+          priorMissing = verdict.missing;
         }
-        if (!verdict) {
-          // Judge unavailable after a retry — keep the work done, stop looping.
-          stopGoal("judge_error");
-          break;
-        }
 
-        this.emit("task:goal_eval", task.id, task.session_id, { iteration, verdict });
-
-        const decision = decideGoalNext(
-          verdict,
-          { iteration, totalCost, prevProgress },
-          { maxIterations, budgetCap },
-        );
-        if (decision.action === "stop") { stopGoal(decision.reason, verdict); break; }
-
-        prevProgress = verdict.progress_made;
-        priorMissing = verdict.missing;
         iteration++;
-
         this.log.info(
-          { taskId: task.id, sessionId: task.session_id, iteration, maxIterations, totalCost },
+          { taskId: task.id, sessionId: task.session_id, iteration, maxIterations, totalCost, cutoff: wasCutoff },
           "Goal not yet met — continuing session",
         );
         // Note: goal_eval (above) is the round signal for the UI; we no longer
-        // also emit task:continuing here (it produced a duplicate timeline line).
+        // also emit task:continuing (it produced a duplicate timeline line).
 
+        // On a turn-limit cutoff resume where it left off; otherwise hand the
+        // agent the judge's specific outstanding items.
         const continuationTask: Task = {
           ...task,
-          prompt: this.buildContinuationPrompt(verdict.missing),
+          prompt: wasCutoff
+            ? "You reached the turn limit before finishing. Continue exactly where you left off and keep working toward the goal."
+            : this.buildContinuationPrompt(priorMissing ?? []),
           attempt: 1,
         };
 
@@ -1241,6 +1263,8 @@ export class Orchestrator extends EventEmitter {
         // The agent-runner already emitted a result with cost/usage data before this error,
         // so `result` is populated. Break instead of throwing so the caller gets the result.
         if (msg.error?.includes("error_max_turns") && result) {
+          // Flag the cutoff so the goal loop continues without a blind judge call.
+          result.max_turns_hit = true;
           break;
         }
         throw new Error(msg.error ?? "Agent error");

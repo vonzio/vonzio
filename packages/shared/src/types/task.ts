@@ -58,6 +58,10 @@ export interface TaskResult {
   output_tokens: number;
   cost_usd: number;
   turns: number;
+  /** True when this turn ended by hitting the per-round turn limit (max_turns)
+   *  rather than the agent stopping on its own. The goal loop uses this to
+   *  continue without a (blind) judge call. */
+  max_turns_hit?: boolean;
 }
 
 export interface Task {
