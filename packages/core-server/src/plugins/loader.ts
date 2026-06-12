@@ -358,6 +358,16 @@ export interface LoadPluginsOpts {
   modelListService: ModelListServiceLike;
   authHook: import("fastify").onRequestHookHandler;
   /**
+   * Backs `ctx.core.runForPrincipal`. server.ts builds this from
+   * `coreDeps.resolveOrgIdForUser` + `runWithOrgId` so a SaaS layer can
+   * pin tenancy for inbound chat/webhook principals. Optional — when
+   * absent the loader falls back to a pass-through (OSS behaviour).
+   */
+  runForPrincipal?: <T>(
+    principal: { userId: string },
+    fn: () => Promise<T>,
+  ) => Promise<T>;
+  /**
    * Chat-surface presence registry. Plugins receive the register-side
    * of this via `ctx.core.sessionPresence` and add a provider in their
    * init(); core's orchestrator + ask-user-fallback + workspace-
@@ -888,6 +898,11 @@ export function buildPluginContext<TConfig>(args: {
     profileResolver: {
       getResolved: (profileId) => opts.profileService.getResolved(profileId),
     },
+    // Tenancy-agnostic principal-context wrapper. OSS default is a
+    // pass-through; server.ts injects a version that pins the
+    // principal's org (via coreDeps.resolveOrgIdForUser) when a SaaS
+    // layer is present. Gated by sessions.register in the membrane.
+    runForPrincipal: opts.runForPrincipal ?? ((_principal, fn) => fn()),
   };
 
   // ── Capability membrane over `core` ──────────────────────────────
