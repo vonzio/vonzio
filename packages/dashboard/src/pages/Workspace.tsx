@@ -512,6 +512,10 @@ export function Workspace() {
     setInput("");
     if (activeWorkspaceId) clearDraft(activeWorkspaceId);
     setAttachments([]);
+    // Clear the per-message acceptance-criteria field on send (the goal_mode
+    // toggle persists; criteria are per message). goalCriteriaList is already
+    // captured above for this send, so clearing the state here is safe.
+    setGoalCriteria("");
     setUserScrolledUp(false);
 
     if (!activeWorkspaceId) {
