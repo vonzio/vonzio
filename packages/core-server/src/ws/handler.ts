@@ -101,6 +101,7 @@ const ORCHESTRATOR_EVENTS = [
   "task:continuing",
   "task:goal_eval",
   "task:goal_stop",
+  "task:goal_judging",
 ] as const;
 
 export function setupWsHandler(
@@ -144,7 +145,10 @@ export function setupWsHandler(
     relayToSubscribers(taskId, sessionId, { type: "turn.continuing", task_id: taskId, session_id: sessionId, ...info });
   });
 
-  // Goal-loop events: a judge verdict per round, and the final stop reason.
+  // Goal-loop events: judging started, a verdict per round, the final stop.
+  orchestrator.on("task:goal_judging", (taskId: string, sessionId: string | undefined, info: { iteration: number }) => {
+    relayToSubscribers(taskId, sessionId, { type: "goal_judging", task_id: taskId, session_id: sessionId, ...info });
+  });
   orchestrator.on("task:goal_eval", (taskId: string, sessionId: string | undefined, info: { iteration: number; verdict: unknown }) => {
     relayToSubscribers(taskId, sessionId, { type: "goal_eval", task_id: taskId, session_id: sessionId, ...info });
   });

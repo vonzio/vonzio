@@ -5,7 +5,9 @@ export type AgentStatus =
   | { state: "idle" }
   | { state: "waiting" }
   | { state: "thinking" }
-  | { state: "tool"; tool: string };
+  | { state: "tool"; tool: string }
+  // Goal loop: the independent judge is verifying the workspace.
+  | { state: "judging" };
 
 export interface UseWorkspaceChatOptions {
   sessionId: string | null;
@@ -267,6 +269,19 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         break;
       }
 
+      case "goal_judging": {
+        // A judge round started. End the current streaming segment (the
+        // round's text is final — same boundary rule as tool calls, so the
+        // NEXT round's tokens open a fresh bubble below the verdict card
+        // instead of overwriting this one) and show a distinct status.
+        streamBufferRef.current = "";
+        streamingMsgIdRef.current = null;
+        setStreaming(false);
+        setAgentStatus({ state: "judging" });
+        log(`[${ts()}] Checking goal…`);
+        break;
+      }
+
       case "goal_eval": {
         // Independent judge verdict for one goal-loop round. Carries a
         // structured payload so MessageList renders a verdict card.
@@ -280,6 +295,8 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           id: nextId(), role: "system", content: label, timestamp: new Date(),
           goal: { kind: "eval", done: v.done, missing: v.missing, rationale: v.rationale, iteration },
         }]);
+        // Not done → another agent round is about to start.
+        if (!v.done) setAgentStatus({ state: "waiting" });
         break;
       }
 

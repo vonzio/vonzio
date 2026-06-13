@@ -742,6 +742,10 @@ export class Orchestrator extends EventEmitter {
           priorMissing = undefined;
         } else {
           // Voluntary stop — ask the independent judge whether the goal is met.
+          // Announce the judge phase so the UI can show "Checking goal…"
+          // instead of a stale Thinking/streaming state (the judge can take
+          // a while and emits nothing until its verdict).
+          this.emit("task:goal_judging", task.id, task.session_id, { iteration });
           let judged: GoalVerdict | null = null;
           for (let attempt = 0; attempt < 2 && !judged; attempt++) {
             try {

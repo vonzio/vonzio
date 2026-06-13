@@ -575,7 +575,9 @@ export function Workspace() {
       ? "Thinking..."
       : chat.agentStatus.state === "tool"
         ? `Running ${chat.agentStatus.tool}...`
-        : null;
+        : chat.agentStatus.state === "judging"
+          ? "Checking goal..."
+          : null;
 
   // ─── Suggestion chips ────────────────────────────────────────────
   const suggestions = [
