@@ -14,6 +14,7 @@ import { ApiKeyService } from "../services/api-key-service.js";
 import { ToolFileService } from "../services/tool-file-service.js";
 import { SkillService } from "../services/skill-service.js";
 import { SubagentService } from "../services/subagent-service.js";
+import { DocumentService } from "../services/document-service.js";
 import { GitProviderService } from "../services/git-provider-service.js";
 import type { ContainerManager, ContainerCreateOptions } from "@vonzio/shared";
 import type { Task } from "@vonzio/shared";
@@ -216,6 +217,7 @@ describe("Orchestrator", () => {
       toolFileService: new ToolFileService(handle.db, "/tmp/vonzio-test-tools"),
       skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills"),
       subagentService: new SubagentService(handle.db),
+      documentService: new DocumentService(handle.db),
       gitProviderService: new GitProviderService(handle.db, ENCRYPTION_KEY),
       sessionPresence: new SessionPresenceRegistry(),
       db: handle.db,
@@ -414,6 +416,7 @@ describe("Orchestrator", () => {
       toolFileService: new ToolFileService(handle.db, "/tmp/vonzio-test-tools"),
       skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills"),
       subagentService: new SubagentService(handle.db),
+      documentService: new DocumentService(handle.db),
       gitProviderService: new GitProviderService(handle.db, ENCRYPTION_KEY),
       sessionPresence: new SessionPresenceRegistry(),
       db: handle.db,

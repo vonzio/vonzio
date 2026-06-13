@@ -18,12 +18,14 @@ import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
 import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
-import { AgentCommunicator, type AgentMessage, type TaskPayload } from "./agent-comms.js";
+import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
+import { decideGoalNext } from "./goal-loop.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
 import type { ProfileService } from "../services/profile-service.js";
 import type { ToolFileService } from "../services/tool-file-service.js";
 import type { SkillService } from "../services/skill-service.js";
+import type { DocumentService } from "../services/document-service.js";
 import type { SubagentService } from "../services/subagent-service.js";
 import type { GitProviderService } from "../services/git-provider-service.js";
 import type { MemoryService } from "../services/memory-service.js";
@@ -57,6 +59,7 @@ export interface OrchestratorDeps {
   toolFileService: ToolFileService;
   skillService: SkillService;
   subagentService: SubagentService;
+  documentService: DocumentService;
   gitProviderService: GitProviderService;
   memoryService?: MemoryService;
   secretVaultService?: SecretVaultService;
@@ -479,7 +482,7 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
-  private async dispatchBatch(task: Task, prefetchedProfile?: Profile): Promise<void> {
+  private async dispatchBatch(task: Task, prefetchedProfile?: ResolvedProfile): Promise<void> {
     let containerId: string | undefined;
     let workspacePath: string | undefined;
 
@@ -684,60 +687,159 @@ export class Orchestrator extends EventEmitter {
     let result = await this.runAgent(task, containerId, profile, env, !needsInit);
     this.deps.sessionRegistry.updateActivity(task.session_id);
 
-    // Auto-continue: if the agent hit max_turns and the profile has auto_continue enabled,
-    // keep dispatching continuation turns in the same session.
-    if (profile.auto_continue && task.session_id) {
-      const effectiveMaxTurns = task.max_turns ?? profile.max_turns ?? this.deps.config.maxTurns;
-      const maxContinuations = profile.max_continuations ?? 5;
+    // Goal loop: keep working the warm session until an INDEPENDENT judge
+    // confirms the goal is met (or a stop condition trips). This replaces the
+    // old "stopped under max_turns = done" heuristic — the judge decides
+    // completion regardless of why the agent stopped, and continuations carry
+    // the specific outstanding items. Enabled by the per-message composer
+    // override (task.goal_mode) when set, otherwise the profile's auto_continue
+    // default.
+    const goalModeOn = task.goal_mode ?? profile.auto_continue;
+    if (goalModeOn && task.session_id) {
+      const maxIterations = profile.max_continuations ?? 5;
       const budgetCap = profile.continuation_budget_usd ?? Infinity;
-      let continuationCount = 0;
+      const judgeModel = task.model ?? profile.model ?? "claude-opus-4-8";
+      const judgeEffort = task.effort ?? profile.effort ?? undefined;
+      const goal = task.prompt;
+      // Per-message acceptance criteria from the composer (optional).
+      const criteria: string[] | undefined =
+        task.acceptance_criteria && task.acceptance_criteria.length > 0
+          ? task.acceptance_criteria
+          : undefined;
+
+      let iteration = 0;
       let totalCost = result.cost_usd;
+      let prevProgress = true;
+      let priorMissing: string[] | undefined;
 
-      while (
-        result.turns >= effectiveMaxTurns &&
-        continuationCount < maxContinuations &&
-        totalCost < budgetCap
-      ) {
-        continuationCount++;
-        this.log.info(
-          { taskId: task.id, sessionId: task.session_id, continuation: continuationCount, maxContinuations, totalCost },
-          "Auto-continuing session",
-        );
-
-        this.emit("task:continuing", task.id, task.session_id, {
-          continuation: continuationCount,
-          max_continuations: maxContinuations,
+      const stopGoal = (reason: GoalStopReason, verdict?: GoalVerdict) => {
+        this.emit("task:goal_stop", task.id, task.session_id, {
+          reason,
+          iteration,
           total_cost_usd: totalCost,
+          verdict,
         });
+      };
 
-        // Build a continuation task that resumes in the same session
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const wasCutoff = result.max_turns_hit === true;
+        let verdict: GoalVerdict;
+
+        if (wasCutoff) {
+          // The round was cut off by the per-round turn limit — not done by
+          // definition, so skip the (blind) judge call and just continue. The
+          // round/budget caps still apply so a perpetually-cut-off run can't
+          // loop forever; a cutoff counts as progress (it won't trip no_progress).
+          verdict = {
+            done: false,
+            missing: ["reached the per-round turn limit — resuming"],
+            progress_made: true,
+            rationale: "Turn limit reached; resuming the session.",
+          };
+          this.emit("task:goal_eval", task.id, task.session_id, { iteration, verdict });
+          if (iteration >= maxIterations) { stopGoal("max_iterations", verdict); break; }
+          if (totalCost >= budgetCap) { stopGoal("budget", verdict); break; }
+          prevProgress = true;
+          priorMissing = undefined;
+        } else {
+          // Voluntary stop — ask the independent judge whether the goal is met.
+          // Announce the judge phase so the UI can show "Checking goal…"
+          // instead of a stale Thinking/streaming state (the judge can take
+          // a while and emits nothing until its verdict).
+          this.emit("task:goal_judging", task.id, task.session_id, { iteration });
+          let judged: GoalVerdict | null = null;
+          for (let attempt = 0; attempt < 2 && !judged; attempt++) {
+            try {
+              judged = await this.agentComms.judge(
+                containerId,
+                {
+                  goal,
+                  acceptance_criteria: criteria,
+                  agent_result: result.text,
+                  prior_missing: priorMissing,
+                  model: judgeModel,
+                  effort: judgeEffort,
+                },
+                env,
+              );
+            } catch (err) {
+              this.log.warn({ taskId: task.id, attempt, err }, "goal judge call failed");
+            }
+          }
+          if (!judged) {
+            // Judge unavailable after a retry — keep the work done, stop looping.
+            stopGoal("judge_error");
+            break;
+          }
+          verdict = judged;
+          this.emit("task:goal_eval", task.id, task.session_id, { iteration, verdict });
+
+          const decision = decideGoalNext(
+            verdict,
+            { iteration, totalCost, prevProgress },
+            { maxIterations, budgetCap },
+          );
+          if (decision.action === "stop") { stopGoal(decision.reason, verdict); break; }
+
+          prevProgress = verdict.progress_made;
+          priorMissing = verdict.missing;
+        }
+
+        iteration++;
+        this.log.info(
+          { taskId: task.id, sessionId: task.session_id, iteration, maxIterations, totalCost, cutoff: wasCutoff },
+          "Goal not yet met — continuing session",
+        );
+        // Note: goal_eval (above) is the round signal for the UI; we no longer
+        // also emit task:continuing (it produced a duplicate timeline line).
+
+        // On a turn-limit cutoff resume where it left off; otherwise hand the
+        // agent the judge's specific outstanding items.
         const continuationTask: Task = {
           ...task,
-          prompt: "Continue working on the task. Review your previous progress and continue where you left off.",
+          prompt: wasCutoff
+            ? "You reached the turn limit before finishing. Continue exactly where you left off and keep working toward the goal."
+            : this.buildContinuationPrompt(priorMissing ?? []),
           attempt: 1,
         };
 
-        result = await this.runAgent(continuationTask, containerId, profile, env, true);
-        this.deps.sessionRegistry.updateActivity(task.session_id);
-        totalCost += result.cost_usd;
-
-        // If agent finished before hitting max_turns, it's done on its own
-        if (result.turns < effectiveMaxTurns) {
-          this.log.info(
-            { taskId: task.id, continuation: continuationCount, turns: result.turns },
-            "Agent finished within turn limit during auto-continue",
+        // A continuation turn can hard-error (runAgent throws). Bail gracefully:
+        // keep the work from prior rounds, emit goal_stop, and let completeTask
+        // finish with the last good result rather than failing the whole task.
+        try {
+          result = await this.runAgent(continuationTask, containerId, profile, env, true);
+        } catch (err) {
+          this.log.warn(
+            { taskId: task.id, sessionId: task.session_id, iteration, err },
+            "continuation turn failed — stopping goal loop",
           );
+          stopGoal("agent_error");
           break;
         }
+        this.deps.sessionRegistry.updateActivity(task.session_id);
+        totalCost += result.cost_usd;
       }
 
-      // Merge total cost into final result
-      if (continuationCount > 0) {
-        result = { ...result, cost_usd: totalCost };
-      }
+      // Merge total cost into the final result.
+      result = { ...result, cost_usd: totalCost };
     }
 
     await this.completeTask(task, result);
+  }
+
+  /** Continuation prompt for a goal-loop round — carries the judge's specific
+   *  outstanding items so the agent works the gaps, not a vague "keep going". */
+  private buildContinuationPrompt(missing: string[]): string {
+    const items = missing.length > 0
+      ? missing.map((m) => `- ${m}`).join("\n")
+      : "- (re-check the goal's acceptance criteria and finish anything incomplete)";
+    return [
+      "You have NOT finished the goal yet. An independent review found these items still outstanding:",
+      items,
+      "",
+      "Continue working until the goal is genuinely met. Do not stop or summarise as complete until it is done.",
+    ].join("\n");
   }
 
   /** Create a session container, optionally mounting named volumes for persistent sessions. */
@@ -794,7 +896,7 @@ export class Orchestrator extends EventEmitter {
     return containerId;
   }
 
-  private async runAgent(task: Task, containerId: string, profile: Profile, env?: Record<string, string>, isResume?: boolean): Promise<TaskResult> {
+  private async runAgent(task: Task, containerId: string, profile: ResolvedProfile, env?: Record<string, string>, isResume?: boolean): Promise<TaskResult> {
     // Start Ollama auth proxy if needed — only once per container (skip if already running)
     if (env?.OLLAMA_TARGET_URL) {
       await this.runSetupCommands(containerId, ["node /app/ollama-proxy.cjs &\nsleep 0.3"], env);
@@ -995,6 +1097,75 @@ export class Orchestrator extends EventEmitter {
       hasSkills = resolvedSkills.length > 0;
     }
 
+    // Resolve and mount per-agent knowledge documents at /knowledge (read-only).
+    // Deliberately OUTSIDE /workspace so a persistent-session volume never caches
+    // a stale copy — we wipe + re-sync on every container start, which also drops
+    // docs the user has since deleted. The agent reads them on demand with
+    // Read/Grep/Glob (PDFs via Read pages) — no embeddings/index (see #docs plan).
+    // Provider-aware doc-reading guidance. Anthropic's native Read ingests
+    // PDFs/images directly; Ollama/OpenAI-compat models can't, so steer them to
+    // extract text with pdftotext (baked into the agent image) instead.
+    const isAnthropicProvider = profile.resolved_provider === "api_key";
+    const pdfGuidance = isAnthropicProvider
+      ? "For PDFs, use Read with the `pages` parameter (a few pages at a time)."
+      : "Your model cannot read PDFs or images directly — Read on a binary file will fail. " +
+        "Extract text first, e.g. `pdftotext <file> -` (poppler-utils is installed), then work with the text. " +
+        "Images require a vision-capable model.";
+
+    let hasKnowledge = false;
+    // Names of the docs actually available to this agent — surfaced in the
+    // system prompt so the agent knows the KB exists every turn (no reminders).
+    const knowledgeManifest: string[] = [];
+    try {
+      const documents = await this.deps.documentService.resolveForMount(task.profile_id, task.session_id);
+      this.log.info(
+        { taskId: task.id, sessionId: task.session_id, profileId: task.profile_id, docCount: documents.length },
+        "knowledge: resolved documents for profile",
+      );
+      // Run as root: /knowledge lives at the container root, which the non-root
+      // agent user can't create or write. Root-created files default to
+      // world-readable (umask 022 → 644 / dirs 755), so the agent can still
+      // Read them — but not modify them, which is exactly the read-only intent.
+      const ROOT = "root";
+      await this.drainExec(containerId, ["sh", "-c", "rm -rf /knowledge"], undefined, ROOT);
+      if (documents.length > 0) {
+        await this.drainExec(containerId, ["mkdir", "-p", "/knowledge"], undefined, ROOT);
+        const indexLines: string[] = [];
+        const usedNames = new Set<string>();
+        for (const doc of documents) {
+          let safeName = doc.name.replace(/[^a-zA-Z0-9._-]/g, "_") || "document";
+          if (usedNames.has(safeName)) safeName = `${doc.id}_${safeName}`;
+          usedNames.add(safeName);
+          // Skip images for non-vision providers: a non-Anthropic model can't
+          // ingest an image, and if the agent Reads one the SDK 400s ("does not
+          // support image input") and POISONS the session for every later turn.
+          // Don't mount it at all — then a stray Read just fails cleanly
+          // (file-not-found) instead of bricking the chat. Note it in the index.
+          if (!isAnthropicProvider && doc.media_type.startsWith("image/")) {
+            indexLines.push(`- ${safeName} — image, NOT available to this model (needs a vision-capable model)`);
+            continue;
+          }
+          await this.drainExec(containerId, ["sh", "-c", `base64 -d > /knowledge/${safeName}`], doc.content_b64, ROOT);
+          indexLines.push(`- ${safeName} (${doc.media_type})`);
+          knowledgeManifest.push(`${safeName} (${doc.media_type})`);
+        }
+        const indexMd =
+          "# Knowledge\n\n" +
+          "Reference documents for this agent. Read them with Read/Grep/Glob. " +
+          pdfGuidance + "\n\n" +
+          indexLines.join("\n") + "\n";
+        await this.drainExec(containerId, ["sh", "-c", "cat > /knowledge/INDEX.md"], indexMd, ROOT);
+        // Ensure world-readable + traversable so the non-root agent can read them.
+        await this.drainExec(containerId, ["sh", "-c", "chmod -R a+rX /knowledge || true"], undefined, ROOT);
+        hasKnowledge = true;
+        this.log.info({ taskId: task.id, count: documents.length }, "knowledge: mounted /knowledge");
+      }
+    } catch (err) {
+      // A mount failure must not kill the task — the agent just runs without the
+      // docs. Surfaced in logs so we can see size/timeout issues.
+      this.log.error({ taskId: task.id, sessionId: task.session_id, err }, "knowledge: mount failed");
+    }
+
     // Model: task → workspace.model_override → profile.model. Shared
     // with the dashboard ModelPicker and the Telegram/Slack /model
     // pickers so all four code paths use the same precedence.
@@ -1099,7 +1270,19 @@ export class Orchestrator extends EventEmitter {
       output_schema: task.output_schema,
       mcp_servers: nonSdkServers.length > 0 ? nonSdkServers : undefined,
       tool_files: toolFiles.length > 0 ? toolFiles : undefined,
-      system_prompt: systemPrompt,
+      system_prompt: hasKnowledge
+        ? systemPrompt +
+          "\n\n## Knowledge base\n" +
+          "This agent has a curated knowledge base mounted read-only at `/knowledge`. " +
+          "ALWAYS treat it as the primary, authoritative source for the user's domain. " +
+          "Before answering a question or asking the user for information, FIRST check whether " +
+          "these documents are relevant and consult them (Read/Grep/Glob) — do not ask the user " +
+          "for things that are likely covered here.\n\n" +
+          (knowledgeManifest.length > 0
+            ? "Available documents:\n" + knowledgeManifest.map((m) => `- ${m}`).join("\n") + "\n\n"
+            : "See /knowledge/INDEX.md for the file list.\n\n") +
+          pdfGuidance
+        : systemPrompt,
       agents: subagents,
       has_skills: hasSkills,
     };
@@ -1167,6 +1350,8 @@ export class Orchestrator extends EventEmitter {
         // The agent-runner already emitted a result with cost/usage data before this error,
         // so `result` is populated. Break instead of throwing so the caller gets the result.
         if (msg.error?.includes("error_max_turns") && result) {
+          // Flag the cutoff so the goal loop continues without a blind judge call.
+          result.max_turns_hit = true;
           break;
         }
         throw new Error(msg.error ?? "Agent error");
@@ -1293,6 +1478,21 @@ export class Orchestrator extends EventEmitter {
     const errorMessage = err instanceof Error ? err.message : String(err);
     const errorType = errorMessage.includes("timeout") ? "timeout" as const : "error" as const;
     this.log.error({ taskId: task.id, sessionId: task.session_id, error: errorMessage, errorType }, "Task failed");
+
+    // Self-heal a poisoned SDK conversation. A failed turn can leave content in
+    // the SDK session history that the model rejects on every resume — e.g. an
+    // image a non-vision model can't read ("400 does not support image input"),
+    // after which every subsequent turn replays it and 400s forever, bricking
+    // the chat. Drop the resume id so the NEXT turn starts a fresh SDK session
+    // instead of replaying the broken history. Prior context is lost, but the
+    // chat keeps working rather than being permanently stuck.
+    if (task.session_id) {
+      const session = this.deps.sessionRegistry.get(task.session_id) as Record<string, unknown> | null;
+      if (session && session.sdk_session_id) {
+        session.sdk_session_id = undefined;
+        this.log.info({ taskId: task.id, sessionId: task.session_id }, "Cleared SDK resume after failure (fresh session next turn)");
+      }
+    }
 
     if (this.retry.shouldRetry(task, errorType)) {
       const delay = this.retry.nextDelay(task);
@@ -1596,8 +1796,8 @@ export class Orchestrator extends EventEmitter {
     // Batch mode uses bind mounts (the correct approach for host -> container).
   }
 
-  private async drainExec(containerId: string, cmd: string[], stdin?: string): Promise<void> {
-    for await (const _ of this.deps.containerManager.execInContainer(containerId, cmd, stdin)) {
+  private async drainExec(containerId: string, cmd: string[], stdin?: string, user?: string): Promise<void> {
+    for await (const _ of this.deps.containerManager.execInContainer(containerId, cmd, stdin, undefined, user)) {
       // drain output
     }
   }

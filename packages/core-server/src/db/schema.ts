@@ -207,6 +207,27 @@ export const toolFiles = pgTable("tool_files", {
   updated_at: text("updated_at").notNull(),
 });
 
+// Per-agent (profile) knowledge documents. Mounted read-only into every
+// container the profile spawns (at /knowledge) so the agent can Read/Grep/Glob
+// them. Binary content (PDFs, etc.) is stored base64-encoded in `content_b64`
+// — the DB is text-only (SQLite heritage); a size cap keeps blobs sane.
+export const documents = pgTable("documents", {
+  id: text("id").primaryKey(),
+  profile_id: text("profile_id").notNull(),
+  // NULL → agent-level (shared across all the agent's chats). Set → scoped to
+  // a single workspace (only mounted for that session).
+  session_id: text("session_id"),
+  user_id: text("user_id"),
+  name: text("name").notNull(),
+  media_type: text("media_type").notNull(),
+  size_bytes: integer("size_bytes").notNull(),
+  content_b64: text("content_b64").notNull(),
+  created_at: text("created_at").notNull(),
+}, (table) => [
+  index("documents_profile_id_idx").on(table.profile_id),
+  index("documents_session_id_idx").on(table.session_id),
+]);
+
 export const skills = pgTable("skills", {
   id: text("id").primaryKey(),
   user_id: text("user_id"),

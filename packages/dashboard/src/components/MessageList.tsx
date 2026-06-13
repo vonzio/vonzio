@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Image, FileText, Loader2 } from "lucide-react";
+import { Image, FileText, Loader2, Target, Check, Copy } from "lucide-react";
 import { type ChatMessage, ToolBlock, MarkdownContent, detectCSV, TableView } from "./ChatCore.js";
 import { ResponseFeedback } from "./ResponseFeedback.js";
 import { useOptionalUser } from "../contexts/UserContext.js";
@@ -81,10 +81,10 @@ function MsgRow({
  * tool call (so the tool card visually sits *under* the agent's identity
  * instead of orphaned next to the page margin).
  */
-function AgentHeaderStrip({ time }: { time: Date }) {
+function AgentHeaderStrip({ time, copyText }: { time: Date; copyText?: string }) {
   return (
     <div
-      className="animate-[fadeIn_0.2s_ease-out]"
+      className="group/msg animate-[fadeIn_0.2s_ease-out]"
       style={{ padding: "14px 0 8px 0" }}
     >
       <div className="flex items-center gap-3">
@@ -103,8 +103,41 @@ function AgentHeaderStrip({ time }: { time: Date }) {
         >
           {formatClockTime(time)}
         </span>
+        {copyText && (
+          <span className="ml-auto opacity-0 group-hover/msg:opacity-100 transition-opacity">
+            <CopyMsgButton text={copyText} />
+          </span>
+        )}
       </div>
     </div>
+  );
+}
+
+/** Small hover copy-to-clipboard button for a single message's text. */
+function CopyMsgButton({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title="Copy message"
+      className={className}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch { /* clipboard unavailable — no-op */ }
+      }}
+      style={{
+        display: "inline-grid", placeItems: "center",
+        width: 22, height: 22, borderRadius: 5,
+        background: "transparent", border: "none",
+        color: copied ? "var(--vz-ok)" : "var(--vz-muted-2)",
+        cursor: "pointer",
+      }}
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+    </button>
   );
 }
 
@@ -244,46 +277,19 @@ export function MessageList({
   const { surface } = useTheme();
   const proseClass = surface === "paper" ? "prose" : "prose prose-invert";
 
-  // Per-turn render reorder + grouping. Two things happen here:
+  // Render messages in ARRIVAL order — no per-turn reordering.
   //
-  // 1) Reorder within each turn: tools/results come BEFORE assistant text
-  //    bubbles. Live event order can put the assistant bubble first (its
-  //    creation is tied to the first streamed token, which the SDK can
-  //    emit *before* the tool_use event lands). Reordering at render time
-  //    keeps the visual layout chronologically correct (tools ran first,
-  //    text came after) regardless of array order.
-  //
-  // 2) Identify which message owns the agent header for each turn. We
-  //    skip messages that the existing dedup hides (tool_use followed by
-  //    a matching tool_result) so the header lands on whatever ACTUALLY
-  //    renders — not on a phantom row.
-  const orderedMessages = useMemo(() => {
-    const result: ChatMessage[] = [];
-    let i = 0;
-    while (i < messages.length) {
-      const msg = messages[i];
-      if (msg.role === "user") {
-        result.push(msg);
-        i++;
-        const turn: ChatMessage[] = [];
-        while (i < messages.length && messages[i].role !== "user") {
-          turn.push(messages[i]);
-          i++;
-        }
-        // Stable partition: tools first (in their original order), then
-        // assistant texts, then any system markers — all preserved
-        // internally chronological.
-        const tools = turn.filter((m) => m.role === "tool_use" || m.role === "tool_result");
-        const texts = turn.filter((m) => m.role === "assistant");
-        const other = turn.filter((m) => m.role !== "tool_use" && m.role !== "tool_result" && m.role !== "assistant");
-        result.push(...tools, ...texts, ...other);
-      } else {
-        result.push(msg);
-        i++;
-      }
-    }
-    return result;
-  }, [messages]);
+  // A previous version partitioned each turn into [tools, texts, system],
+  // forcing every tool call above every text bubble. That was a workaround
+  // for a streaming bug (post-tool tokens overwrote the pre-tool bubble in
+  // place — fixed in useWorkspaceChat: each tool boundary now ends the
+  // streaming segment) and it actively broke faithful rendering: the model's
+  // plan text ("I'll build…") emitted BEFORE its first tool call rendered
+  // below it, and interleaved text→tool→text narration was flattened into
+  // [all tools][all texts]. The event log (per-session JSONL) is the ordering
+  // source of truth and both the live relay and replay deliver it in order —
+  // so arrival order IS chronological order. Don't reorder here.
+  const orderedMessages = messages;
 
   const turnStarters = useMemo(() => {
     const starters = new Map<string, Date>();
@@ -322,7 +328,19 @@ export function MessageList({
 
   return (
     <>
-      {orderedMessages.map((msg) => {
+      {orderedMessages.map((msg, msgIdx) => {
+        // All assistant text from this point to the end of the turn (next
+        // user message) — what the per-turn copy button copies. Text only:
+        // tool calls/results and system/goal cards are deliberately excluded.
+        const turnTextFrom = (start: number): string => {
+          const parts: string[] = [];
+          for (let j = start; j < orderedMessages.length; j++) {
+            const m = orderedMessages[j];
+            if (m.role === "user") break;
+            if (m.role === "assistant" && m.content) parts.push(m.content);
+          }
+          return parts.join("\n\n");
+        };
         const turnStartTime = turnStarters.get(msg.id);
         const isTurnStart = !!turnStartTime;
         // Header strip emitted before tool blocks that start an agent turn.
@@ -330,9 +348,63 @@ export function MessageList({
         // (unless we tell them to be compact — see below).
         const headerStrip =
           isTurnStart && (msg.role === "tool_use" || msg.role === "tool_result")
-            ? <AgentHeaderStrip key={`${msg.id}-hdr`} time={turnStartTime!} />
+            ? <AgentHeaderStrip key={`${msg.id}-hdr`} time={turnStartTime!} copyText={turnTextFrom(msgIdx) || undefined} />
             : null;
         if (!showTools && (msg.role === "tool_use" || msg.role === "tool_result")) return null;
+
+        if (msg.role === "system" && msg.goal) {
+          // Goal-loop verdict card (judge review / final outcome).
+          const g = msg.goal;
+          const stopTitles: Record<string, string> = {
+            done: "Goal complete",
+            max_iterations: "Stopped — continuation limit reached",
+            budget: "Stopped — budget limit reached",
+            no_progress: "Stopped — no further progress",
+            judge_error: "Stopped — completion check unavailable",
+            agent_error: "Stopped — a turn failed",
+          };
+          const ok = g.done === true;
+          const accent = ok ? "var(--vz-accent, #00BFA5)" : "var(--vz-muted)";
+          const title = g.kind === "eval"
+            ? (ok ? "Goal met" : `Goal review · round ${(g.iteration ?? 0) + 1}`)
+            : (stopTitles[g.reason ?? ""] ?? "Goal loop stopped");
+          return (
+            <div key={msg.id} className="py-2">
+              <div
+                style={{
+                  border: "1px solid var(--vz-border)",
+                  borderLeft: `3px solid ${accent}`,
+                  borderRadius: "var(--vz-radius-sm)",
+                  background: "var(--vz-mute)",
+                  padding: "8px 12px",
+                  fontFamily: "var(--vz-font-sans)",
+                  fontSize: 12.5,
+                  color: "var(--vz-ink)",
+                }}
+              >
+                <div className="flex items-center gap-1.5" style={{ fontWeight: 600 }}>
+                  {ok
+                    ? <Check className="w-3.5 h-3.5" style={{ color: accent }} />
+                    : <Target className="w-3.5 h-3.5" style={{ color: accent }} />}
+                  <span>{title}</span>
+                  {g.kind === "stop" && typeof g.cost === "number" && (
+                    <span style={{ marginLeft: "auto", fontWeight: 400, fontFamily: "var(--vz-font-mono)", fontSize: 11, color: "var(--vz-muted)" }}>
+                      ${g.cost.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+                {g.kind === "eval" && g.rationale && (
+                  <div style={{ marginTop: 4, color: "var(--vz-muted)" }}>{g.rationale}</div>
+                )}
+                {g.kind === "eval" && !ok && g.missing && g.missing.length > 0 && (
+                  <ul style={{ margin: "6px 0 0", paddingLeft: 16, color: "var(--vz-muted)" }}>
+                    {g.missing.map((m, i) => <li key={i} style={{ marginTop: 2 }}>{m}</li>)}
+                  </ul>
+                )}
+              </div>
+            </div>
+          );
+        }
 
         if (msg.role === "system") {
           return (
@@ -359,6 +431,12 @@ export function MessageList({
               avatar={<UserAvatar letter={userInitial} />}
               name="You"
               time={msg.timestamp}
+              trailing={
+                <CopyMsgButton
+                  text={msg.content}
+                  className="opacity-0 group-hover/msg:opacity-100 transition-opacity"
+                />
+              }
             >
               {msg.images && msg.images.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-2">
@@ -383,6 +461,34 @@ export function MessageList({
               >
                 {msg.content}
               </div>
+              {msg.acceptanceCriteria && msg.acceptanceCriteria.length > 0 && (
+                <div
+                  className="mt-2 rounded-md"
+                  style={{
+                    fontSize: 12,
+                    color: "var(--vz-ink-3)",
+                    background: "var(--vz-mute)",
+                    border: "1px solid var(--vz-border)",
+                    padding: "6px 10px",
+                  }}
+                >
+                  <div
+                    className="inline-flex items-center gap-1.5 mb-1"
+                    style={{
+                      fontSize: 10.5, fontFamily: "var(--vz-font-mono)",
+                      letterSpacing: "0.08em", textTransform: "uppercase",
+                      color: "var(--vz-sodium)",
+                    }}
+                  >
+                    <Target className="w-3 h-3" /> Acceptance criteria
+                  </div>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    {msg.acceptanceCriteria.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {msg.files && msg.files.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {msg.files.map((f, i) => (
@@ -427,11 +533,15 @@ export function MessageList({
               compact={compact}
               trailing={
                 !isLastStreaming ? (
-                  <ResponseFeedback
-                    responseText={msg.content}
-                    profileId={profileId}
-                    className="opacity-0 group-hover/msg:opacity-100 transition-opacity"
-                  />
+                  <span className="flex items-center gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                    {/* Copies the WHOLE turn's text (all segments), not just
+                        this bubble — segments split at tool boundaries. */}
+                    <CopyMsgButton text={turnTextFrom(msgIdx)} />
+                    <ResponseFeedback
+                      responseText={msg.content}
+                      profileId={profileId}
+                    />
+                  </span>
                 ) : undefined
               }
             >

@@ -82,6 +82,12 @@ const configSchema = z.object({
   TASK_TIMEOUT_SECONDS: z.coerce.number().default(300),
   MAX_TURNS: z.coerce.number().default(200),
 
+  // Per-agent knowledge documents (mounted at /knowledge). Stored base64 in
+  // Postgres, so keep these sane for your DB. Per-file cap and per-profile
+  // total cap, both in megabytes.
+  MAX_DOCUMENT_MB: z.coerce.number().default(100),
+  MAX_PROFILE_DOCUMENTS_MB: z.coerce.number().default(500),
+
   // Pool (Mode B)
   POOL_MIN_SIZE: z.coerce.number().default(3),
   POOL_MAX_SIZE: z.coerce.number().default(10),

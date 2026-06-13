@@ -25,6 +25,7 @@ import type { GitProviderService } from "../services/git-provider-service.js";
 import type { ApiKeyService } from "../services/api-key-service.js";
 import type { ProfileService } from "../services/profile-service.js";
 import type { SecretVaultService } from "../services/secret-vault-service.js";
+import { DocumentService, DocumentError } from "../services/document-service.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 
 export interface UserResourceRoutesOptions {
@@ -36,6 +37,7 @@ export interface UserResourceRoutesOptions {
   subagentService: SubagentService;
   gitProviderService: GitProviderService;
   secretVaultService: SecretVaultService;
+  documentService: DocumentService;
   /**
    * Optional SaaS hook — given userId + the ALS-pinned active org,
    * returns the set of user_secret ids to hide from the response.
@@ -51,7 +53,15 @@ export interface UserResourceRoutesOptions {
 
 export const userResourceRoutes = fp(
   async (server: FastifyInstance, opts: UserResourceRoutesOptions) => {
-    const { db, apiKeyService, profileService, toolFileService, skillService, subagentService, gitProviderService, secretVaultService } = opts;
+    const { db, apiKeyService, profileService, toolFileService, skillService, subagentService, gitProviderService, secretVaultService, documentService } = opts;
+
+    // Profile ownership gate for per-agent sub-resources (documents). Returns
+    // the profile if the caller may manage it, else null.
+    const ownedProfile = async (profileId: string, user: { id: string; role: string }) => {
+      const profile = await profileService.get(profileId);
+      if (!profile) return null;
+      return canAccess(user, profile.user_id) ? profile : null;
+    };
 
     // ─── Tools ──────────────────────────────────────────────
     server.get("/v1/tools", async (request) => {
@@ -108,6 +118,107 @@ export const userResourceRoutes = fp(
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Skill not found"));
       }
       await skillService.delete(request.params.id);
+      return { status: "deleted" };
+    });
+
+    // ─── Documents (per-agent knowledge) ────────────────────
+    // Mounted read-only into every container the profile spawns at /knowledge;
+    // the agent reads them on the fly with Read/Grep/Glob.
+    server.get<{ Params: { id: string } }>("/v1/profiles/:id/documents", async (request, reply) => {
+      const profile = await ownedProfile(request.params.id, request.user!);
+      if (!profile) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
+      return documentService.list(request.params.id);
+    });
+
+    server.post<{
+      Params: { id: string };
+      Body: { name: string; media_type: string; content_b64: string };
+      // Allow large base64 bodies (Fastify's default is 1 MB). Derive the
+      // limit from the configured per-file cap: base64 inflates ~1.34×, plus
+      // JSON/field overhead → 1.5× + 4 MB headroom. The real per-file /
+      // per-profile caps enforce on decoded bytes in DocumentService.upload.
+    }>("/v1/profiles/:id/documents", { bodyLimit: Math.ceil(documentService.maxDocumentBytes * 1.5) + 4 * 1024 * 1024 }, async (request, reply) => {
+      const profile = await ownedProfile(request.params.id, request.user!);
+      if (!profile) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
+      const { name, media_type, content_b64 } = request.body ?? {};
+      if (!name || !media_type || !content_b64) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "name, media_type and content_b64 are required"));
+      }
+      try {
+        const doc = await documentService.upload(
+          { profile_id: request.params.id, name, media_type, content_b64 },
+          request.user!.id,
+        );
+        return reply.code(201).send(doc);
+      } catch (err) {
+        if (err instanceof DocumentError) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, err.message));
+        }
+        throw err;
+      }
+    });
+
+    server.delete<{ Params: { id: string; docId: string } }>("/v1/profiles/:id/documents/:docId", async (request, reply) => {
+      const profile = await ownedProfile(request.params.id, request.user!);
+      if (!profile) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
+      // Must be an AGENT-level doc (session_id null) belonging to THIS profile.
+      const owner = await documentService.getOwner(request.params.docId);
+      if (!owner || owner.profile_id !== request.params.id || owner.session_id !== null) {
+        return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Document not found"));
+      }
+      await documentService.delete(request.params.docId);
+      return { status: "deleted" };
+    });
+
+    // ─── Documents (per-workspace knowledge) ────────────────
+    // Scoped to a single workspace (session). Mounted at /knowledge alongside
+    // the agent-level docs, but only for that conversation.
+    const ownedWorkspace = async (sessionId: string, user: { id: string; role: string }) => {
+      const rows = await db.select({ user_id: schema.workspaces.user_id, profile_id: schema.workspaces.profile_id })
+        .from(schema.workspaces).where(eq(schema.workspaces.session_id, sessionId));
+      const ws = rows[0];
+      if (!ws) return null;
+      return canAccess(user, ws.user_id) ? ws : null;
+    };
+
+    server.get<{ Params: { id: string } }>("/v1/workspaces/:id/documents", async (request, reply) => {
+      const ws = await ownedWorkspace(request.params.id, request.user!);
+      if (!ws) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
+      return documentService.listForSession(request.params.id);
+    });
+
+    server.post<{
+      Params: { id: string };
+      Body: { name: string; media_type: string; content_b64: string };
+    }>("/v1/workspaces/:id/documents", { bodyLimit: Math.ceil(documentService.maxDocumentBytes * 1.5) + 4 * 1024 * 1024 }, async (request, reply) => {
+      const ws = await ownedWorkspace(request.params.id, request.user!);
+      if (!ws) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
+      const { name, media_type, content_b64 } = request.body ?? {};
+      if (!name || !media_type || !content_b64) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "name, media_type and content_b64 are required"));
+      }
+      try {
+        const doc = await documentService.upload(
+          { profile_id: ws.profile_id, session_id: request.params.id, name, media_type, content_b64 },
+          request.user!.id,
+        );
+        return reply.code(201).send(doc);
+      } catch (err) {
+        if (err instanceof DocumentError) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, err.message));
+        }
+        throw err;
+      }
+    });
+
+    server.delete<{ Params: { id: string; docId: string } }>("/v1/workspaces/:id/documents/:docId", async (request, reply) => {
+      const ws = await ownedWorkspace(request.params.id, request.user!);
+      if (!ws) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
+      const owner = await documentService.getOwner(request.params.docId);
+      if (!owner || owner.session_id !== request.params.id) {
+        return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Document not found"));
+      }
+      await documentService.delete(request.params.docId);
       return { status: "deleted" };
     });
 
@@ -218,6 +329,15 @@ export const userResourceRoutes = fp(
       const ownProfiles = userProfiles.filter((p) => p.user_id === userId);
       if (ownProfiles.length === 0) {
         await profileService.create({ name: "default", provider, api_key_id: key.id }, userId);
+      } else if (ownProfiles.every((p) => !p.api_key_id)) {
+        // The user has profiles but NONE has a key (e.g. they deleted all keys,
+        // or skipped onboarding into a keyless default). Attach this first key
+        // to their default/first profile so chatting works immediately — without
+        // this the key is created but orphaned and the workspace stays gated.
+        const target = ownProfiles.find((p) => p.name === "default") ?? ownProfiles[0];
+        // Set provider too — a keyless default is "api_key" by default, which
+        // would mis-route an Ollama/OpenAI key to Anthropic.
+        await profileService.update(target.id, { api_key_id: key.id, provider }, request.user!.role);
       }
 
       return reply.code(201).send(key);

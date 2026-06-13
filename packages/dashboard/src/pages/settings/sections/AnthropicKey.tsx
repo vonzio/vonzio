@@ -17,6 +17,7 @@ import {
   Badge, Modal, EmptyState, DataTable,
   type DataColumn, type SelectOption,
 } from "../../../brand/components.js";
+import { PROVIDER_CATALOG, providerInfoByProvider } from "@vonzio/shared";
 import { formatDate } from "../../../lib/utils.js";
 import { authClient } from "../../../lib/auth-client.js";
 import { useUser } from "../../../contexts/UserContext.js";
@@ -216,11 +217,14 @@ export function AnthropicKeySection() {
     },
   ];
 
-  const providerOpts: SelectOption[] = [
-    { value: "api_key", label: "Anthropic API key" },
-    { value: "openai", label: "OpenAI (or OpenAI-compatible)" },
-    { value: "ollama", label: "Ollama Cloud" },
-  ];
+  // Provider list + per-provider labels/placeholders come from the shared
+  // PROVIDER_CATALOG so this editor stays in lockstep with the onboarding
+  // wizard and the first-key modal.
+  const providerOpts: SelectOption[] = PROVIDER_CATALOG.map((p) => ({
+    value: p.provider,
+    label: p.label,
+  }));
+  const createMeta = providerInfoByProvider(provider);
 
   return (
     <>
@@ -264,12 +268,12 @@ export function AnthropicKeySection() {
           <Field label="Provider">
             <Select options={providerOpts} value={provider} onChange={(v) => setProvider(v as typeof provider)} />
           </Field>
-          <Field label={provider === "ollama" ? "Ollama API key" : provider === "openai" ? "OpenAI API key" : provider === "api_key" ? "Anthropic API key" : "Auth token"}>
+          <Field label={createMeta.fieldLabel}>
             <Input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={provider === "ollama" ? "Enter Ollama key" : provider === "openai" ? "sk-…" : provider === "api_key" ? "sk-ant-api03-…" : "Enter token"}
+              placeholder={createMeta.placeholder}
             />
           </Field>
           {provider === "openai" && (showAdvanced ? (
@@ -332,10 +336,10 @@ export function AnthropicKeySection() {
           <div>
             <SubLabel>Provider</SubLabel>
             <span style={{ fontSize: 13, color: "var(--vz-ink-3)" }}>
-              {editingKey?.provider === "ollama" ? "Ollama Cloud" : editingKey?.provider === "openai" ? "OpenAI (or OpenAI-compatible)" : "Anthropic API key"}
+              {providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider).label}
             </span>
           </div>
-          <Field label={editingKey?.provider === "ollama" ? "Ollama API key" : editingKey?.provider === "openai" ? "OpenAI API key" : "API key"} hint="Leave blank to keep the current value.">
+          <Field label={providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider).fieldLabel} hint="Leave blank to keep the current value.">
             <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="••••••••" />
           </Field>
           {editingKey?.provider === "openai" && (showAdvanced ? (

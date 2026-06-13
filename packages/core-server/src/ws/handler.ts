@@ -99,6 +99,9 @@ const ORCHESTRATOR_EVENTS = [
   "task:failed",
   "task:container",
   "task:continuing",
+  "task:goal_eval",
+  "task:goal_stop",
+  "task:goal_judging",
 ] as const;
 
 export function setupWsHandler(
@@ -140,6 +143,17 @@ export function setupWsHandler(
 
   orchestrator.on("task:continuing", (taskId: string, sessionId: string | undefined, info: { continuation: number; max_continuations: number; total_cost_usd: number }) => {
     relayToSubscribers(taskId, sessionId, { type: "turn.continuing", task_id: taskId, session_id: sessionId, ...info });
+  });
+
+  // Goal-loop events: judging started, a verdict per round, the final stop.
+  orchestrator.on("task:goal_judging", (taskId: string, sessionId: string | undefined, info: { iteration: number }) => {
+    relayToSubscribers(taskId, sessionId, { type: "goal_judging", task_id: taskId, session_id: sessionId, ...info });
+  });
+  orchestrator.on("task:goal_eval", (taskId: string, sessionId: string | undefined, info: { iteration: number; verdict: unknown }) => {
+    relayToSubscribers(taskId, sessionId, { type: "goal_eval", task_id: taskId, session_id: sessionId, ...info });
+  });
+  orchestrator.on("task:goal_stop", (taskId: string, sessionId: string | undefined, info: { reason: string; iteration: number; total_cost_usd: number; verdict?: unknown }) => {
+    relayToSubscribers(taskId, sessionId, { type: "goal_stop", task_id: taskId, session_id: sessionId, ...info });
   });
 
   orchestrator.on("task:done", async (taskId: string, sessionId: string | undefined, result?: { text: string }) => {
@@ -516,7 +530,12 @@ export function setupWsHandler(
                   }
                 } catch { /* keep raw on failure */ }
               }
-              connectionManager.sendTo(connectionId, { ...data, _replay: true, _seq: evt.seq, _ts: evt.ts });
+              // Base the client-facing type on the envelope's evt.type: flushed
+              // token buffers persist data as bare `{ text }` with no type, and
+              // a typeless message falls through the client switch — silently
+              // dropping all streamed assistant text from replays. data spreads
+              // after, so a data.type (present on most events) still wins.
+              connectionManager.sendTo(connectionId, { type: evt.type, ...data, _replay: true, _seq: evt.seq, _ts: evt.ts });
             }
             connectionManager.sendTo(connectionId, {
               type: "session.replay_done",
@@ -555,11 +574,15 @@ export function setupWsHandler(
           return;
         }
 
-        // Log the user message so replay shows the full conversation
+        // Log the user message so replay shows the full conversation. Persist
+        // the goal-mode acceptance criteria too (when present) so the criteria
+        // chips render under the user bubble on refresh, not just live.
+        const turnCriteria = (msg as Record<string, unknown>).acceptance_criteria as string[] | undefined;
         eventLog.append(msg.session_id, "user_message", {
           type: "user_message",
           session_id: msg.session_id,
           text: msg.message,
+          ...(turnCriteria && turnCriteria.length > 0 && { acceptance_criteria: turnCriteria }),
         });
 
         if (session.status === "resumable") {
@@ -578,6 +601,10 @@ export function setupWsHandler(
             // session.turn isn't in ClientMessage's discriminated union yet —
             // the field is validated by submitTaskSchema upstream.
             attachments: (msg as Record<string, unknown>).attachments as TaskAttachment[] | undefined,
+            // Per-message goal-loop override (composer "Run until done" toggle +
+            // acceptance criteria). Undefined goal_mode → profile default decides.
+            goal_mode: (msg as Record<string, unknown>).goal_mode as boolean | undefined,
+            acceptance_criteria: (msg as Record<string, unknown>).acceptance_criteria as string[] | undefined,
           },
           await getUserProfileIds(user.id),
         );

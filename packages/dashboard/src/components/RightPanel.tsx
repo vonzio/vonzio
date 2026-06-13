@@ -1,16 +1,19 @@
 import { useState } from "react";
-import { Globe, FolderOpen, Terminal, Info, X, Container, Bot, Copy, Check, Clock, HardDrive, Timer } from "lucide-react";
+import { Globe, FolderOpen, Terminal, Info, X, Container, Bot, Copy, Check, Clock, HardDrive, Timer, BookOpen } from "lucide-react";
 import { PreviewTab } from "./PreviewTab.js";
 import { FilesTab } from "./FilesTab.js";
 import { LogsTab } from "./LogsTab.js";
+import { KnowledgeSection } from "./KnowledgeSection.js";
 
-type TabId = "preview" | "files" | "logs" | "info";
+type TabId = "preview" | "files" | "logs" | "knowledge" | "info";
 
 interface Props {
   workspaceId: string;
   containerId: string | null;
   containerName: string | null;
   profileName: string;
+  /** Owning agent/profile — drives the Knowledge tab (null until resolved). */
+  profileId: string | null;
   workspaceStatus: string;
   persistent: boolean;
   createdAt: string;
@@ -151,12 +154,13 @@ function InfoTab({ containerId, containerName, profileName, workspaceStatus, per
 const tabDefs: Array<{ value: TabId; label: string; icon: typeof Globe }> = [
   { value: "preview", label: "Preview", icon: Globe },
   { value: "files", label: "Files", icon: FolderOpen },
+  { value: "knowledge", label: "Knowledge", icon: BookOpen },
   { value: "logs", label: "Logs", icon: Terminal },
   { value: "info", label: "Info", icon: Info },
 ];
 
 export function RightPanel({
-  workspaceId, containerId, containerName, profileName, workspaceStatus, persistent, createdAt, expiresAt,
+  workspaceId, containerId, containerName, profileName, profileId, workspaceStatus, persistent, createdAt, expiresAt,
   previewUrl, previewRefresh, isPublicPreview, onTogglePublicPreview, logs, activeTab, onTabChange, onClose,
 }: Props) {
   return (
@@ -207,6 +211,28 @@ export function RightPanel({
         {activeTab === "files" && (
           <div className="flex-1 min-h-0 overflow-auto">
             <FilesTab workspaceId={workspaceId} containerId={containerId} />
+          </div>
+        )}
+        {activeTab === "knowledge" && (
+          <div className="flex-1 min-h-0 overflow-auto p-4 space-y-5">
+            <div>
+              <div
+                className="mb-2"
+                style={{ fontSize: 11, fontFamily: "var(--vz-font-mono)", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--vz-muted-2)" }}
+              >
+                This workspace
+              </div>
+              <KnowledgeSection scope="workspace" sessionId={workspaceId} />
+            </div>
+            <div>
+              <div
+                className="mb-2"
+                style={{ fontSize: 11, fontFamily: "var(--vz-font-mono)", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--vz-muted-2)" }}
+              >
+                Agent · {profileName}
+              </div>
+              <KnowledgeSection scope="agent" profileId={profileId} />
+            </div>
           </div>
         )}
         {activeTab === "logs" && <LogsTab logs={logs} />}

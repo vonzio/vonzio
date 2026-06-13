@@ -78,7 +78,9 @@ test.describe.serial("OSS first-run", () => {
     await expect(
       page.getByRole("heading", { name: /pick a provider/i })
     ).toBeVisible();
-    await expect(page.getByText(/anthropic api key/i)).toBeVisible();
-    await expect(page.getByText(/ollama cloud api key/i)).toBeVisible();
+    // The provider name appears both as a picker option and the field label
+    // below it, so match the first (the option) to avoid a strict-mode clash.
+    await expect(page.getByText(/anthropic api key/i).first()).toBeVisible();
+    await expect(page.getByText(/ollama cloud api key/i).first()).toBeVisible();
   });
 });

@@ -25,6 +25,11 @@ export interface SubmitTaskInput {
   effort?: string;
   timeout_seconds?: number;
   attachments?: TaskAttachment[];
+  /** Per-message goal-loop override (composer toggle). Undefined → use the
+   *  profile's auto_continue default. */
+  goal_mode?: boolean;
+  /** Per-message acceptance criteria the completion judge evaluates against. */
+  acceptance_criteria?: string[];
 
   retry?: Task["retry"];
 }
@@ -120,6 +125,8 @@ export class TaskService {
       timeout_seconds: input.timeout_seconds,
       retry: input.retry,
       attachments: input.attachments,
+      goal_mode: input.goal_mode,
+      acceptance_criteria: input.acceptance_criteria,
       created_at: now,
       attempt: 1,
     };
