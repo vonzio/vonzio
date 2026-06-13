@@ -122,6 +122,9 @@ const configSchema = z.object({
     .string()
     .regex(/^\d+[bkmg]$/i, "Must be a Docker memory value (e.g. 512m, 1g)")
     .default("768m"),
+  // Max processes/threads per container (fork-bomb / PID-exhaustion guard).
+  // 0 disables the limit.
+  CONTAINER_PIDS_LIMIT: z.coerce.number().int().min(0).default(512),
 
   // WebSocket
   WS_MAX_CONNECTIONS_PER_CALLER: z.coerce.number().default(10),
