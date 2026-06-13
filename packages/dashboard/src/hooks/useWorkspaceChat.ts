@@ -130,6 +130,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           timestamp: new Date(msg.ts as number ?? Date.now()),
           images: msg.images as string[] | undefined,
           files: msg.files as Array<{ name: string; type: "image" | "document" }> | undefined,
+          acceptanceCriteria: msg.acceptance_criteria as string[] | undefined,
         }]);
         break;
       case "text": {
@@ -164,6 +165,13 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         // buffer AND drop the streaming bubble id, so any text after the tool
         // starts a NEW bubble below the tool call (preserves order) instead of
         // overwriting the pre-tool text in its original position.
+        // Remember the segment we just streamed so turn.done can dedup its
+        // result_text against it. On the LIVE path no "text" event ever sets
+        // lastTextEventRef (the server only relays tokens), so without this a
+        // turn whose final action is a tool call would re-append result_text
+        // as a duplicate bubble of text already streamed. Only overwrite with
+        // a non-empty segment so an empty boundary clear doesn't wipe it.
+        if (streamBufferRef.current) lastTextEventRef.current = streamBufferRef.current;
         streamBufferRef.current = "";
         streamingMsgIdRef.current = null;
         setStreaming(false);
@@ -213,6 +221,13 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       case "tool_result": {
         // Same as tool_use: end the assistant segment at the boundary so
         // post-tool text starts a fresh bubble in the right order.
+        // Remember the segment we just streamed so turn.done can dedup its
+        // result_text against it. On the LIVE path no "text" event ever sets
+        // lastTextEventRef (the server only relays tokens), so without this a
+        // turn whose final action is a tool call would re-append result_text
+        // as a duplicate bubble of text already streamed. Only overwrite with
+        // a non-empty segment so an empty boundary clear doesn't wipe it.
+        if (streamBufferRef.current) lastTextEventRef.current = streamBufferRef.current;
         streamBufferRef.current = "";
         streamingMsgIdRef.current = null;
         setStreaming(false);
@@ -274,6 +289,13 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         // round's text is final — same boundary rule as tool calls, so the
         // NEXT round's tokens open a fresh bubble below the verdict card
         // instead of overwriting this one) and show a distinct status.
+        // Remember the segment we just streamed so turn.done can dedup its
+        // result_text against it. On the LIVE path no "text" event ever sets
+        // lastTextEventRef (the server only relays tokens), so without this a
+        // turn whose final action is a tool call would re-append result_text
+        // as a duplicate bubble of text already streamed. Only overwrite with
+        // a non-empty segment so an empty boundary clear doesn't wipe it.
+        if (streamBufferRef.current) lastTextEventRef.current = streamBufferRef.current;
         streamBufferRef.current = "";
         streamingMsgIdRef.current = null;
         setStreaming(false);
@@ -538,6 +560,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       id: nextId(), role: "user", content: text, timestamp: new Date(),
       images: attachments?.filter((a) => a.type === "image").map((a) => `data:${a.media_type};base64,${a.data}`) || undefined,
       files: attachments?.map((a) => ({ name: a.name, type: a.type })) || undefined,
+      acceptanceCriteria: opts?.acceptance_criteria && opts.acceptance_criteria.length > 0 ? opts.acceptance_criteria : undefined,
     }]);
     setAgentStatus({ state: "waiting" });
     setStreaming(true);
