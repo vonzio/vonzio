@@ -61,7 +61,7 @@ async function main() {
       process.exit(1);
     }
 
-    containerManager = new DockerManager(docker, config.AGENT_IMAGE, config.DOCKER_NETWORK);
+    containerManager = new DockerManager(docker, config.AGENT_IMAGE, config.DOCKER_NETWORK, config.CONTAINER_PIDS_LIMIT);
   } else {
     containerManager = new NoopContainerManager();
     console.log("Docker disabled — running in API-only mode (no task execution)");
