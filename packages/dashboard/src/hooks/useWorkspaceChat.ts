@@ -72,6 +72,22 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     const log = (entry: string) => { if (!isReplay) onLogEntryRef.current?.(entry); };
     const ts = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
+    // Cross-session guard: the WS connection stays subscribed to every
+    // session visited (or started) during its lifetime, so events for OTHER
+    // workspaces arrive here too. Without this, another workspace's tokens,
+    // tool calls, and goal cards append into the currently-open timeline.
+    // session.ready is exempt — it fires while a NEW session is being
+    // created, before currentSessionIdRef has caught up.
+    const msgSession = msg.session_id as string | undefined;
+    if (
+      msg.type !== "session.ready" &&
+      msgSession &&
+      currentSessionIdRef.current &&
+      msgSession !== currentSessionIdRef.current
+    ) {
+      return;
+    }
+
     switch (msg.type) {
       case "session.replay_start":
         replayingRef.current = true;
