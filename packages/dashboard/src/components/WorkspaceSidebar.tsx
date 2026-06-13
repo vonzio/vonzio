@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, ChevronRight, Star, Archive, Trash2, MessageSquare, CheckCircle2, Clock } from "lucide-react";
+import { Plus, ChevronRight, Star, Archive, Trash2, MessageSquare, CheckCircle2, Clock, ListChecks, CheckSquare, Square, X } from "lucide-react";
 import type { GroupedWorkspaces } from "../hooks/useWorkspaces.js";
 import type { WorkspaceSummary } from "../api/client.js";
 import { Modal, Button } from "@/brand/components.js";
@@ -107,6 +107,28 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  // Bulk selection: a "Select" mode turns rows into checkboxes and surfaces a
+  // bulk action bar (Delete). Clicking a row toggles its selection instead of
+  // navigating. `selected` holds session_ids across all three sections.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()); };
+
+  const runBulkDelete = () => {
+    for (const id of selected) onDelete(id);
+    setConfirmBulk(false);
+    exitSelect();
+  };
+
   // Re-bucket the four useWorkspaces categories into LIVE / TODAY / EARLIER.
   // The legacy `archived` group already contains finished items; the others
   // hold live ones.
@@ -126,8 +148,9 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
     };
   }, [grouped]);
 
-  function ChatItem({ workspace, group }: { workspace: WorkspaceSummary; group: "live" | "today" | "earlier" }) {
+  function ChatItem({ workspace, group, index }: { workspace: WorkspaceSummary; group: "live" | "today" | "earlier"; index: number }) {
     const isActive = workspace.session_id === activeId;
+    const isChecked = selected.has(workspace.session_id);
     const name = workspace.name ?? workspace.session_id.slice(0, 8);
     const status = statusLabel(workspace.status);
     const time = group === "live"
@@ -140,21 +163,21 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
       <div
         className="group relative flex items-center gap-2.5 px-2.5 py-1.5 rounded-md cursor-pointer text-[13px] transition-colors mx-1.5"
         style={{
-          color: isActive ? "var(--vz-ink)" : "var(--vz-ink-3)",
-          background: isActive ? "var(--vz-card)" : "transparent",
-          border: isActive ? "1px solid var(--vz-border)" : "1px solid transparent",
-          fontWeight: isActive ? 500 : 400,
+          color: isActive && !selectMode ? "var(--vz-ink)" : "var(--vz-ink-3)",
+          background: (selectMode ? isChecked : isActive) ? "var(--vz-card)" : "transparent",
+          border: (selectMode ? isChecked : isActive) ? "1px solid var(--vz-border)" : "1px solid transparent",
+          fontWeight: (selectMode ? isChecked : isActive) ? 500 : 400,
         }}
-        onClick={() => onSelect(workspace)}
+        onClick={() => (selectMode ? toggleSelected(workspace.session_id) : onSelect(workspace))}
         onMouseEnter={(e) => {
-          if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--vz-mute)";
+          if (selectMode ? !isChecked : !isActive) (e.currentTarget as HTMLElement).style.background = "var(--vz-mute)";
         }}
         onMouseLeave={(e) => {
-          if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent";
+          if (selectMode ? !isChecked : !isActive) (e.currentTarget as HTMLElement).style.background = "transparent";
         }}
       >
         {/* Active accent bar */}
-        {isActive && (
+        {isActive && !selectMode && (
           <span
             aria-hidden="true"
             style={{
@@ -163,21 +186,34 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
             }}
           />
         )}
-        {/* Status pip */}
+        {/* Checkbox (select mode) OR status pip */}
+        {selectMode ? (
+          isChecked
+            ? <CheckSquare className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--vz-sodium)" }} />
+            : <Square className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--vz-muted-2)" }} />
+        ) : (
+          <span
+            aria-hidden="true"
+            style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: pipColor(workspace),
+              flexShrink: 0,
+              ...(pipPulse(workspace) ? { animation: "vz-pulse 1.6s ease-in-out infinite" } : {}),
+            }}
+          />
+        )}
+        {/* Row number */}
         <span
-          aria-hidden="true"
-          style={{
-            width: 6, height: 6, borderRadius: "50%",
-            background: pipColor(workspace),
-            flexShrink: 0,
-            ...(pipPulse(workspace) ? { animation: "vz-pulse 1.6s ease-in-out infinite" } : {}),
-          }}
-        />
+          className="shrink-0 tabular-nums text-right"
+          style={{ width: 16, fontSize: 10.5, fontFamily: "var(--vz-font-mono)", color: "var(--vz-muted-2)" }}
+        >
+          {index}
+        </span>
         {workspace.starred && <Star className="w-3 h-3 shrink-0" style={{ color: "var(--vz-warn)", fill: "var(--vz-warn)" }} />}
         <span className="flex-1 truncate">{name}</span>
 
         {/* Status word ("stuck" / "failed") OR time — hide when hovering to surface actions */}
-        <span
+        {!selectMode && <span
           className="shrink-0 group-hover:hidden"
           style={{
             fontSize: 10.5, fontFamily: "var(--vz-font-mono)",
@@ -188,10 +224,10 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
           }}
         >
           {status ?? time}
-        </span>
+        </span>}
 
         {/* Actions on hover */}
-        <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+        {!selectMode && <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onUpdate(workspace.session_id, { starred: !workspace.starred }); }}
@@ -219,7 +255,7 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
           >
             <Trash2 className="w-3 h-3" />
           </button>
-        </div>
+        </div>}
       </div>
     );
   }
@@ -262,8 +298,8 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
           <span>{label}</span>
           <span style={{ marginLeft: "auto", letterSpacing: "0.04em" }}>{items.length}</span>
         </button>
-        {isOpen && items.map((w) => (
-          <ChatItem key={w.session_id} workspace={w} group={group} />
+        {isOpen && items.map((w, i) => (
+          <ChatItem key={w.session_id} workspace={w} group={group} index={i + 1} />
         ))}
       </div>
     );
@@ -290,6 +326,30 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
           <span>New task</span>
           <span className="vz-kbd vz-new-task__kbd">⌘N</span>
         </button>
+
+        {/* Select / bulk-actions toggle */}
+        <div className="flex items-center justify-end mt-2 px-0.5">
+          {selectMode ? (
+            <button
+              type="button"
+              onClick={exitSelect}
+              className="inline-flex items-center gap-1 text-[11px]"
+              style={{ color: "var(--vz-muted-2)", background: "none", border: 0 }}
+            >
+              <X className="w-3 h-3" /> Cancel
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSelectMode(true)}
+              className="inline-flex items-center gap-1 text-[11px]"
+              style={{ color: "var(--vz-muted-2)", background: "none", border: 0 }}
+              title="Select multiple"
+            >
+              <ListChecks className="w-3 h-3" /> Select
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Time-bucketed list */}
@@ -316,6 +376,49 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
           group="earlier"
         />
       </div>
+
+      {/* Bulk action bar */}
+      {selectMode && (
+        <div
+          className="flex items-center gap-2 px-3 py-2"
+          style={{ borderTop: "1px solid var(--vz-border)", background: "var(--vz-card)" }}
+        >
+          <span className="text-[12px]" style={{ color: "var(--vz-ink-3)" }}>
+            {selected.size} selected
+          </span>
+          <Button
+            variant="danger"
+            size="sm"
+            className="ml-auto"
+            disabled={selected.size === 0}
+            onClick={() => setConfirmBulk(true)}
+          >
+            <Trash2 className="w-3 h-3 mr-1" />
+            Delete
+          </Button>
+        </div>
+      )}
+
+      <Modal
+        open={confirmBulk}
+        onClose={() => setConfirmBulk(false)}
+        title={`Delete ${selected.size} chat${selected.size === 1 ? "" : "s"}?`}
+        description="These chats will be removed permanently."
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmBulk(false)}>Cancel</Button>
+            <Button variant="danger" size="sm" autoFocus onClick={runBulkDelete}>
+              Delete {selected.size}
+              <span
+                className="vz-kbd"
+                style={{ marginLeft: 6, background: "rgba(255,255,255,0.16)", borderColor: "rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.85)" }}
+              >
+                Enter ⏎
+              </span>
+            </Button>
+          </>
+        }
+      />
 
       <Modal
         open={!!confirmDeleteId}
