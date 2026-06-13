@@ -18,7 +18,13 @@
     "backendEntry": "./src/index.ts",
     "frontendEntry": "./src/frontend.tsx",
     "schemaPrefix": "slack",
-    "routePrefix": { "kind": "absolute", "prefix": ["/v1/integrations/slack", "/api/slack"] },
+    "routePrefix": {
+      "kind": "absolute",
+      "prefix": [
+        "/v1/integrations/slack",
+        "/api/slack"
+      ]
+    },
     "capabilities": [
       "db.access",
       "encryption.encrypt",
@@ -48,7 +54,11 @@
       "scheduler.run",
       "http.outbound"
     ],
-    "outboundHosts": ["slack.com", "*.slack.com", "api.anthropic.com"]
+    "outboundHosts": [
+      "slack.com",
+      "*.slack.com",
+      "api.anthropic.com"
+    ]
   },
   "exports": {
     ".": {
@@ -80,9 +90,11 @@
   },
   "peerDependencies": {
     "fastify": "^5.0.0",
-    "react": "^19.0.0"
+    "react": "^19.2.7"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true }
+    "react": {
+      "optional": true
+    }
   }
 }
