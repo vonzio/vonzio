@@ -35,6 +35,9 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
   // replacing "the last assistant message" which fails when a user_message
   // or system entry arrives between the last token and turn.done.
   const streamingMsgIdRef = useRef<string | null>(null);
+  // Content of the most recent full-text "text" event (replay / third-party
+  // surfaces). Lets turn.done skip re-appending an identical result_text.
+  const lastTextEventRef = useRef<string | null>(null);
   const suppressNextAssistantRef = useRef(false);
   const replayingRef = useRef(false);
   // Tracks the most recent AskUserQuestion seen during the current replay.
@@ -113,6 +116,10 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         break;
       case "text": {
         const textContent = (msg.text as string) ?? "";
+        // Remember the latest replayed/full-text segment so turn.done can
+        // tell "this turn's text already rendered" and skip re-appending
+        // its result_text (which would duplicate the final paragraph).
+        lastTextEventRef.current = textContent;
         setMessages((prev) => [...prev, {
           id: nextId(), role: "assistant", content: textContent,
           timestamp: new Date(msg.ts as number ?? Date.now()),
@@ -291,7 +298,14 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           break;
         }
         const resultText = msg.result_text as string | undefined;
-        if (resultText && !streamBufferRef.current) {
+        // Dedup: when this turn's text already rendered as a "text" event
+        // (replay path), appending result_text again duplicates the final
+        // paragraph — both strings come through the same signing pipeline,
+        // so a direct comparison is reliable.
+        const alreadyRendered =
+          !!resultText && lastTextEventRef.current?.trim() === resultText.trim();
+        lastTextEventRef.current = null;
+        if (resultText && !streamBufferRef.current && !alreadyRendered) {
           // No streaming bubble — fresh assistant message (e.g. replay path).
           setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: resultText, timestamp: new Date() }]);
           onAssistantMessageRef.current?.(resultText);
