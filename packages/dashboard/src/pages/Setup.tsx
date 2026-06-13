@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { ThemeToggle } from "../components/ThemeToggle.js";
 import "./login.css";
 
 /**
@@ -45,7 +46,10 @@ export function Setup() {
   }
 
   return (
-    <div className="sodium-shell" data-surface="carbon">
+    <div className="sodium-shell">
+      <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10 }}>
+        <ThemeToggle className="vz-action-btn" />
+      </div>
       <div className="login-stage">
         <a href="/" className="login-brand" aria-label="vonzio">
           <span className="vm" aria-hidden="true">
