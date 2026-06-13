@@ -574,11 +574,15 @@ export function setupWsHandler(
           return;
         }
 
-        // Log the user message so replay shows the full conversation
+        // Log the user message so replay shows the full conversation. Persist
+        // the goal-mode acceptance criteria too (when present) so the criteria
+        // chips render under the user bubble on refresh, not just live.
+        const turnCriteria = (msg as Record<string, unknown>).acceptance_criteria as string[] | undefined;
         eventLog.append(msg.session_id, "user_message", {
           type: "user_message",
           session_id: msg.session_id,
           text: msg.message,
+          ...(turnCriteria && turnCriteria.length > 0 && { acceptance_criteria: turnCriteria }),
         });
 
         if (session.status === "resumable") {

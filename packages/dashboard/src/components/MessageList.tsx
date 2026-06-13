@@ -461,6 +461,34 @@ export function MessageList({
               >
                 {msg.content}
               </div>
+              {msg.acceptanceCriteria && msg.acceptanceCriteria.length > 0 && (
+                <div
+                  className="mt-2 rounded-md"
+                  style={{
+                    fontSize: 12,
+                    color: "var(--vz-ink-3)",
+                    background: "var(--vz-mute)",
+                    border: "1px solid var(--vz-border)",
+                    padding: "6px 10px",
+                  }}
+                >
+                  <div
+                    className="inline-flex items-center gap-1.5 mb-1"
+                    style={{
+                      fontSize: 10.5, fontFamily: "var(--vz-font-mono)",
+                      letterSpacing: "0.08em", textTransform: "uppercase",
+                      color: "var(--vz-sodium)",
+                    }}
+                  >
+                    <Target className="w-3 h-3" /> Acceptance criteria
+                  </div>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    {msg.acceptanceCriteria.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {msg.files && msg.files.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {msg.files.map((f, i) => (

@@ -23,6 +23,9 @@ export interface ChatMessage {
   timestamp: Date;
   images?: string[]; // base64 data URLs for display
   files?: Array<{ name: string; type: "image" | "document" }>; // all attachment metadata
+  /** Acceptance criteria attached to a goal-mode user turn — rendered under
+   *  the user bubble and persisted so they survive a refresh. */
+  acceptanceCriteria?: string[];
   /** Structured goal-loop payload (system messages from goal_eval/goal_stop).
    *  When present, MessageList renders a verdict card instead of the plain
    *  centered system line; `content` stays as a plain-text fallback. */
