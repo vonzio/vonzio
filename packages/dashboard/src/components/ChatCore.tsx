@@ -43,6 +43,49 @@ export interface ChatMessage {
 let msgId = 0;
 export function nextId() { return `msg_${++msgId}`; }
 
+// ─── Knowledge citations ─────────────────────────────────────────────
+
+export interface KnowledgeCitation {
+  file: string;
+  page?: number | null;
+  section?: string | null;
+  quote?: string | null;
+}
+
+/**
+ * Pull a trailing ```vonzio:citations fenced block (a JSON array the agent
+ * emits per the system prompt) out of an assistant message. Returns the prose
+ * with the block removed plus the parsed citations. Handles the streaming case
+ * (opening fence, not yet closed) by hiding the partial block.
+ */
+/** Fenced-block tag the agent uses to emit citations (see the orchestrator's
+ *  knowledge system-prompt — keep the two in sync). */
+export const CITATION_FENCE = "```vonzio:citations";
+
+export function extractCitations(content: string): { text: string; citations: KnowledgeCitation[] } {
+  const idx = content.lastIndexOf(CITATION_FENCE);
+  if (idx === -1) return { text: content, citations: [] };
+  const before = content.slice(0, idx).trimEnd();
+  const block = content.slice(idx).match(/```vonzio:citations\s*([\s\S]*?)```/);
+  let citations: KnowledgeCitation[] = [];
+  if (block) {
+    try {
+      const parsed = JSON.parse(block[1].trim());
+      if (Array.isArray(parsed)) {
+        citations = parsed
+          .filter((c): c is KnowledgeCitation => !!c && typeof c.file === "string")
+          .map((c) => ({
+            file: c.file,
+            page: typeof c.page === "number" ? c.page : null,
+            section: typeof c.section === "string" ? c.section : null,
+            quote: typeof c.quote === "string" ? c.quote : null,
+          }));
+      }
+    } catch { /* malformed — show no cards, but still hide the raw block */ }
+  }
+  return { text: before, citations };
+}
+
 // ─── Markdown ────────────────────────────────────────────────────────
 
 /** Auto-linkify raw URLs that aren't already markdown links */
