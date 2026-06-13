@@ -420,6 +420,9 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         setStreaming(false);
         setAgentStatus({ state: "idle" });
         streamBufferRef.current = "";
+        // End the streaming segment too, or the NEXT turn's first token
+        // re-targets (and overwrites) the cancelled turn's last bubble.
+        streamingMsgIdRef.current = null;
         setMessages((prev) => [...prev, {
           id: nextId(), role: "system" as const, content: "Stopped by user.",
           timestamp: new Date(),

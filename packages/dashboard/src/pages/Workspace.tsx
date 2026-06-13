@@ -1086,8 +1086,11 @@ export function Workspace() {
                           composer meta line just crowds the footer. */}
                     </div>
 
-                    {/* Send / Stop */}
-                    {chat.streaming ? (
+                    {/* Send / Stop. Stop must track "agent busy", not just
+                        token streaming — during a long tool run (e.g. a
+                        5-minute Bash command) no tokens stream, but the turn
+                        is very much cancellable. */}
+                    {(chat.streaming || chat.agentStatus.state !== "idle") ? (
                       <button
                         onClick={() => chat.cancel()}
                         title="Stop agent"
