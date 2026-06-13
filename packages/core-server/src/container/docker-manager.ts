@@ -15,6 +15,8 @@ export class DockerManager implements ContainerManager {
     private docker: Docker,
     private imageName: string,
     private networkName?: string,
+    /** Max processes/threads per container (fork-bomb guard). 0/undefined = unlimited. */
+    private pidsLimit?: number,
   ) {}
 
   async createContainer(opts: ContainerCreateOptions): Promise<string> {
@@ -65,6 +67,12 @@ export class DockerManager implements ContainerManager {
           };
         }),
         ShmSize: 256 * 1024 * 1024, // 256MB — needed for Chrome/Chromium
+        // Cap process/thread count so a runaway or hostile workload can't
+        // fork-bomb the shared host kernel. Configurable; 0 = unlimited.
+        // NOTE: `no-new-privileges` is a tempting companion hardening flag but
+        // can break Chromium's setuid sandbox (the agent image ships chromium
+        // for agent-browser); add it only behind a browser-automation smoke.
+        PidsLimit: this.pidsLimit && this.pidsLimit > 0 ? this.pidsLimit : undefined,
       },
       WorkingDir: "/workspace",
       OpenStdin: true,
