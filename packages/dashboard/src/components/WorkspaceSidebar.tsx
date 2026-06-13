@@ -307,7 +307,7 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
 
   return (
     <div
-      className={cn("flex flex-col flex-1 min-h-0", inSheet ? "w-full" : "w-60")}
+      className={cn("flex flex-col flex-1 min-h-0 w-full")}
       style={{
         background: "var(--vz-mute)",
         borderRight: inSheet ? "0" : "1px solid var(--vz-border)",

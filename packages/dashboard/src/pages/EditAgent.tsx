@@ -38,6 +38,7 @@ import { fetchDockerImages, type DockerImageInfo } from "../api/admin.js";
 import { useApi } from "../hooks/useApi.js";
 import { slugify } from "../lib/utils.js";
 import { ToolPillSelect } from "../components/ToolPillSelect.js";
+import { KnowledgeSection } from "../components/KnowledgeSection.js";
 import { OllamaModelPicker } from "../components/OllamaModelPicker.js";
 import { ProfileModelSelect } from "../components/ProfileModelSelect.js";
 import { McpServerEditor, type McpServerConfig } from "../components/McpServerEditor.js";
@@ -554,6 +555,9 @@ export function EditAgent() {
                   onChange={setSkillIds}
                   emptyText="No skills yet — create one with the button above."
                 />
+              </Panel>
+              <Panel title="Knowledge">
+                <KnowledgeSection profileId={editingId} />
               </Panel>
             </div>
           )}

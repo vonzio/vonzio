@@ -41,6 +41,7 @@ export function App() {
       setEmailEnabled(!!c.emailEnabled);
       if (c.version) { setAppVersion(c.version); (window as any).__VONZIO_VERSION = c.version; }
       if (c.maxTurns) { (window as any).__VONZIO_MAX_TURNS = c.maxTurns; }
+      if (c.maxDocumentMb) { (window as any).__VONZIO_MAX_DOCUMENT_MB = c.maxDocumentMb; }
       if (c.ollamaEnabled) { (window as any).__VONZIO_OLLAMA_ENABLED = true; }
       if (c.previewUrlTemplate) { (window as any).__VONZIO_PREVIEW_URL_TEMPLATE = c.previewUrlTemplate; }
       if (c.authProviders) setAuthProviders(c.authProviders);

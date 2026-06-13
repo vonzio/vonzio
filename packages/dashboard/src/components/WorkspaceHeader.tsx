@@ -334,10 +334,10 @@ export function WorkspaceHeader({
             color: panelOpen ? "var(--vz-sodium)" : "var(--vz-muted)",
             background: panelOpen ? "var(--vz-sodium-08)" : "transparent",
           }}
-          title={panelOpen ? "Hide panel" : "Show panel"}
+          title={panelOpen ? "Hide Deck" : "Show Deck"}
         >
           {panelOpen ? <PanelRightClose className="w-3 h-3" /> : <PanelRightOpen className="w-3 h-3" />}
-          <span className="hidden sm:inline">Panel</span>
+          <span className="hidden sm:inline">Deck</span>
         </button>
       </div>
     </div>

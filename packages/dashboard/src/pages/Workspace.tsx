@@ -18,6 +18,8 @@ import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet.js";
 import { UserMenu } from "../components/UserMenu.js";
 import { MessageList } from "../components/MessageList.js";
 import { QuestionPicker } from "../components/ChatCore.js";
+import { reopenOnboarding } from "../components/OnboardingHost.js";
+import { Button } from "../brand/components.js";
 import { authClient } from "../lib/auth-client.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -81,7 +83,15 @@ export function Workspace() {
   const currentUser = useUser();
   const isAdmin = currentUser.role === "admin";
   const { id: routeId } = useParams<{ id: string }>();
-  const { data: profiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
+  const { data: profiles, refetch: refetchProfiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
+
+  // Drop the no-key gating live when a key/profile is added (e.g. via the
+  // welcome modal) — without this, profiles stay stale until a full reload.
+  useEffect(() => {
+    const onChange = () => { void refetchProfiles(); };
+    window.addEventListener("vonzio:profiles:changed", onChange);
+    return () => window.removeEventListener("vonzio:profiles:changed", onChange);
+  }, [refetchProfiles]);
 
   const { grouped, update, remove, refetch, loading: workspacesLoading } = useWorkspaces();
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(routeId ?? null);
@@ -160,6 +170,42 @@ export function Workspace() {
     return PANEL_DEFAULT;
   });
   const [isResizing, setIsResizing] = useState(false);
+
+  // Workspace-rail (task list) resize state. Width is global (not per-route)
+  // since the rail is the same across workspaces; persisted in localStorage.
+  const SIDEBAR_MIN = 200;
+  const SIDEBAR_MAX = 480;
+  const SIDEBAR_DEFAULT = 240;
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem("vonzio_sidebar_width");
+      if (saved) return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, parseInt(saved, 10) || SIDEBAR_DEFAULT));
+    } catch { /* ignore */ }
+    return SIDEBAR_DEFAULT;
+  });
+
+  const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startWidth + (ev.clientX - startX)));
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      setIsResizing(false);
+      try { localStorage.setItem("vonzio_sidebar_width", String(sidebarWidthRef.current)); } catch { /* ignore */ }
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [sidebarWidth]);
+  // Keep a ref so the mouseup handler persists the latest width without
+  // re-subscribing listeners on every drag tick.
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -292,6 +338,10 @@ export function Workspace() {
     .filter(Boolean);
   const defaultProfileId = profiles?.[0]?.id ?? "";
   const hasApiKey = activeProfile?.api_key_id ? true : false;
+  // Only treat "no key" as actionable once profiles have actually loaded —
+  // `profiles` is undefined mid-fetch, which would otherwise flash the
+  // add-key CTA + disable the composer for users who DO have a key.
+  const keyMissing = profiles !== undefined && !hasApiKey;
 
   // Derive the preview URL pattern from the template the server publishes
   // (e.g. "https://{container_id}-{port}.app.vonz.io" in prod,
@@ -644,17 +694,29 @@ export function Workspace() {
           </SheetContent>
         </Sheet>
       ) : (
-        <div className="flex flex-col h-full shrink-0">
-          <WorkspaceSidebar
-            grouped={grouped}
-            activeId={activeWorkspaceId}
-            onSelect={handleSelect}
-            onCreate={handleCreate}
-            onUpdate={(id, fields) => update(id, fields)}
-            onDelete={async (id) => {
-              await remove(id);
-              if (activeWorkspaceId === id) handleCreate();
-            }}
+        <div className="flex h-full shrink-0">
+          <div className="flex flex-col h-full" style={{ width: sidebarWidth }}>
+            <WorkspaceSidebar
+              grouped={grouped}
+              activeId={activeWorkspaceId}
+              onSelect={handleSelect}
+              onCreate={handleCreate}
+              onUpdate={(id, fields) => update(id, fields)}
+              onDelete={async (id) => {
+                await remove(id);
+                if (activeWorkspaceId === id) handleCreate();
+              }}
+            />
+          </div>
+          {/* Drag handle on the rail's right edge — same mechanism as the
+              right panel. 1px hit area widened by padding via the hover ring. */}
+          <div
+            onMouseDown={handleSidebarResizeStart}
+            className="w-1 cursor-col-resize flex-shrink-0 transition-colors"
+            style={{ background: isResizing ? "var(--vz-sodium)" : "transparent" }}
+            onMouseEnter={(e) => { if (!isResizing) (e.currentTarget as HTMLElement).style.background = "var(--vz-border)"; }}
+            onMouseLeave={(e) => { if (!isResizing) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            title="Drag to resize"
           />
         </div>
       )}
@@ -733,12 +795,22 @@ export function Workspace() {
                         <rect x="190" y="330" width="132" height="28" rx="14" fill="var(--vz-brand-on-tile)"/>
                       </svg>
                       <div className="text-center">
-                        <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--vz-ink)" }}>How can I help?</h2>
+                        <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--vz-ink)" }}>
+                          {keyMissing ? "Add an API key to get started" : "How can I help?"}
+                        </h2>
                         <p className="text-sm text-muted-foreground">
-                          {(profiles?.length ?? 0) > 1 ? "Select a profile and start a conversation" : "Start a conversation"}
+                          {keyMissing
+                            ? "You'll need a provider key before you can chat — it takes a few seconds."
+                            : ((profiles?.length ?? 0) > 1 ? "Select a profile and start a conversation" : "Start a conversation")}
                         </p>
                       </div>
-                      {(profiles?.length ?? 0) > 1 && (
+                      {keyMissing && (
+                        <Button onClick={() => reopenOnboarding()}>
+                          <Key className="w-4 h-4 mr-1.5" />
+                          Add API key
+                        </Button>
+                      )}
+                      {!keyMissing && (profiles?.length ?? 0) > 1 && (
                         <AgentPicker
                           profiles={profiles!}
                           value={selectedProfileId || defaultProfileId || null}
@@ -850,8 +922,43 @@ export function Workspace() {
               </div>
             )}
 
-            {/* Question picker — replaces input area when active */}
-            {chat.pendingQuestion ? (
+            {/* Bottom-area precedence: no-key guidance → pending question →
+                composer. The composer is never shown without a key — a
+                disabled one just reads as broken. In the empty/new state the
+                hero already shows an "Add API key" CTA (so render nothing
+                here); in an existing conversation we show a compact CTA banner
+                in the composer's place. */}
+            {keyMissing ? (
+              (!activeWorkspaceId || pendingNew) ? null : (
+                <div className="pt-2" style={{ pointerEvents: "auto" }}>
+                  <div className="max-w-3xl mx-auto">
+                    <div
+                      className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm"
+                      style={{
+                        background: "rgba(245, 158, 11, 0.08)",
+                        border: "1px solid rgba(245, 158, 11, 0.30)",
+                        color: "var(--vz-warn)",
+                      }}
+                    >
+                      <Key className="w-4 h-4 shrink-0" />
+                      <span className="flex-1">No API key configured — add one to continue this conversation.</span>
+                      <button
+                        type="button"
+                        onClick={() => reopenOnboarding()}
+                        style={{
+                          background: "var(--vz-sodium)", color: "#fff",
+                          padding: "5px 12px", borderRadius: "var(--vz-radius-sm)",
+                          fontSize: 12.5, fontWeight: 500, cursor: "pointer", border: "none",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Add API key
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : chat.pendingQuestion ? (
               <div className="pt-2" style={{ pointerEvents: "auto" }}>
                 <QuestionPicker
                   question={chat.pendingQuestion.question}
@@ -864,22 +971,6 @@ export function Workspace() {
 
             /* Input area — floats at bottom */
             <div className="pt-2" style={{ pointerEvents: "auto" }}>
-              {/* No API key warning */}
-              {!hasApiKey && activeWorkspaceId && !pendingNew && (
-                <div className="max-w-3xl mx-auto mb-2">
-                  <div
-                    className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm"
-                    style={{
-                      background: "rgba(245, 158, 11, 0.08)",
-                      border: "1px solid rgba(245, 158, 11, 0.30)",
-                      color: "var(--vz-warn)",
-                    }}
-                  >
-                    <Key className="w-4 h-4 shrink-0" />
-                    <span>No API key linked to this profile. <a href="/agents" style={{ textDecoration: "underline", fontWeight: 500 }}>Open Profiles</a> to attach one.</span>
-                  </div>
-                </div>
-              )}
               <div className="max-w-3xl mx-auto">
                 {/* Suggestion strip — anchored to the composer, only in
                     the empty state. Single horizontal row that scrolls
@@ -981,8 +1072,8 @@ export function Workspace() {
                       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
                     }}
                     onPaste={handlePaste}
-                    placeholder={!hasApiKey && activeWorkspaceId ? "No API key linked…" : "Message vonzio…"}
-                    disabled={chat.streaming || (!chat.connected && !!activeWorkspaceId) || (!hasApiKey && !!activeWorkspaceId && !pendingNew)}
+                    placeholder="Message vonzio…"
+                    disabled={chat.streaming || (!chat.connected && !!activeWorkspaceId)}
                     rows={1}
                     className="w-full resize-none border-0 bg-transparent text-sm focus:outline-none"
                     style={{
@@ -1185,12 +1276,13 @@ export function Workspace() {
           isNarrow ? (
             <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
               <SheetContent side="right" showCloseButton={false} className="w-[85vw] sm:max-w-[480px] p-0">
-                <SheetTitle className="sr-only">Panel</SheetTitle>
+                <SheetTitle className="sr-only">Deck</SheetTitle>
                 <RightPanel
                   workspaceId={activeWorkspaceId}
                   containerId={chat.containerId}
                   containerName={chat.containerName}
                   profileName={profileName}
+                  profileId={activeWorkspace?.profile_id ?? activeProfile?.id ?? null}
                   workspaceStatus={activeWorkspace?.status ?? "unknown"}
                   persistent={activeWorkspace?.persistent ?? false}
                   createdAt={activeWorkspace?.created_at ?? new Date().toISOString()}
@@ -1224,6 +1316,7 @@ export function Workspace() {
                   containerId={chat.containerId}
                   containerName={chat.containerName}
                   profileName={profileName}
+                  profileId={activeWorkspace?.profile_id ?? activeProfile?.id ?? null}
                   workspaceStatus={activeWorkspace?.status ?? "unknown"}
                   persistent={activeWorkspace?.persistent ?? false}
                   createdAt={activeWorkspace?.created_at ?? new Date().toISOString()}
