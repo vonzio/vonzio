@@ -325,12 +325,21 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
+            {/* autoFocus: the Modal mounts fresh on open, so focus lands here
+                and a plain Enter confirms (native button activation). */}
             <Button
               variant="danger"
               size="sm"
+              autoFocus
               onClick={() => { if (confirmDeleteId) { onDelete(confirmDeleteId); setConfirmDeleteId(null); } }}
             >
               Delete
+              <span
+                className="vz-kbd"
+                style={{ marginLeft: 6, background: "rgba(255,255,255,0.16)", borderColor: "rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.85)" }}
+              >
+                ⏎
+              </span>
             </Button>
           </>
         }
