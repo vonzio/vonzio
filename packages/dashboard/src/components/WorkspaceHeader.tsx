@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Shield } from "lucide-react";
+import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Shield, Copy, Check } from "lucide-react";
 import { Pill } from "@/brand/components.js";
 import { fetchProfileModels, type ProfileModel } from "@/api/client.js";
 import { MODEL_DISPLAY_FALLBACK } from "@/lib/model-display.js";
@@ -47,7 +47,7 @@ function pipColor(status: string, connected: boolean): string {
   }
 }
 
-function exportAsMarkdown(messages: ChatMessage[], workspaceName: string) {
+function buildMarkdown(messages: ChatMessage[], workspaceName: string): string {
   let md = `# ${workspaceName}\n\n---\n`;
   for (const msg of messages) {
     if (msg.role === "user") {
@@ -59,6 +59,11 @@ function exportAsMarkdown(messages: ChatMessage[], workspaceName: string) {
       md += `\n> Tool: ${msg.tool ?? "unknown"}\n> ${truncated.replace(/\n/g, "\n> ")}\n`;
     }
   }
+  return md;
+}
+
+function exportAsMarkdown(messages: ChatMessage[], workspaceName: string) {
+  const md = buildMarkdown(messages, workspaceName);
   const blob = new Blob([md], { type: "text/markdown" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -81,6 +86,7 @@ export function WorkspaceHeader({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(name ?? "");
   const [models, setModels] = useState<ProfileModel[]>([]);
+  const [convoCopied, setConvoCopied] = useState(false);
 
   // Load profile models so we can render a friendly display name in the readout.
   useEffect(() => {
@@ -292,6 +298,23 @@ export function WorkspaceHeader({
 
         <button
           type="button"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(buildMarkdown(messages, workspaceName));
+              setConvoCopied(true);
+              setTimeout(() => setConvoCopied(false), 1500);
+            } catch { /* clipboard unavailable (http origin) — no-op */ }
+          }}
+          className="vz-action-btn"
+          style={{ width: "auto", padding: "0 8px", gap: 5, fontSize: 12 }}
+          title="Copy conversation as Markdown"
+        >
+          {convoCopied ? <Check className="w-3 h-3" style={{ color: "var(--vz-ok)" }} /> : <Copy className="w-3 h-3" />}
+          <span className="hidden sm:inline">{convoCopied ? "Copied" : "Copy"}</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => exportAsMarkdown(messages, workspaceName)}
           className="vz-action-btn"
           style={{ width: "auto", padding: "0 8px", gap: 5, fontSize: 12 }}
@@ -311,10 +334,10 @@ export function WorkspaceHeader({
             color: panelOpen ? "var(--vz-sodium)" : "var(--vz-muted)",
             background: panelOpen ? "var(--vz-sodium-08)" : "transparent",
           }}
-          title={panelOpen ? "Hide panel" : "Show panel"}
+          title={panelOpen ? "Hide Deck" : "Show Deck"}
         >
           {panelOpen ? <PanelRightClose className="w-3 h-3" /> : <PanelRightOpen className="w-3 h-3" />}
-          <span className="hidden sm:inline">Panel</span>
+          <span className="hidden sm:inline">Deck</span>
         </button>
       </div>
     </div>

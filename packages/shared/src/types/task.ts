@@ -58,6 +58,10 @@ export interface TaskResult {
   output_tokens: number;
   cost_usd: number;
   turns: number;
+  /** True when this turn ended by hitting the per-round turn limit (max_turns)
+   *  rather than the agent stopping on its own. The goal loop uses this to
+   *  continue without a (blind) judge call. */
+  max_turns_hit?: boolean;
 }
 
 export interface Task {
@@ -81,6 +85,11 @@ export interface Task {
   retry?: RetryPolicy;
   /** In-memory only — not stored in DB. Passed from WS/API to orchestrator. */
   attachments?: TaskAttachment[];
+  /** In-memory only. Per-message goal-loop override; undefined → the profile's
+   *  auto_continue default decides. */
+  goal_mode?: boolean;
+  /** In-memory only. Acceptance criteria the completion judge evaluates. */
+  acceptance_criteria?: string[];
 
   created_at: string;
   started_at?: string;

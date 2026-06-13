@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square } from "lucide-react";
+import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
@@ -18,6 +18,8 @@ import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet.js";
 import { UserMenu } from "../components/UserMenu.js";
 import { MessageList } from "../components/MessageList.js";
 import { QuestionPicker } from "../components/ChatCore.js";
+import { reopenOnboarding } from "../components/OnboardingHost.js";
+import { Button } from "../brand/components.js";
 import { authClient } from "../lib/auth-client.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -43,6 +45,37 @@ type Attachment = {
   preview?: string;
 };
 
+// Extensions that, when loaded in the preview iframe, just dump source or
+// trigger a download instead of rendering a page. We never auto-open the
+// preview pane at one of these — otherwise an agent merely *mentioning*
+// `organize_files.py` hijacks the viewer into rendering raw script source.
+const NON_SERVABLE_PREVIEW_EXT = new Set([
+  "py", "rb", "sh", "bash", "zsh", "ts", "tsx", "jsx", "mjs", "cjs",
+  "go", "rs", "java", "kt", "c", "h", "cpp", "cc", "hpp", "php", "pl",
+  "lua", "swift", "scala", "clj", "ex", "exs", "r",
+  "md", "txt", "log", "yml", "yaml", "toml", "ini", "cfg", "conf",
+  "csv", "tsv", "sql", "env", "lock", "dockerfile", "makefile",
+]);
+
+// Only auto-open the preview pane for URLs that actually render as a page —
+// a server root, a directory, or HTML. A concrete source/script file is a
+// reference, not a running server, so we leave the pane where it is.
+function isServablePreviewTarget(url: string): boolean {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    // Schemeless or otherwise unparseable — strip host heuristically.
+    pathname = url.replace(/^[^/]*\/\/[^/]*/, "").split(/[?#]/)[0] || "/";
+  }
+  if (pathname === "" || pathname === "/" || pathname.endsWith("/")) return true;
+  const last = pathname.split("/").pop() ?? "";
+  const dot = last.lastIndexOf(".");
+  if (dot <= 0) return true; // no extension → treat as a route/page
+  const ext = last.slice(dot + 1).toLowerCase();
+  return !NON_SERVABLE_PREVIEW_EXT.has(ext);
+}
+
 // ─── Component ──────────────────────────────────────────────────────
 
 export function Workspace() {
@@ -50,7 +83,15 @@ export function Workspace() {
   const currentUser = useUser();
   const isAdmin = currentUser.role === "admin";
   const { id: routeId } = useParams<{ id: string }>();
-  const { data: profiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
+  const { data: profiles, refetch: refetchProfiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
+
+  // Drop the no-key gating live when a key/profile is added (e.g. via the
+  // welcome modal) — without this, profiles stay stale until a full reload.
+  useEffect(() => {
+    const onChange = () => { void refetchProfiles(); };
+    window.addEventListener("vonzio:profiles:changed", onChange);
+    return () => window.removeEventListener("vonzio:profiles:changed", onChange);
+  }, [refetchProfiles]);
 
   const { grouped, update, remove, refetch, loading: workspacesLoading } = useWorkspaces();
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(routeId ?? null);
@@ -74,6 +115,11 @@ export function Workspace() {
   });
   const [pendingNew, setPendingNew] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Goal-loop composer override. null = follow the profile's auto_continue
+  // default; true/false = explicit per-message choice. `goalCriteria` is the
+  // optional acceptance-criteria text (one per line).
+  const [goalModeOverride, setGoalModeOverride] = useState<boolean | null>(null);
+  const [goalCriteria, setGoalCriteria] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const isMobile = useIsMobile();
   const isNarrow = useIsNarrow();
@@ -124,6 +170,42 @@ export function Workspace() {
     return PANEL_DEFAULT;
   });
   const [isResizing, setIsResizing] = useState(false);
+
+  // Workspace-rail (task list) resize state. Width is global (not per-route)
+  // since the rail is the same across workspaces; persisted in localStorage.
+  const SIDEBAR_MIN = 200;
+  const SIDEBAR_MAX = 480;
+  const SIDEBAR_DEFAULT = 240;
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem("vonzio_sidebar_width");
+      if (saved) return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, parseInt(saved, 10) || SIDEBAR_DEFAULT));
+    } catch { /* ignore */ }
+    return SIDEBAR_DEFAULT;
+  });
+
+  const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startWidth + (ev.clientX - startX)));
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      setIsResizing(false);
+      try { localStorage.setItem("vonzio_sidebar_width", String(sidebarWidthRef.current)); } catch { /* ignore */ }
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [sidebarWidth]);
+  // Keep a ref so the mouseup handler persists the latest width without
+  // re-subscribing listeners on every drag tick.
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -230,8 +312,12 @@ export function Workspace() {
     if (!routeId) return;
     if (workspacesLoading) return;
     if (activeWorkspace) return;
+    // A just-created session navigates to /w/<id> BEFORE the workspace list
+    // refetches, so it isn't in the list yet — don't bounce it back to /
+    // (which stripped the session id from the URL on every new workspace).
+    if (routeId === activeWorkspaceId) return;
     navigate("/", { replace: true });
-  }, [routeId, workspacesLoading, activeWorkspace, navigate]);
+  }, [routeId, workspacesLoading, activeWorkspace, activeWorkspaceId, navigate]);
   // Resolve activeProfile in this order: real workspace owner → user's
   // empty-state pick from AgentPicker → first profile. The middle case
   // matters so the ModelPicker (and the rest of the composer chrome) shows
@@ -242,8 +328,20 @@ export function Workspace() {
     profiles?.find((p) => p.id === selectedProfileId) ??
     profiles?.[0];
   const profileName = activeProfile?.name ?? "Default";
+
+  // Effective goal-loop ("Run until done") state: explicit composer override
+  // wins, else the profile's auto_continue default. Criteria are one per line.
+  const effectiveGoalMode = goalModeOverride ?? (activeProfile?.auto_continue ?? false);
+  const goalCriteriaList = goalCriteria
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const defaultProfileId = profiles?.[0]?.id ?? "";
   const hasApiKey = activeProfile?.api_key_id ? true : false;
+  // Only treat "no key" as actionable once profiles have actually loaded —
+  // `profiles` is undefined mid-fetch, which would otherwise flash the
+  // add-key CTA + disable the composer for users who DO have a key.
+  const keyMissing = profiles !== undefined && !hasApiKey;
 
   // Derive the preview URL pattern from the template the server publishes
   // (e.g. "https://{container_id}-{port}.app.vonz.io" in prod,
@@ -278,7 +376,7 @@ export function Workspace() {
   // Scan text for a vonzio preview URL and open the Preview panel
   const openPreviewFromText = useCallback((text: string) => {
     const match = text.match(PREVIEW_URL_REGEX);
-    if (match) {
+    if (match && isServablePreviewTarget(match[0])) {
       setPreviewUrl(match[0]);
       setPanelTab("preview");
       setPanelOpen(true);
@@ -289,7 +387,7 @@ export function Workspace() {
   const handleToolResult = useCallback((tool: string, output: string) => {
     // First check for a full vonzio preview URL in the output
     const previewMatch = output.match(PREVIEW_URL_REGEX);
-    if (previewMatch) {
+    if (previewMatch && isServablePreviewTarget(previewMatch[0])) {
       setPreviewUrl(previewMatch[0]);
       setPanelTab("preview");
       setPanelOpen(true);
@@ -499,6 +597,10 @@ export function Workspace() {
     setInput("");
     if (activeWorkspaceId) clearDraft(activeWorkspaceId);
     setAttachments([]);
+    // Clear the per-message acceptance-criteria field on send (the goal_mode
+    // toggle persists; criteria are per message). goalCriteriaList is already
+    // captured above for this send, so clearing the state here is safe.
+    setGoalCriteria("");
     setUserScrolledUp(false);
 
     if (!activeWorkspaceId) {
@@ -533,13 +635,13 @@ export function Workspace() {
       }
 
       setTimeout(() => {
-        chat.send(text, atts);
+        chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList });
         refetch();
       }, 100);
       return;
     }
 
-    chat.send(text, atts);
+    chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList });
   }
 
   async function handleLogout() {
@@ -554,7 +656,9 @@ export function Workspace() {
       ? "Thinking..."
       : chat.agentStatus.state === "tool"
         ? `Running ${chat.agentStatus.tool}...`
-        : null;
+        : chat.agentStatus.state === "judging"
+          ? "Checking goal..."
+          : null;
 
   // ─── Suggestion chips ────────────────────────────────────────────
   const suggestions = [
@@ -590,17 +694,29 @@ export function Workspace() {
           </SheetContent>
         </Sheet>
       ) : (
-        <div className="flex flex-col h-full shrink-0">
-          <WorkspaceSidebar
-            grouped={grouped}
-            activeId={activeWorkspaceId}
-            onSelect={handleSelect}
-            onCreate={handleCreate}
-            onUpdate={(id, fields) => update(id, fields)}
-            onDelete={async (id) => {
-              await remove(id);
-              if (activeWorkspaceId === id) handleCreate();
-            }}
+        <div className="flex h-full shrink-0">
+          <div className="flex flex-col h-full" style={{ width: sidebarWidth }}>
+            <WorkspaceSidebar
+              grouped={grouped}
+              activeId={activeWorkspaceId}
+              onSelect={handleSelect}
+              onCreate={handleCreate}
+              onUpdate={(id, fields) => update(id, fields)}
+              onDelete={async (id) => {
+                await remove(id);
+                if (activeWorkspaceId === id) handleCreate();
+              }}
+            />
+          </div>
+          {/* Drag handle on the rail's right edge — same mechanism as the
+              right panel. 1px hit area widened by padding via the hover ring. */}
+          <div
+            onMouseDown={handleSidebarResizeStart}
+            className="w-1 cursor-col-resize flex-shrink-0 transition-colors"
+            style={{ background: isResizing ? "var(--vz-sodium)" : "transparent" }}
+            onMouseEnter={(e) => { if (!isResizing) (e.currentTarget as HTMLElement).style.background = "var(--vz-border)"; }}
+            onMouseLeave={(e) => { if (!isResizing) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            title="Drag to resize"
           />
         </div>
       )}
@@ -668,16 +784,6 @@ export function Workspace() {
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
             >
-              {/* Drag overlay */}
-              {dragOver && (
-                <div
-                  className="absolute inset-0 z-10 border-2 border-dashed rounded-lg flex items-center justify-center pointer-events-none"
-                  style={{ background: "var(--vz-sodium-08)", borderColor: "var(--vz-sodium)" }}
-                >
-                  <div style={{ color: "var(--vz-sodium)", fontWeight: 500, fontSize: 14 }}>Drop files here</div>
-                </div>
-              )}
-
               {chat.messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full gap-6 px-4">
                   {!activeWorkspaceId || pendingNew ? (
@@ -689,12 +795,22 @@ export function Workspace() {
                         <rect x="190" y="330" width="132" height="28" rx="14" fill="var(--vz-brand-on-tile)"/>
                       </svg>
                       <div className="text-center">
-                        <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--vz-ink)" }}>How can I help?</h2>
+                        <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--vz-ink)" }}>
+                          {keyMissing ? "Add an API key to get started" : "How can I help?"}
+                        </h2>
                         <p className="text-sm text-muted-foreground">
-                          {(profiles?.length ?? 0) > 1 ? "Select a profile and start a conversation" : "Start a conversation"}
+                          {keyMissing
+                            ? "You'll need a provider key before you can chat — it takes a few seconds."
+                            : ((profiles?.length ?? 0) > 1 ? "Select a profile and start a conversation" : "Start a conversation")}
                         </p>
                       </div>
-                      {(profiles?.length ?? 0) > 1 && (
+                      {keyMissing && (
+                        <Button onClick={() => reopenOnboarding()}>
+                          <Key className="w-4 h-4 mr-1.5" />
+                          Add API key
+                        </Button>
+                      )}
+                      {!keyMissing && (profiles?.length ?? 0) > 1 && (
                         <AgentPicker
                           profiles={profiles!}
                           value={selectedProfileId || defaultProfileId || null}
@@ -741,6 +857,20 @@ export function Workspace() {
                 </div>
               )}
             </div>
+
+            {/* Drag overlay — sibling of the scroll container so `inset-0`
+                resolves against the non-scrolling wrapper (the visible
+                viewport), not the full scroll-content height. Otherwise the
+                dashed border + label drift to the middle/top of the content
+                when the thread is scrolled. */}
+            {dragOver && (
+              <div
+                className="absolute inset-0 z-20 border-2 border-dashed rounded-lg flex items-center justify-center pointer-events-none"
+                style={{ background: "var(--vz-sodium-08)", borderColor: "var(--vz-sodium)" }}
+              >
+                <div style={{ color: "var(--vz-sodium)", fontWeight: 500, fontSize: 14 }}>Drop files here</div>
+              </div>
+            )}
 
             {/* Scroll to bottom button */}
             {showScrollBtn && (
@@ -792,8 +922,43 @@ export function Workspace() {
               </div>
             )}
 
-            {/* Question picker — replaces input area when active */}
-            {chat.pendingQuestion ? (
+            {/* Bottom-area precedence: no-key guidance → pending question →
+                composer. The composer is never shown without a key — a
+                disabled one just reads as broken. In the empty/new state the
+                hero already shows an "Add API key" CTA (so render nothing
+                here); in an existing conversation we show a compact CTA banner
+                in the composer's place. */}
+            {keyMissing ? (
+              (!activeWorkspaceId || pendingNew) ? null : (
+                <div className="pt-2" style={{ pointerEvents: "auto" }}>
+                  <div className="max-w-3xl mx-auto">
+                    <div
+                      className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm"
+                      style={{
+                        background: "rgba(245, 158, 11, 0.08)",
+                        border: "1px solid rgba(245, 158, 11, 0.30)",
+                        color: "var(--vz-warn)",
+                      }}
+                    >
+                      <Key className="w-4 h-4 shrink-0" />
+                      <span className="flex-1">No API key configured — add one to continue this conversation.</span>
+                      <button
+                        type="button"
+                        onClick={() => reopenOnboarding()}
+                        style={{
+                          background: "var(--vz-sodium)", color: "#fff",
+                          padding: "5px 12px", borderRadius: "var(--vz-radius-sm)",
+                          fontSize: 12.5, fontWeight: 500, cursor: "pointer", border: "none",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Add API key
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : chat.pendingQuestion ? (
               <div className="pt-2" style={{ pointerEvents: "auto" }}>
                 <QuestionPicker
                   question={chat.pendingQuestion.question}
@@ -806,22 +971,6 @@ export function Workspace() {
 
             /* Input area — floats at bottom */
             <div className="pt-2" style={{ pointerEvents: "auto" }}>
-              {/* No API key warning */}
-              {!hasApiKey && activeWorkspaceId && !pendingNew && (
-                <div className="max-w-3xl mx-auto mb-2">
-                  <div
-                    className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm"
-                    style={{
-                      background: "rgba(245, 158, 11, 0.08)",
-                      border: "1px solid rgba(245, 158, 11, 0.30)",
-                      color: "var(--vz-warn)",
-                    }}
-                  >
-                    <Key className="w-4 h-4 shrink-0" />
-                    <span>No API key linked to this profile. <a href="/agents" style={{ textDecoration: "underline", fontWeight: 500 }}>Open Profiles</a> to attach one.</span>
-                  </div>
-                </div>
-              )}
               <div className="max-w-3xl mx-auto">
                 {/* Suggestion strip — anchored to the composer, only in
                     the empty state. Single horizontal row that scrolls
@@ -893,6 +1042,27 @@ export function Workspace() {
                     </div>
                   )}
 
+                  {/* Goal-loop acceptance criteria (shown when "Run until done"
+                      is on) — one criterion per line; the judge checks these. */}
+                  {effectiveGoalMode && (
+                    <textarea
+                      value={goalCriteria}
+                      onChange={(e) => setGoalCriteria(e.target.value)}
+                      placeholder="Acceptance criteria (optional, one per line) — what 'done' means"
+                      rows={2}
+                      className="w-full resize-none mb-2 text-xs focus:outline-none"
+                      style={{
+                        color: "var(--vz-ink)",
+                        fontFamily: "var(--vz-font-sans)",
+                        background: "var(--vz-mute)",
+                        border: "1px solid var(--vz-border)",
+                        borderRadius: "var(--vz-radius-sm)",
+                        padding: "6px 8px",
+                        lineHeight: 1.5,
+                      }}
+                    />
+                  )}
+
                   {/* Textarea */}
                   <textarea
                     ref={inputRef}
@@ -902,8 +1072,8 @@ export function Workspace() {
                       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
                     }}
                     onPaste={handlePaste}
-                    placeholder={!hasApiKey && activeWorkspaceId ? "No API key linked…" : "Message vonzio…"}
-                    disabled={chat.streaming || (!chat.connected && !!activeWorkspaceId) || (!hasApiKey && !!activeWorkspaceId && !pendingNew)}
+                    placeholder="Message vonzio…"
+                    disabled={chat.streaming || (!chat.connected && !!activeWorkspaceId)}
                     rows={1}
                     className="w-full resize-none border-0 bg-transparent text-sm focus:outline-none"
                     style={{
@@ -948,6 +1118,30 @@ export function Workspace() {
                         e.target.value = "";
                       }}
                     />
+
+                    {/* "Run until done" (goal-loop) toggle — the agent keeps
+                        working until an independent judge says the goal is met.
+                        Defaults to the profile's auto_continue; click to override
+                        for this message. */}
+                    <button
+                      type="button"
+                      onClick={() => setGoalModeOverride(!effectiveGoalMode)}
+                      title={effectiveGoalMode ? "Run until done: ON — agent loops until the goal is judged complete" : "Run until done: off"}
+                      aria-pressed={effectiveGoalMode}
+                      style={{
+                        height: 28, padding: "0 8px", borderRadius: "var(--vz-radius-sm)",
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        background: effectiveGoalMode ? "var(--vz-accent, #00BFA5)" : "var(--vz-mute)",
+                        border: `1px solid ${effectiveGoalMode ? "var(--vz-accent, #00BFA5)" : "var(--vz-border)"}`,
+                        color: effectiveGoalMode ? "#fff" : "var(--vz-muted)",
+                        cursor: "pointer", fontSize: 11, fontWeight: 500,
+                        fontFamily: "var(--vz-font-sans)",
+                        transition: "color var(--vz-fast) var(--vz-ease), background var(--vz-fast) var(--vz-ease), border-color var(--vz-fast) var(--vz-ease)",
+                      }}
+                    >
+                      <Target className="w-3.5 h-3.5" />
+                      Run until done
+                    </button>
 
                     {/* Meta line: model picker · workspace context. Must be a
                         <div> (the ModelPicker renders a block-level wrapper
@@ -1013,16 +1207,16 @@ export function Workspace() {
                           />
                         );
                       })}
-                      {activeWorkspace?.name && (
-                        <>
-                          <span style={{ color: "var(--vz-muted-2)", padding: "0 2px" }}> · </span>
-                          <span className="truncate" style={{ minWidth: 0 }}>{activeWorkspace.name}</span>
-                        </>
-                      )}
+                      {/* Workspace title intentionally NOT repeated here — it
+                          already lives in the header; duplicating it in the
+                          composer meta line just crowds the footer. */}
                     </div>
 
-                    {/* Send / Stop */}
-                    {chat.streaming ? (
+                    {/* Send / Stop. Stop must track "agent busy", not just
+                        token streaming — during a long tool run (e.g. a
+                        5-minute Bash command) no tokens stream, but the turn
+                        is very much cancellable. */}
+                    {(chat.streaming || chat.agentStatus.state !== "idle") ? (
                       <button
                         onClick={() => chat.cancel()}
                         title="Stop agent"
@@ -1082,12 +1276,13 @@ export function Workspace() {
           isNarrow ? (
             <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
               <SheetContent side="right" showCloseButton={false} className="w-[85vw] sm:max-w-[480px] p-0">
-                <SheetTitle className="sr-only">Panel</SheetTitle>
+                <SheetTitle className="sr-only">Deck</SheetTitle>
                 <RightPanel
                   workspaceId={activeWorkspaceId}
                   containerId={chat.containerId}
                   containerName={chat.containerName}
                   profileName={profileName}
+                  profileId={activeWorkspace?.profile_id ?? activeProfile?.id ?? null}
                   workspaceStatus={activeWorkspace?.status ?? "unknown"}
                   persistent={activeWorkspace?.persistent ?? false}
                   createdAt={activeWorkspace?.created_at ?? new Date().toISOString()}
@@ -1121,6 +1316,7 @@ export function Workspace() {
                   containerId={chat.containerId}
                   containerName={chat.containerName}
                   profileName={profileName}
+                  profileId={activeWorkspace?.profile_id ?? activeProfile?.id ?? null}
                   workspaceStatus={activeWorkspace?.status ?? "unknown"}
                   persistent={activeWorkspace?.persistent ?? false}
                   createdAt={activeWorkspace?.created_at ?? new Date().toISOString()}

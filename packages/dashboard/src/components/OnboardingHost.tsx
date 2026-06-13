@@ -28,14 +28,27 @@ function markDismissed(stepId: string): void {
   } catch { /* private mode etc — accept that the modal will re-pop */ }
 }
 
+/** Imperatively reopen onboarding (e.g. the "Add API key" CTA after a Skip).
+ *  Clears the per-session dismissal so the host re-pops the matching step. */
+export const REOPEN_ONBOARDING_EVENT = "vonzio:onboarding:reopen";
+export function reopenOnboarding(): void {
+  try {
+    // Drop every dismissal so the host re-evaluates predicates from scratch.
+    for (const step of getOnboardingSteps()) {
+      sessionStorage.removeItem(DISMISS_KEY_PREFIX + step.id);
+    }
+  } catch { /* private mode — predicates still re-run below */ }
+  window.dispatchEvent(new Event(REOPEN_ONBOARDING_EVENT));
+}
+
 export function OnboardingHost() {
   const [active, setActive] = useState<OnboardingStepReg | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const scan = async (force = false) => {
       for (const step of getOnboardingSteps()) {
-        if (isDismissed(step.id)) continue;
+        if (!force && isDismissed(step.id)) continue;
         try {
           const matches = step.predicate ? await step.predicate() : true;
           if (cancelled) return;
@@ -48,8 +61,11 @@ export function OnboardingHost() {
           // skip and try the next one.
         }
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void scan();
+    const onReopen = () => { void scan(true); };
+    window.addEventListener(REOPEN_ONBOARDING_EVENT, onReopen);
+    return () => { cancelled = true; window.removeEventListener(REOPEN_ONBOARDING_EVENT, onReopen); };
   }, []);
 
   if (!active) return null;

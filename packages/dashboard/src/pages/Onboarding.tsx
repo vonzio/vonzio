@@ -1,4 +1,7 @@
 import { useState, useEffect, type FormEvent } from "react";
+import { PROVIDER_CATALOG, type ProviderInfo } from "@vonzio/shared";
+import { createProfile } from "../api/client.js";
+import { ThemeToggle } from "../components/ThemeToggle.js";
 import "./login.css";
 
 /**
@@ -18,41 +21,13 @@ import "./login.css";
  * post-signup journey looks like one cohesive flow.
  */
 
-type CredentialKind = "anthropic_key" | "openai" | "ollama";
+// Provider metadata comes from the shared PROVIDER_CATALOG (single source of
+// truth) so this wizard, the first-key modal, and Settings → keys never drift.
+type CredentialKind = ProviderInfo["kind"];
 
-const CRED_META: Record<CredentialKind, {
-  label: string;
-  hint: string;
-  fieldLabel: string;
-  placeholder: string;
-  keyName: string;
-  provider: "api_key" | "ollama" | "openai";
-}> = {
-  anthropic_key: {
-    label: "Anthropic API key",
-    hint: "From console.anthropic.com — starts with sk-ant-",
-    fieldLabel: "API key",
-    placeholder: "sk-ant-...",
-    keyName: "Anthropic API key",
-    provider: "api_key",
-  },
-  openai: {
-    label: "OpenAI (or OpenAI-compatible)",
-    hint: "From platform.openai.com — starts with sk-. Also Azure / OpenRouter / vLLM / LM Studio via OPENAI_BASE_URL.",
-    fieldLabel: "OpenAI API key",
-    placeholder: "sk-...",
-    keyName: "OpenAI",
-    provider: "openai",
-  },
-  ollama: {
-    label: "Ollama Cloud API key",
-    hint: "From ollama.com — paid tier required for now (local Ollama coming later)",
-    fieldLabel: "Ollama API key",
-    placeholder: "Paste Ollama Cloud key",
-    keyName: "Ollama Cloud",
-    provider: "ollama",
-  },
-};
+const CRED_META = Object.fromEntries(
+  PROVIDER_CATALOG.map((p) => [p.kind, p]),
+) as Record<CredentialKind, ProviderInfo>;
 
 interface ProfileModel {
   id: string;
@@ -75,7 +50,22 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
   const [baseUrl, setBaseUrl] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Cautious-user escape hatch: create a keyless default agent and enter the
+  // app. The workspace's no-key state then prompts to add a key when ready.
+  async function onSkip() {
+    setError(null);
+    setSkipping(true);
+    try {
+      await createProfile({ name: "default" });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't set up a workspace to explore.");
+      setSkipping(false);
+    }
+  }
 
   async function onCredentialSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -93,7 +83,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          name: meta.keyName,
+          name: meta.defaultKeyName,
           provider: meta.provider,
           api_key: trimmed,
           ...(kind === "openai" ? { base_url: baseUrl.trim() || undefined } : {}),
@@ -120,7 +110,10 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
   }
 
   return (
-    <div className="sodium-shell" data-surface="carbon">
+    <div className="sodium-shell">
+      <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10 }}>
+        <ThemeToggle className="vz-action-btn" />
+      </div>
       <div className="login-stage">
         <a href="/" className="login-brand" aria-label="vonzio">
           <span className="vm" aria-hidden="true">
@@ -147,6 +140,8 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
             submitting={submitting}
             error={error}
             onSubmit={onCredentialSubmit}
+            onSkip={onSkip}
+            skipping={skipping}
           />
         ) : (
           <ModelStep
@@ -164,7 +159,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
 }
 
 function CredentialStep({
-  kind, setKind, secret, setSecret, baseUrl, setBaseUrl, showAdvanced, setShowAdvanced, submitting, error, onSubmit,
+  kind, setKind, secret, setSecret, baseUrl, setBaseUrl, showAdvanced, setShowAdvanced, submitting, error, onSubmit, onSkip, skipping,
 }: {
   kind: CredentialKind;
   setKind: (k: CredentialKind) => void;
@@ -177,6 +172,8 @@ function CredentialStep({
   submitting: boolean;
   error: string | null;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
+  onSkip: () => void;
+  skipping: boolean;
 }) {
   return (
     <div className="login-card">
@@ -233,7 +230,7 @@ function CredentialStep({
           <button
             type="button"
             onClick={() => setShowAdvanced(true)}
-            style={{ alignSelf: "flex-start", background: "none", border: 0, color: "var(--vz-muted, #888)", fontSize: "0.8rem", cursor: "pointer", padding: 0, fontFamily: "inherit" }}
+            style={{ alignSelf: "flex-start", background: "none", border: 0, color: "var(--vz-muted)", fontSize: "0.8rem", cursor: "pointer", padding: 0, fontFamily: "inherit" }}
           >
             + Advanced — use a custom OpenAI-compatible endpoint
           </button>
@@ -244,9 +241,21 @@ function CredentialStep({
         <button
           type="submit"
           className="vz-btn vz-btn--primary vz-btn--mono login-submit"
-          disabled={submitting}
+          disabled={submitting || skipping}
         >
           {submitting ? "Validating credential…" : "Continue →"}
+        </button>
+
+        {/* Escape hatch for a cautious user: create a keyless default agent and
+            drop into the app. The workspace's no-key state guides them to add a
+            key when ready, so they can look around first. */}
+        <button
+          type="button"
+          onClick={onSkip}
+          disabled={submitting || skipping}
+          style={{ alignSelf: "center", background: "none", border: 0, color: "var(--vz-muted)", fontSize: "0.8rem", cursor: "pointer", padding: "2px 0", marginTop: 2, fontFamily: "inherit", textDecoration: "underline" }}
+        >
+          {skipping ? "Setting up…" : "Skip for now — explore without a key"}
         </button>
 
         <p className="login-tos">
@@ -362,10 +371,10 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
                   width: "100%",
                   padding: "0.55rem 0.75rem",
                   fontSize: "0.85rem",
-                  fontFamily: "var(--vz-mono, monospace)",
-                  background: "var(--vz-input-bg, transparent)",
-                  color: "var(--vz-ink, inherit)",
-                  border: "1px solid var(--vz-line, #2a3340)",
+                  fontFamily: "var(--vz-font-mono)",
+                  background: "var(--vz-mute)",
+                  color: "var(--vz-ink)",
+                  border: "1px solid var(--vz-border)",
                   borderRadius: 8,
                   outline: "none",
                   marginBottom: "0.1rem",
@@ -405,7 +414,7 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
                   gap: "0.7rem",
                   alignItems: "flex-start",
                   padding: "0.65rem 0.85rem",
-                  border: `1px solid ${chosen === m.id ? "var(--vz-sodium)" : "var(--vz-line, #2a3340)"}`,
+                  border: `1px solid ${chosen === m.id ? "var(--vz-sodium)" : "var(--vz-border)"}`,
                   borderRadius: 8,
                   cursor: "pointer",
                   background: chosen === m.id ? "rgba(0, 191, 165, 0.06)" : "transparent",
@@ -422,7 +431,7 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
                 />
                 <span style={{ display: "flex", flexDirection: "column", gap: "0.15rem", flex: 1 }}>
                   <span style={{ fontWeight: 500 }}>{m.display_name ?? m.id}</span>
-                  <span style={{ fontSize: "0.78rem", opacity: 0.6, fontFamily: "var(--vz-mono, monospace)" }}>{m.id}</span>
+                  <span style={{ fontSize: "0.78rem", opacity: 0.6, fontFamily: "var(--vz-font-mono)" }}>{m.id}</span>
                 </span>
               </label>
             ))}
@@ -467,7 +476,7 @@ function CredOption({
         gap: "0.7rem",
         alignItems: "flex-start",
         padding: "0.75rem 0.9rem",
-        border: `1px solid ${selected ? "var(--vz-sodium)" : "var(--vz-line, #2a3340)"}`,
+        border: `1px solid ${selected ? "var(--vz-sodium)" : "var(--vz-border)"}`,
         borderRadius: 8,
         cursor: "pointer",
         background: selected ? "rgba(0, 191, 165, 0.06)" : "transparent",

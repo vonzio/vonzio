@@ -109,7 +109,23 @@ export class DockerManager implements ContainerManager {
     });
 
     if (stdin) {
-      stream.write(stdin);
+      // Swallow write-side errors: when the process exits before consuming all
+      // of stdin (a fast crash, or a model error on a big payload), the pipe
+      // breaks with EPIPE. That must NOT crash us — the process's real output
+      // is on stdout, which we still drain below. Without this handler the
+      // error is unhandled and surfaces as a cryptic "write EPIPE".
+      stream.on("error", () => { /* broken pipe — handled via stdout below */ });
+      const buf = Buffer.from(stdin);
+      // Honor backpressure so large payloads (e.g. multi-MB knowledge docs)
+      // aren't truncated by an immediate end() — wait for drain before closing.
+      if (!stream.write(buf)) {
+        await new Promise<void>((resolve) => {
+          const done = () => { stream.off("drain", done); stream.off("error", done); stream.off("close", done); resolve(); };
+          stream.once("drain", done);
+          stream.once("error", done);
+          stream.once("close", done);
+        });
+      }
       stream.end();
     }
 
@@ -118,21 +134,27 @@ export class DockerManager implements ContainerManager {
     // We need to demux to get clean text output.
     let buffer = Buffer.alloc(0);
 
-    for await (const chunk of stream) {
-      buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+    try {
+      for await (const chunk of stream) {
+        buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
 
-      while (buffer.length >= 8) {
-        const size = buffer.readUInt32BE(4);
-        if (buffer.length < 8 + size) break;
+        while (buffer.length >= 8) {
+          const size = buffer.readUInt32BE(4);
+          if (buffer.length < 8 + size) break;
 
-        const payload = buffer.subarray(8, 8 + size).toString("utf8");
-        buffer = buffer.subarray(8 + size);
+          const payload = buffer.subarray(8, 8 + size).toString("utf8");
+          buffer = buffer.subarray(8 + size);
 
-        const lines = payload.split("\n");
-        for (const line of lines) {
-          if (line.trim()) yield line;
+          const lines = payload.split("\n");
+          for (const line of lines) {
+            if (line.trim()) yield line;
+          }
         }
       }
+    } catch {
+      // Socket error (e.g. the process exited and broke the pipe). Whatever it
+      // emitted on stdout before exiting was already yielded — stop cleanly
+      // instead of throwing, so callers see the real output, not a pipe error.
     }
 
     // Flush any remaining data (in case stream ended mid-frame)

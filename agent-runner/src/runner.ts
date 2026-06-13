@@ -138,14 +138,23 @@ export async function runTask(payload: TaskPayload): Promise<void> {
         session_id: (message as Record<string, unknown>).session_id as string,
       });
     } else if (message.type === "assistant") {
-      // New SDK: full assistant message with content blocks
+      // New SDK: full assistant message with content blocks.
       const m = message as Record<string, unknown>;
       const msg = m.message as Record<string, unknown> | undefined;
       if (msg?.content && Array.isArray(msg.content)) {
-        for (const block of msg.content as Array<Record<string, unknown>>) {
+        const blocks = msg.content as Array<Record<string, unknown>>;
+        // Emit the turn's narration (text) BEFORE its tool calls. Within one
+        // assistant turn the model speaks then acts, but some providers/gateways
+        // (e.g. OpenAI-compatible → Anthropic translation) order the tool_use
+        // block ahead of the text in the content array — which would render the
+        // tool call above the explanation. Two passes keep text-before-tools.
+        for (const block of blocks) {
           if (block.type === "text" && block.text) {
             emit({ type: "token", text: block.text as string });
-          } else if (block.type === "tool_use") {
+          }
+        }
+        for (const block of blocks) {
+          if (block.type === "tool_use") {
             emit({
               type: "tool_use",
               tool: block.name as string,

@@ -1,4 +1,5 @@
 import { useState, useEffect, type FormEvent } from "react";
+import { ThemeToggle } from "../components/ThemeToggle.js";
 
 /**
  * Accept-invite landing. Matches the Login page's brand surface
@@ -8,7 +9,10 @@ import { useState, useEffect, type FormEvent } from "react";
  */
 function AuthShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="sodium-shell" data-surface="carbon">
+    <div className="sodium-shell">
+      <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10 }}>
+        <ThemeToggle className="vz-action-btn" />
+      </div>
       <div className="login-stage">
         <a href="/" className="login-brand" aria-label="vonzio">
           <span className="vm" aria-hidden="true">

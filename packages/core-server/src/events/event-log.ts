@@ -47,7 +47,10 @@ export class EventLog {
   flushTokens(sessionId: string): void {
     const buf = this.tokenBuffers.get(sessionId);
     if (buf) {
-      this.writeEvent(sessionId, "text", { text: buf });
+      // Include type in the data payload: the WS replay path forwards `data`
+      // to the client, whose dispatch switches on data.type. (The replay
+      // sender also falls back to the envelope type for old logs.)
+      this.writeEvent(sessionId, "text", { type: "text", text: buf });
       this.tokenBuffers.delete(sessionId);
     }
   }

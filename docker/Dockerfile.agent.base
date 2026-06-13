@@ -41,6 +41,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping net-tools dnsutils \
     jq tree less vim ripgrep fd-find \
     zip unzip rsync \
+    # poppler-utils gives `pdftotext` — lets agents on non-Anthropic models
+    # (Ollama/OpenAI-compat) extract PDF text to a string they CAN read, since
+    # those models can't ingest PDF/image content blocks the way Anthropic's
+    # native Read does. ~3 MB. See the provider-aware knowledge guidance.
+    poppler-utils \
     build-essential cmake pkg-config \
     python3 python3-pip python3-venv \
     chromium \

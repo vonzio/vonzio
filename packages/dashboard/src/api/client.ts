@@ -261,6 +261,8 @@ export interface ProfileSummary {
   model?: string | null;
   default_tools: string[];
   concurrency_limit: number;
+  /** Profile default for the composer's "Run until done" (goal-loop) toggle. */
+  auto_continue?: boolean;
   user_id?: string | null;
   /** SaaS-only — true when this row was materialized from an
    *  org_profile (team-shared agent). Read-only for members. */
@@ -283,6 +285,47 @@ export function updateProfile(id: string, body: Record<string, unknown>): Promis
 
 export function deleteProfile(id: string): Promise<{ status: string }> {
   return request(`/profiles/${id}`, { method: "DELETE" });
+}
+
+// ── Per-agent knowledge documents (mounted read-only into containers at /knowledge) ──
+export interface ProfileDocument {
+  id: string;
+  profile_id: string;
+  name: string;
+  media_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export function fetchProfileDocuments(profileId: string): Promise<ProfileDocument[]> {
+  return request(`/profiles/${profileId}/documents`);
+}
+
+export function uploadProfileDocument(
+  profileId: string,
+  body: { name: string; media_type: string; content_b64: string },
+): Promise<ProfileDocument> {
+  return request(`/profiles/${profileId}/documents`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function deleteProfileDocument(profileId: string, docId: string): Promise<{ status: string }> {
+  return request(`/profiles/${profileId}/documents/${docId}`, { method: "DELETE" });
+}
+
+// Workspace-scoped knowledge docs (only mounted for that conversation).
+export function fetchWorkspaceDocuments(sessionId: string): Promise<ProfileDocument[]> {
+  return request(`/workspaces/${sessionId}/documents`);
+}
+
+export function uploadWorkspaceDocument(
+  sessionId: string,
+  body: { name: string; media_type: string; content_b64: string },
+): Promise<ProfileDocument> {
+  return request(`/workspaces/${sessionId}/documents`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function deleteWorkspaceDocument(sessionId: string, docId: string): Promise<{ status: string }> {
+  return request(`/workspaces/${sessionId}/documents/${docId}`, { method: "DELETE" });
 }
 
 export interface ProfileModel {

@@ -5,7 +5,9 @@ export type AgentStatus =
   | { state: "idle" }
   | { state: "waiting" }
   | { state: "thinking" }
-  | { state: "tool"; tool: string };
+  | { state: "tool"; tool: string }
+  // Goal loop: the independent judge is verifying the workspace.
+  | { state: "judging" };
 
 export interface UseWorkspaceChatOptions {
   sessionId: string | null;
@@ -35,6 +37,9 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
   // replacing "the last assistant message" which fails when a user_message
   // or system entry arrives between the last token and turn.done.
   const streamingMsgIdRef = useRef<string | null>(null);
+  // Content of the most recent full-text "text" event (replay / third-party
+  // surfaces). Lets turn.done skip re-appending an identical result_text.
+  const lastTextEventRef = useRef<string | null>(null);
   const suppressNextAssistantRef = useRef(false);
   const replayingRef = useRef(false);
   // Tracks the most recent AskUserQuestion seen during the current replay.
@@ -68,6 +73,22 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     const eventTime = () => new Date((msg._ts as number) ?? Date.now());
     const log = (entry: string) => { if (!isReplay) onLogEntryRef.current?.(entry); };
     const ts = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+    // Cross-session guard: the WS connection stays subscribed to every
+    // session visited (or started) during its lifetime, so events for OTHER
+    // workspaces arrive here too. Without this, another workspace's tokens,
+    // tool calls, and goal cards append into the currently-open timeline.
+    // session.ready is exempt — it fires while a NEW session is being
+    // created, before currentSessionIdRef has caught up.
+    const msgSession = msg.session_id as string | undefined;
+    if (
+      msg.type !== "session.ready" &&
+      msgSession &&
+      currentSessionIdRef.current &&
+      msgSession !== currentSessionIdRef.current
+    ) {
+      return;
+    }
 
     switch (msg.type) {
       case "session.replay_start":
@@ -109,10 +130,15 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           timestamp: new Date(msg.ts as number ?? Date.now()),
           images: msg.images as string[] | undefined,
           files: msg.files as Array<{ name: string; type: "image" | "document" }> | undefined,
+          acceptanceCriteria: msg.acceptance_criteria as string[] | undefined,
         }]);
         break;
       case "text": {
         const textContent = (msg.text as string) ?? "";
+        // Remember the latest replayed/full-text segment so turn.done can
+        // tell "this turn's text already rendered" and skip re-appending
+        // its result_text (which would duplicate the final paragraph).
+        lastTextEventRef.current = textContent;
         setMessages((prev) => [...prev, {
           id: nextId(), role: "assistant", content: textContent,
           timestamp: new Date(msg.ts as number ?? Date.now()),
@@ -135,7 +161,19 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         }
         break;
       case "tool_use": {
+        // End the current assistant segment at the tool boundary: clear the
+        // buffer AND drop the streaming bubble id, so any text after the tool
+        // starts a NEW bubble below the tool call (preserves order) instead of
+        // overwriting the pre-tool text in its original position.
+        // Remember the segment we just streamed so turn.done can dedup its
+        // result_text against it. On the LIVE path no "text" event ever sets
+        // lastTextEventRef (the server only relays tokens), so without this a
+        // turn whose final action is a tool call would re-append result_text
+        // as a duplicate bubble of text already streamed. Only overwrite with
+        // a non-empty segment so an empty boundary clear doesn't wipe it.
+        if (streamBufferRef.current) lastTextEventRef.current = streamBufferRef.current;
         streamBufferRef.current = "";
+        streamingMsgIdRef.current = null;
         setStreaming(false);
         setAgentStatus({ state: "tool", tool: (msg.tool as string) ?? "" });
         const toolName = msg.tool as string;
@@ -181,7 +219,17 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         break;
       }
       case "tool_result": {
+        // Same as tool_use: end the assistant segment at the boundary so
+        // post-tool text starts a fresh bubble in the right order.
+        // Remember the segment we just streamed so turn.done can dedup its
+        // result_text against it. On the LIVE path no "text" event ever sets
+        // lastTextEventRef (the server only relays tokens), so without this a
+        // turn whose final action is a tool call would re-append result_text
+        // as a duplicate bubble of text already streamed. Only overwrite with
+        // a non-empty segment so an empty boundary clear doesn't wipe it.
+        if (streamBufferRef.current) lastTextEventRef.current = streamBufferRef.current;
         streamBufferRef.current = "";
+        streamingMsgIdRef.current = null;
         setStreaming(false);
         const toolOutput = (msg.output as string) ?? "";
         const resultTool = msg.tool as string;
@@ -235,6 +283,65 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         setAgentStatus({ state: "thinking" });
         break;
       }
+
+      case "goal_judging": {
+        // A judge round started. End the current streaming segment (the
+        // round's text is final — same boundary rule as tool calls, so the
+        // NEXT round's tokens open a fresh bubble below the verdict card
+        // instead of overwriting this one) and show a distinct status.
+        // Remember the segment we just streamed so turn.done can dedup its
+        // result_text against it. On the LIVE path no "text" event ever sets
+        // lastTextEventRef (the server only relays tokens), so without this a
+        // turn whose final action is a tool call would re-append result_text
+        // as a duplicate bubble of text already streamed. Only overwrite with
+        // a non-empty segment so an empty boundary clear doesn't wipe it.
+        if (streamBufferRef.current) lastTextEventRef.current = streamBufferRef.current;
+        streamBufferRef.current = "";
+        streamingMsgIdRef.current = null;
+        setStreaming(false);
+        setAgentStatus({ state: "judging" });
+        log(`[${ts()}] Checking goal…`);
+        break;
+      }
+
+      case "goal_eval": {
+        // Independent judge verdict for one goal-loop round. Carries a
+        // structured payload so MessageList renders a verdict card.
+        const v = (msg.verdict ?? {}) as { done?: boolean; missing?: string[]; rationale?: string };
+        const iteration = (msg.iteration as number) ?? 0;
+        const label = v.done
+          ? `✓ Goal met — ${v.rationale ?? ""}`.trim()
+          : `Goal review (round ${iteration + 1}): not done — ${(v.missing && v.missing.length > 0) ? v.missing.join("; ") : (v.rationale ?? "continuing")}`;
+        log(`[${ts()}] ${label}`);
+        setMessages((prev) => [...prev, {
+          id: nextId(), role: "system", content: label, timestamp: new Date(),
+          goal: { kind: "eval", done: v.done, missing: v.missing, rationale: v.rationale, iteration },
+        }]);
+        // Not done → another agent round is about to start.
+        if (!v.done) setAgentStatus({ state: "waiting" });
+        break;
+      }
+
+      case "goal_stop": {
+        // The goal loop ended — surface the reason + total cost.
+        const reason = (msg.reason as string) ?? "stopped";
+        const cost = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : undefined;
+        const human: Record<string, string> = {
+          done: "Goal complete",
+          max_iterations: "Stopped — reached the continuation limit",
+          budget: "Stopped — reached the budget limit",
+          no_progress: "Stopped — no further progress",
+          judge_error: "Stopped — completion check unavailable",
+          agent_error: "Stopped — a turn failed",
+        };
+        const label = `${human[reason] ?? `Goal loop stopped (${reason})`}${cost !== undefined ? ` · $${cost.toFixed(2)}` : ""}`;
+        log(`[${ts()}] ${label}`);
+        setMessages((prev) => [...prev, {
+          id: nextId(), role: "system", content: label, timestamp: new Date(),
+          goal: { kind: "stop", done: reason === "done", reason, cost },
+        }]);
+        break;
+      }
       case "done":
       case "turn.done": {
         if (suppressNextAssistantRef.current) {
@@ -246,7 +353,14 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           break;
         }
         const resultText = msg.result_text as string | undefined;
-        if (resultText && !streamBufferRef.current) {
+        // Dedup: when this turn's text already rendered as a "text" event
+        // (replay path), appending result_text again duplicates the final
+        // paragraph — both strings come through the same signing pipeline,
+        // so a direct comparison is reliable.
+        const alreadyRendered =
+          !!resultText && lastTextEventRef.current?.trim() === resultText.trim();
+        lastTextEventRef.current = null;
+        if (resultText && !streamBufferRef.current && !alreadyRendered) {
           // No streaming bubble — fresh assistant message (e.g. replay path).
           setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: resultText, timestamp: new Date() }]);
           onAssistantMessageRef.current?.(resultText);
@@ -328,6 +442,9 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         setStreaming(false);
         setAgentStatus({ state: "idle" });
         streamBufferRef.current = "";
+        // End the streaming segment too, or the NEXT turn's first token
+        // re-targets (and overwrites) the cancelled turn's last bubble.
+        streamingMsgIdRef.current = null;
         setMessages((prev) => [...prev, {
           id: nextId(), role: "system" as const, content: "Stopped by user.",
           timestamp: new Date(),
@@ -432,13 +549,18 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     }
   }, [sessionId]);
 
-  const send = useCallback((text: string, attachments?: Array<{ type: "image" | "document"; media_type: string; data: string; name: string }>) => {
+  const send = useCallback((
+    text: string,
+    attachments?: Array<{ type: "image" | "document"; media_type: string; data: string; name: string }>,
+    opts?: { goal_mode?: boolean; acceptance_criteria?: string[] },
+  ) => {
     const hasContent = text.trim().length > 0 || (attachments && attachments.length > 0);
     if (!hasContent || !wsRef.current || !currentSessionIdRef.current) return;
     setMessages((prev) => [...prev, {
       id: nextId(), role: "user", content: text, timestamp: new Date(),
       images: attachments?.filter((a) => a.type === "image").map((a) => `data:${a.media_type};base64,${a.data}`) || undefined,
       files: attachments?.map((a) => ({ name: a.name, type: a.type })) || undefined,
+      acceptanceCriteria: opts?.acceptance_criteria && opts.acceptance_criteria.length > 0 ? opts.acceptance_criteria : undefined,
     }]);
     setAgentStatus({ state: "waiting" });
     setStreaming(true);
@@ -447,6 +569,9 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       session_id: currentSessionIdRef.current,
       message: text,
       ...(attachments && attachments.length > 0 && { attachments }),
+      // Per-message goal-loop override (composer "Run until done" toggle).
+      ...(opts?.goal_mode !== undefined && { goal_mode: opts.goal_mode }),
+      ...(opts?.acceptance_criteria && opts.acceptance_criteria.length > 0 && { acceptance_criteria: opts.acceptance_criteria }),
     }));
   }, []);
 

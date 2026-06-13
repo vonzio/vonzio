@@ -38,6 +38,7 @@ import { fetchDockerImages, type DockerImageInfo } from "../api/admin.js";
 import { useApi } from "../hooks/useApi.js";
 import { slugify } from "../lib/utils.js";
 import { ToolPillSelect } from "../components/ToolPillSelect.js";
+import { KnowledgeSection } from "../components/KnowledgeSection.js";
 import { OllamaModelPicker } from "../components/OllamaModelPicker.js";
 import { ProfileModelSelect } from "../components/ProfileModelSelect.js";
 import { McpServerEditor, type McpServerConfig } from "../components/McpServerEditor.js";
@@ -494,7 +495,7 @@ export function EditAgent() {
                     </Field>
                     {autoContinue && (
                       <>
-                        <Field label="Max continuations">
+                        <Field label="Max rounds" hint="Continuation rounds before stopping">
                           <Input type="number" min={1} max={200} value={String(maxContinuations)} onChange={(e) => setMaxContinuations(parseInt(e.target.value) || 5)} />
                         </Field>
                         <Field label="Budget cap (USD)" hint="Empty = no cap">
@@ -503,7 +504,10 @@ export function EditAgent() {
                       </>
                     )}
                   </div>
-                  <Checkbox checked={autoContinue} onChange={setAutoContinue}>Auto-continue on turn limit</Checkbox>
+                  <Checkbox checked={autoContinue} onChange={setAutoContinue}>Run until done (autonomous goal mode)</Checkbox>
+                  <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--vz-muted)" }}>
+                    Keep working until an independent judge confirms the goal is met (or a round/budget limit is hit) — not just until the turn limit. This is the default for the chat composer's “Run until done” toggle, which can override it per message.
+                  </p>
                 </div>
               </Panel>
             </div>
@@ -551,6 +555,9 @@ export function EditAgent() {
                   onChange={setSkillIds}
                   emptyText="No skills yet — create one with the button above."
                 />
+              </Panel>
+              <Panel title="Knowledge">
+                <KnowledgeSection profileId={editingId} />
               </Panel>
             </div>
           )}

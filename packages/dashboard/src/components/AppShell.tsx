@@ -5,13 +5,11 @@ import {
   Menu,
   LogOut,
   ChevronDown,
-  Sun,
-  Moon,
 } from "lucide-react";
 import { useUser } from "@/contexts/UserContext.js";
 import { authClient } from "@/lib/auth-client.js";
 import { useIsMobile } from "@/hooks/use-mobile.js";
-import { useTheme } from "@/hooks/useTheme.js";
+import { ThemeToggle } from "./ThemeToggle.js";
 import { getNavItems, getTopbarSlots, getUserMenuItems, useEntitlements, type NavItemReg, type TopbarSlotReg } from "@/registry/index.js";
 import { OnboardingHost } from "./OnboardingHost.js";
 import {
@@ -51,7 +49,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const entitlements = useEntitlements();
-  const { surface, toggle: toggleSurface } = useTheme();
 
   const primaryItems = getNavItems("primary").filter((it) => isEntitled(it, entitlements));
   const adminItems = getNavItems("admin").filter((it) => isEntitled(it, entitlements));
@@ -184,17 +181,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     />
   );
 
-  const themeToggle = (
-    <button
-      type="button"
-      onClick={toggleSurface}
-      className="vz-topbar__icon-btn"
-      title={`Switch to ${surface === "carbon" ? "light" : "dark"} mode`}
-      aria-label={`Switch to ${surface === "carbon" ? "light" : "dark"} mode`}
-    >
-      {surface === "carbon" ? <Sun size={16} /> : <Moon size={16} />}
-    </button>
-  );
+  const themeToggle = <ThemeToggle />;
 
   const renderTopbarSlots = (placement: TopbarSlotReg["placement"]) => {
     const slots = getTopbarSlots(placement).filter((s) => !s.entitlement || entitlements.includes(s.entitlement));

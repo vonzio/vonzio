@@ -37,6 +37,7 @@ import { ApiKeyService } from "./services/api-key-service.js";
 import { ModelListService } from "./services/model-list-service.js";
 import { ToolFileService } from "./services/tool-file-service.js";
 import { SkillService } from "./services/skill-service.js";
+import { DocumentService } from "./services/document-service.js";
 import { SubagentService } from "./services/subagent-service.js";
 import { GitProviderService } from "./services/git-provider-service.js";
 import { ConnectionManager } from "./ws/connection.js";
@@ -207,6 +208,11 @@ export async function buildServer(deps: ServerDeps) {
   const toolFileService = new ToolFileService(db, config.TOOLS_DIR);
   const skillService = new SkillService(db, config.SKILLS_DIR);
   const subagentService = new SubagentService(db);
+  const documentService = new DocumentService(
+    db,
+    config.MAX_DOCUMENT_MB * 1024 * 1024,
+    config.MAX_PROFILE_DOCUMENTS_MB * 1024 * 1024,
+  );
   const gitProviderService = new GitProviderService(db, config.ENCRYPTION_KEY);
   const integrationService = new IntegrationService(db, config.ENCRYPTION_KEY);
   // Plugin runtime infrastructure. Created here so NotificationService
@@ -264,6 +270,7 @@ export async function buildServer(deps: ServerDeps) {
     toolFileService,
     skillService,
     subagentService,
+    documentService,
     gitProviderService,
     memoryService,
     secretVaultService,
@@ -376,6 +383,7 @@ export async function buildServer(deps: ServerDeps) {
       previewUrlTemplate: config.PREVIEW_URL_TEMPLATE,
       maxTurns: config.MAX_TURNS,
       ollamaEnabled: config.OLLAMA_ENABLED,
+      maxDocumentMb: config.MAX_DOCUMENT_MB,
     };
   });
 
@@ -621,6 +629,7 @@ export async function buildServer(deps: ServerDeps) {
       subagentService,
       gitProviderService,
       secretVaultService,
+      documentService,
       // Late-bind: cp-server mutates coreDeps.hiddenUserSecretIdsForOrg
       // AFTER this register call, same pattern as recordTaskOrg /
       // resolveOrgIdForTask in PRs #52 + #53.
@@ -645,7 +654,11 @@ export async function buildServer(deps: ServerDeps) {
     v1.register(playbookRoutes, { playbookService, chainRunner, playbookScheduler });
     v1.register(poolRoutes, { pool: containerPool, sessionRegistry, containerManager });
 
-    if (config.OLLAMA_ENABLED) {
+    // Ollama Cloud is key-based and usable regardless of OLLAMA_ENABLED (which
+    // gates local-Ollama wiring). The model-list route must always be available
+    // or the agent/profile model picker can't load models for an Ollama key —
+    // leaving the profile model unset ("default") and breaking chat.
+    {
       const { ollamaRoutes } = await import("./routes/ollama.js");
       v1.register(ollamaRoutes, { apiKeyService });
     }
