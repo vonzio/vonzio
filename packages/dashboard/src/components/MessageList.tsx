@@ -81,10 +81,10 @@ function MsgRow({
  * tool call (so the tool card visually sits *under* the agent's identity
  * instead of orphaned next to the page margin).
  */
-function AgentHeaderStrip({ time }: { time: Date }) {
+function AgentHeaderStrip({ time, copyText }: { time: Date; copyText?: string }) {
   return (
     <div
-      className="animate-[fadeIn_0.2s_ease-out]"
+      className="group/msg animate-[fadeIn_0.2s_ease-out]"
       style={{ padding: "14px 0 8px 0" }}
     >
       <div className="flex items-center gap-3">
@@ -103,6 +103,11 @@ function AgentHeaderStrip({ time }: { time: Date }) {
         >
           {formatClockTime(time)}
         </span>
+        {copyText && (
+          <span className="ml-auto opacity-0 group-hover/msg:opacity-100 transition-opacity">
+            <CopyMsgButton text={copyText} />
+          </span>
+        )}
       </div>
     </div>
   );
@@ -323,7 +328,19 @@ export function MessageList({
 
   return (
     <>
-      {orderedMessages.map((msg) => {
+      {orderedMessages.map((msg, msgIdx) => {
+        // All assistant text from this point to the end of the turn (next
+        // user message) — what the per-turn copy button copies. Text only:
+        // tool calls/results and system/goal cards are deliberately excluded.
+        const turnTextFrom = (start: number): string => {
+          const parts: string[] = [];
+          for (let j = start; j < orderedMessages.length; j++) {
+            const m = orderedMessages[j];
+            if (m.role === "user") break;
+            if (m.role === "assistant" && m.content) parts.push(m.content);
+          }
+          return parts.join("\n\n");
+        };
         const turnStartTime = turnStarters.get(msg.id);
         const isTurnStart = !!turnStartTime;
         // Header strip emitted before tool blocks that start an agent turn.
@@ -331,7 +348,7 @@ export function MessageList({
         // (unless we tell them to be compact — see below).
         const headerStrip =
           isTurnStart && (msg.role === "tool_use" || msg.role === "tool_result")
-            ? <AgentHeaderStrip key={`${msg.id}-hdr`} time={turnStartTime!} />
+            ? <AgentHeaderStrip key={`${msg.id}-hdr`} time={turnStartTime!} copyText={turnTextFrom(msgIdx) || undefined} />
             : null;
         if (!showTools && (msg.role === "tool_use" || msg.role === "tool_result")) return null;
 
@@ -489,7 +506,9 @@ export function MessageList({
               trailing={
                 !isLastStreaming ? (
                   <span className="flex items-center gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                    <CopyMsgButton text={msg.content} />
+                    {/* Copies the WHOLE turn's text (all segments), not just
+                        this bubble — segments split at tool boundaries. */}
+                    <CopyMsgButton text={turnTextFrom(msgIdx)} />
                     <ResponseFeedback
                       responseText={msg.content}
                       profileId={profileId}
