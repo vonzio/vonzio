@@ -43,6 +43,37 @@ type Attachment = {
   preview?: string;
 };
 
+// Extensions that, when loaded in the preview iframe, just dump source or
+// trigger a download instead of rendering a page. We never auto-open the
+// preview pane at one of these — otherwise an agent merely *mentioning*
+// `organize_files.py` hijacks the viewer into rendering raw script source.
+const NON_SERVABLE_PREVIEW_EXT = new Set([
+  "py", "rb", "sh", "bash", "zsh", "ts", "tsx", "jsx", "mjs", "cjs",
+  "go", "rs", "java", "kt", "c", "h", "cpp", "cc", "hpp", "php", "pl",
+  "lua", "swift", "scala", "clj", "ex", "exs", "r",
+  "md", "txt", "log", "yml", "yaml", "toml", "ini", "cfg", "conf",
+  "csv", "tsv", "sql", "env", "lock", "dockerfile", "makefile",
+]);
+
+// Only auto-open the preview pane for URLs that actually render as a page —
+// a server root, a directory, or HTML. A concrete source/script file is a
+// reference, not a running server, so we leave the pane where it is.
+function isServablePreviewTarget(url: string): boolean {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    // Schemeless or otherwise unparseable — strip host heuristically.
+    pathname = url.replace(/^[^/]*\/\/[^/]*/, "").split(/[?#]/)[0] || "/";
+  }
+  if (pathname === "" || pathname === "/" || pathname.endsWith("/")) return true;
+  const last = pathname.split("/").pop() ?? "";
+  const dot = last.lastIndexOf(".");
+  if (dot <= 0) return true; // no extension → treat as a route/page
+  const ext = last.slice(dot + 1).toLowerCase();
+  return !NON_SERVABLE_PREVIEW_EXT.has(ext);
+}
+
 // ─── Component ──────────────────────────────────────────────────────
 
 export function Workspace() {
@@ -295,7 +326,7 @@ export function Workspace() {
   // Scan text for a vonzio preview URL and open the Preview panel
   const openPreviewFromText = useCallback((text: string) => {
     const match = text.match(PREVIEW_URL_REGEX);
-    if (match) {
+    if (match && isServablePreviewTarget(match[0])) {
       setPreviewUrl(match[0]);
       setPanelTab("preview");
       setPanelOpen(true);
@@ -306,7 +337,7 @@ export function Workspace() {
   const handleToolResult = useCallback((tool: string, output: string) => {
     // First check for a full vonzio preview URL in the output
     const previewMatch = output.match(PREVIEW_URL_REGEX);
-    if (previewMatch) {
+    if (previewMatch && isServablePreviewTarget(previewMatch[0])) {
       setPreviewUrl(previewMatch[0]);
       setPanelTab("preview");
       setPanelOpen(true);
@@ -691,16 +722,6 @@ export function Workspace() {
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
             >
-              {/* Drag overlay */}
-              {dragOver && (
-                <div
-                  className="absolute inset-0 z-10 border-2 border-dashed rounded-lg flex items-center justify-center pointer-events-none"
-                  style={{ background: "var(--vz-sodium-08)", borderColor: "var(--vz-sodium)" }}
-                >
-                  <div style={{ color: "var(--vz-sodium)", fontWeight: 500, fontSize: 14 }}>Drop files here</div>
-                </div>
-              )}
-
               {chat.messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full gap-6 px-4">
                   {!activeWorkspaceId || pendingNew ? (
@@ -764,6 +785,20 @@ export function Workspace() {
                 </div>
               )}
             </div>
+
+            {/* Drag overlay — sibling of the scroll container so `inset-0`
+                resolves against the non-scrolling wrapper (the visible
+                viewport), not the full scroll-content height. Otherwise the
+                dashed border + label drift to the middle/top of the content
+                when the thread is scrolled. */}
+            {dragOver && (
+              <div
+                className="absolute inset-0 z-20 border-2 border-dashed rounded-lg flex items-center justify-center pointer-events-none"
+                style={{ background: "var(--vz-sodium-08)", borderColor: "var(--vz-sodium)" }}
+              >
+                <div style={{ color: "var(--vz-sodium)", fontWeight: 500, fontSize: 14 }}>Drop files here</div>
+              </div>
+            )}
 
             {/* Scroll to bottom button */}
             {showScrollBtn && (
