@@ -338,7 +338,7 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
                 className="vz-kbd"
                 style={{ marginLeft: 6, background: "rgba(255,255,255,0.16)", borderColor: "rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.85)" }}
               >
-                ⏎
+                Enter ⏎
               </span>
             </Button>
           </>
