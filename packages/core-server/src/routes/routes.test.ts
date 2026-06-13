@@ -63,6 +63,7 @@ function createMockManager(): ContainerManager {
         yield JSON.stringify({ type: "exit", code: 0 });
       }
     },
+    async createTerminalSession() { return { write() {}, resize() {}, onData() {}, onExit() {}, close() {} }; },
     async getContainerStatus(id) { return containers.has(id) ? "running" : "not_found"; },
     async listManagedContainers() { return []; },
     async getContainerIp() { return "172.17.0.2"; },

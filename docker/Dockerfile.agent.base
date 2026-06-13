@@ -54,6 +54,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Redis, SQLite). Each is small (~5-15 MB).
     postgresql-client default-mysql-client redis-tools sqlite3 \
     procps file \
+    # Programmable tab-completion (git/apt/etc.) for the in-app Console. The
+    # baked-in ~/.bashrc already sources it when present; without the package
+    # only basic readline filename/command completion works.
+    bash-completion \
     # Re-run `apt-get upgrade` AFTER chromium installs so any chromium
     # patch published between the line-18 upgrade and now lands too.
     # Chromium ships HIGH/CRITICAL CVEs frequently (see CVE-2026-9872+

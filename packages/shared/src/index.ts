@@ -49,6 +49,8 @@ export type {
   ContainerCreateOptions,
   ContainerInfo,
   ContainerManager,
+  TerminalSession,
+  TerminalSessionOptions,
 } from "./types/container.js";
 
 export type { ClientMessage, ServerMessage } from "./types/ws-messages.js";

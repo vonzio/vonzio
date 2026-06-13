@@ -1,4 +1,4 @@
-import type { ContainerManager, ContainerCreateOptions, ContainerInfo } from "@vonzio/shared";
+import type { ContainerManager, ContainerCreateOptions, ContainerInfo, TerminalSession } from "@vonzio/shared";
 
 export class NoopContainerManager implements ContainerManager {
   async createContainer(): Promise<string> {
@@ -10,6 +10,9 @@ export class NoopContainerManager implements ContainerManager {
   async stopContainer(): Promise<void> {}
   async removeContainer(): Promise<void> {}
   async *execInContainer(): AsyncIterable<string> {}
+  async createTerminalSession(): Promise<TerminalSession> {
+    throw new Error("Docker is disabled");
+  }
   async getContainerStatus(): Promise<"running" | "paused" | "exited" | "not_found"> {
     return "not_found";
   }

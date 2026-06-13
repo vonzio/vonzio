@@ -12,6 +12,7 @@ function createMockManager(): ContainerManager {
     async stopContainer() {},
     async removeContainer() {},
     async *execInContainer() {},
+    async createTerminalSession() { return { write() {}, resize() {}, onData() {}, onExit() {}, close() {} }; },
     async getContainerStatus() { return "running"; },
     async listManagedContainers() { return []; },
     async getContainerIp() { return "172.17.0.2"; },

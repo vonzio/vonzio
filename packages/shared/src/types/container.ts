@@ -22,6 +22,39 @@ export interface ContainerInfo {
   created_at: string;
 }
 
+/**
+ * A live, interactive PTY session attached to a running container — the
+ * backing for the dashboard's in-app console. Unlike `execInContainer`
+ * (one-shot, output drained to completion), this stays open: keystrokes
+ * stream in, raw terminal bytes stream out, and the shell behaves as at a
+ * real terminal (tab-completion, history, colors, curses apps) because a
+ * TTY is allocated.
+ */
+export interface TerminalSession {
+  /** Write user keystrokes (raw bytes / UTF-8) to the PTY stdin. */
+  write(data: string): void;
+  /** Resize the PTY. `cols` = width, `rows` = height (in cells). */
+  resize(cols: number, rows: number): void;
+  /** Subscribe to raw PTY output. Not line-buffered or demuxed. */
+  onData(cb: (chunk: Buffer) => void): void;
+  /** Fires once when the shell process exits (exit code if resolvable). */
+  onExit(cb: (code: number | null) => void): void;
+  /** Terminate the PTY and release the underlying stream. Idempotent. */
+  close(): void;
+}
+
+export interface TerminalSessionOptions {
+  /** Run the shell as this container user (e.g. the non-root "agent"). */
+  user?: string;
+  /** Initial working directory. Defaults to /workspace. */
+  cwd?: string;
+  /** Shell to launch. Defaults to /bin/bash. */
+  shell?: string;
+  /** Initial PTY size. */
+  cols?: number;
+  rows?: number;
+}
+
 export interface ContainerManager {
   createContainer(opts: ContainerCreateOptions): Promise<string>;
   startContainer(id: string): Promise<void>;
@@ -34,6 +67,11 @@ export interface ContainerManager {
     env?: Record<string, string>,
     user?: string,
   ): AsyncIterable<string>;
+  /** Open an interactive PTY session (TTY) inside a running container. */
+  createTerminalSession(
+    id: string,
+    opts?: TerminalSessionOptions,
+  ): Promise<TerminalSession>;
   getContainerStatus(
     id: string,
   ): Promise<"running" | "paused" | "exited" | "not_found">;
