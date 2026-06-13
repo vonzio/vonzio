@@ -526,7 +526,12 @@ export function setupWsHandler(
                   }
                 } catch { /* keep raw on failure */ }
               }
-              connectionManager.sendTo(connectionId, { ...data, _replay: true, _seq: evt.seq, _ts: evt.ts });
+              // Base the client-facing type on the envelope's evt.type: flushed
+              // token buffers persist data as bare `{ text }` with no type, and
+              // a typeless message falls through the client switch — silently
+              // dropping all streamed assistant text from replays. data spreads
+              // after, so a data.type (present on most events) still wins.
+              connectionManager.sendTo(connectionId, { type: evt.type, ...data, _replay: true, _seq: evt.seq, _ts: evt.ts });
             }
             connectionManager.sendTo(connectionId, {
               type: "session.replay_done",
