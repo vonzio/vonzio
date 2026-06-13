@@ -103,6 +103,17 @@ export class DocumentService {
     }));
   }
 
+  /** Full content of one document (decoded), for serving in the viewer. */
+  async getContent(documentId: string): Promise<{ name: string; media_type: string; bytes: Buffer } | null> {
+    const rows = await this.db
+      .select({ name: schema.documents.name, media_type: schema.documents.media_type, content_b64: schema.documents.content_b64 })
+      .from(schema.documents)
+      .where(eq(schema.documents.id, documentId));
+    const r = rows[0];
+    if (!r) return null;
+    return { name: r.name, media_type: r.media_type, bytes: Buffer.from(r.content_b64, "base64") };
+  }
+
   /** Owning (profile_id, session_id) of a document — for delete ownership checks. */
   async getOwner(documentId: string): Promise<{ profile_id: string; session_id: string | null } | null> {
     const rows = await this.db
