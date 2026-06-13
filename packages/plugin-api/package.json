@@ -38,10 +38,12 @@
   },
   "peerDependencies": {
     "fastify": "^5.0.0",
-    "react": "^19.0.0",
+    "react": "^19.2.7",
     "zod": "^3.0.0 || ^4.0.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true }
+    "react": {
+      "optional": true
+    }
   }
 }
