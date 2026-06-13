@@ -69,10 +69,13 @@ export class DockerManager implements ContainerManager {
         ShmSize: 256 * 1024 * 1024, // 256MB — needed for Chrome/Chromium
         // Cap process/thread count so a runaway or hostile workload can't
         // fork-bomb the shared host kernel. Configurable; 0 = unlimited.
-        // NOTE: `no-new-privileges` is a tempting companion hardening flag but
-        // can break Chromium's setuid sandbox (the agent image ships chromium
-        // for agent-browser); add it only behind a browser-automation smoke.
         PidsLimit: this.pidsLimit && this.pidsLimit > 0 ? this.pidsLimit : undefined,
+        // Defense-in-depth: forbid gaining privileges via setuid/setgid
+        // binaries. The agent runs non-root with no sudo, so nothing
+        // legitimately escalates. Verified safe for agent-browser, which
+        // drives chromium with --no-sandbox (chromium's in-container sandbox
+        // isn't usable anyway; the userns sandbox also works under no_new_privs).
+        SecurityOpt: ["no-new-privileges"],
       },
       WorkingDir: "/workspace",
       OpenStdin: true,
