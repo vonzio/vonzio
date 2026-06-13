@@ -1,6 +1,80 @@
 export const PROFILE_PROVIDERS = ["api_key", "ollama", "openai"] as const;
 export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
 
+/**
+ * Canonical catalog of supported credential providers — the SINGLE source of
+ * truth for the provider list and its UI metadata. Every place that lets a
+ * user add/choose a key (the first-key modal, the onboarding wizard, the
+ * Settings → keys editor) renders from this so a new provider is added once
+ * here and shows up everywhere. Backend validation derives its enum from the
+ * same list (PROFILE_PROVIDERS below).
+ */
+export interface ProviderInfo {
+  /** UI discriminator used by the onboarding/settings forms. */
+  kind: "anthropic_key" | "openai" | "ollama";
+  /** The stored `provider` value on the credential / profile. */
+  provider: ProfileProvider;
+  /** Human label shown in pickers ("Anthropic API key"). */
+  label: string;
+  /** One-line helper under the picker. */
+  hint: string;
+  /** Field label above the key input ("Anthropic API key"). */
+  fieldLabel: string;
+  /** Input placeholder ("sk-ant-…"). */
+  placeholder: string;
+  /** Default name pre-filled for a new key of this kind. */
+  defaultKeyName: string;
+  /** Where to obtain a key (shown as a link); omitted when not applicable. */
+  consoleUrl?: string;
+  /** Expected key prefix, for the "Starts with …" hint; omitted when none. */
+  keyPrefix?: string;
+  /** Whether this provider accepts an OpenAI-compatible base URL override. */
+  supportsBaseUrl: boolean;
+}
+
+export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
+  {
+    kind: "anthropic_key",
+    provider: "api_key",
+    label: "Anthropic API key",
+    hint: "From console.anthropic.com — starts with sk-ant-",
+    fieldLabel: "Anthropic API key",
+    placeholder: "sk-ant-…",
+    defaultKeyName: "My Anthropic key",
+    consoleUrl: "https://console.anthropic.com/settings/keys",
+    keyPrefix: "sk-ant-",
+    supportsBaseUrl: false,
+  },
+  {
+    kind: "openai",
+    provider: "openai",
+    label: "OpenAI (or OpenAI-compatible)",
+    hint: "From platform.openai.com — starts with sk-. Also Azure / OpenRouter / vLLM / LM Studio via a base URL.",
+    fieldLabel: "OpenAI API key",
+    placeholder: "sk-…",
+    defaultKeyName: "My OpenAI key",
+    consoleUrl: "https://platform.openai.com/api-keys",
+    keyPrefix: "sk-",
+    supportsBaseUrl: true,
+  },
+  {
+    kind: "ollama",
+    provider: "ollama",
+    label: "Ollama Cloud API key",
+    hint: "From ollama.com — paid tier required for now (local Ollama coming later)",
+    fieldLabel: "Ollama API key",
+    placeholder: "Paste Ollama Cloud key",
+    defaultKeyName: "My Ollama Cloud key",
+    consoleUrl: "https://ollama.com/settings/keys",
+    supportsBaseUrl: false,
+  },
+] as const;
+
+/** Look up a provider's metadata by its stored `provider` value. */
+export function providerInfoByProvider(p: ProfileProvider): ProviderInfo {
+  return PROVIDER_CATALOG.find((x) => x.provider === p) ?? PROVIDER_CATALOG[0];
+}
+
 export interface McpServerConfig {
   name: string;
   type: "sdk" | "stdio" | "http";

@@ -23,9 +23,10 @@ export type {
 export { WORKSPACE_STATUSES } from "./types/workspace.js";
 export type { WorkspaceStatus, Workspace } from "./types/workspace.js";
 
-export { PROFILE_PROVIDERS, AGENT_MODELS } from "./types/profile.js";
+export { PROFILE_PROVIDERS, AGENT_MODELS, PROVIDER_CATALOG, providerInfoByProvider } from "./types/profile.js";
 export type {
   ProfileProvider,
+  ProviderInfo,
   AgentModel,
   SubagentDefinition,
   Profile,
