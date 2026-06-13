@@ -3,8 +3,10 @@ import { FileText, Trash2, Upload, Loader2 } from "lucide-react";
 import {
   fetchProfileDocuments, uploadProfileDocument, deleteProfileDocument,
   fetchWorkspaceDocuments, uploadWorkspaceDocument, deleteWorkspaceDocument,
+  profileDocumentRawUrl, workspaceDocumentRawUrl,
   type ProfileDocument,
 } from "../api/client.js";
+import { DocViewerModal, type DocViewerTarget } from "./DocViewerModal.js";
 
 // Per-file cap, published by the server in /api/config (MAX_DOCUMENT_MB).
 // Read at render (not module load) so it reflects config once fetched; falls
@@ -51,11 +53,14 @@ export function KnowledgeSection(
     isWorkspace ? uploadWorkspaceDocument(i, body) : uploadProfileDocument(i, body);
   const deleteDoc = (i: string, docId: string) =>
     isWorkspace ? deleteWorkspaceDocument(i, docId) : deleteProfileDocument(i, docId);
+  const rawUrl = (docId: string) =>
+    isWorkspace ? workspaceDocumentRawUrl(id!, docId) : profileDocumentRawUrl(id!, docId);
 
   const [docs, setDocs] = useState<ProfileDocument[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [viewer, setViewer] = useState<DocViewerTarget | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -170,12 +175,14 @@ export function KnowledgeSection(
             <div
               key={d.id}
               className="group/doc"
+              onClick={() => setViewer({ url: rawUrl(d.id), mediaType: d.media_type, name: d.name })}
               style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "6px 10px", borderRadius: "var(--vz-radius-sm)",
                 border: "1px solid var(--vz-border)", background: "var(--vz-card)",
-                fontSize: 13,
+                fontSize: 13, cursor: "pointer",
               }}
+              title={`View ${d.name}`}
             >
               <FileText className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--vz-muted-2)" }} />
               <span className="flex-1 truncate" style={{ color: "var(--vz-ink)" }}>{d.name}</span>
@@ -184,7 +191,7 @@ export function KnowledgeSection(
               </span>
               <button
                 type="button"
-                onClick={() => remove(d.id)}
+                onClick={(e) => { e.stopPropagation(); void remove(d.id); }}
                 disabled={busy}
                 className="vz-action-btn vz-action-btn--danger opacity-0 group-hover/doc:opacity-100 transition-opacity"
                 style={{ width: 22, height: 22 }}
@@ -196,6 +203,8 @@ export function KnowledgeSection(
           ))}
         </div>
       )}
+
+      {viewer && <DocViewerModal target={viewer} onClose={() => setViewer(null)} />}
     </div>
   );
 }

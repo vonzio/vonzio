@@ -853,6 +853,7 @@ export function Workspace() {
                     streaming={chat.streaming}
                     containerId={chat.containerId}
                     profileId={activeWorkspace?.profile_id}
+                    sessionId={activeWorkspaceId}
                   />
                 </div>
               )}

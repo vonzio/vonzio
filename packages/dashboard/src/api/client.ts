@@ -328,6 +328,15 @@ export function deleteWorkspaceDocument(sessionId: string, docId: string): Promi
   return request(`/workspaces/${sessionId}/documents/${docId}`, { method: "DELETE" });
 }
 
+// Browser-facing raw-content URLs for the in-dashboard doc viewer (same-origin
+// via the dev/prod proxy, so the session cookie is sent on iframe/img loads).
+export function profileDocumentRawUrl(profileId: string, docId: string): string {
+  return `/v1/profiles/${profileId}/documents/${docId}/raw`;
+}
+export function workspaceDocumentRawUrl(sessionId: string, docId: string): string {
+  return `/v1/workspaces/${sessionId}/documents/${docId}/raw`;
+}
+
 export interface ProfileModel {
   id: string;
   display_name: string | null;
