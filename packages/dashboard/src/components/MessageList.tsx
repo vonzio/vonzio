@@ -244,46 +244,19 @@ export function MessageList({
   const { surface } = useTheme();
   const proseClass = surface === "paper" ? "prose" : "prose prose-invert";
 
-  // Per-turn render reorder + grouping. Two things happen here:
+  // Render messages in ARRIVAL order — no per-turn reordering.
   //
-  // 1) Reorder within each turn: tools/results come BEFORE assistant text
-  //    bubbles. Live event order can put the assistant bubble first (its
-  //    creation is tied to the first streamed token, which the SDK can
-  //    emit *before* the tool_use event lands). Reordering at render time
-  //    keeps the visual layout chronologically correct (tools ran first,
-  //    text came after) regardless of array order.
-  //
-  // 2) Identify which message owns the agent header for each turn. We
-  //    skip messages that the existing dedup hides (tool_use followed by
-  //    a matching tool_result) so the header lands on whatever ACTUALLY
-  //    renders — not on a phantom row.
-  const orderedMessages = useMemo(() => {
-    const result: ChatMessage[] = [];
-    let i = 0;
-    while (i < messages.length) {
-      const msg = messages[i];
-      if (msg.role === "user") {
-        result.push(msg);
-        i++;
-        const turn: ChatMessage[] = [];
-        while (i < messages.length && messages[i].role !== "user") {
-          turn.push(messages[i]);
-          i++;
-        }
-        // Stable partition: tools first (in their original order), then
-        // assistant texts, then any system markers — all preserved
-        // internally chronological.
-        const tools = turn.filter((m) => m.role === "tool_use" || m.role === "tool_result");
-        const texts = turn.filter((m) => m.role === "assistant");
-        const other = turn.filter((m) => m.role !== "tool_use" && m.role !== "tool_result" && m.role !== "assistant");
-        result.push(...tools, ...texts, ...other);
-      } else {
-        result.push(msg);
-        i++;
-      }
-    }
-    return result;
-  }, [messages]);
+  // A previous version partitioned each turn into [tools, texts, system],
+  // forcing every tool call above every text bubble. That was a workaround
+  // for a streaming bug (post-tool tokens overwrote the pre-tool bubble in
+  // place — fixed in useWorkspaceChat: each tool boundary now ends the
+  // streaming segment) and it actively broke faithful rendering: the model's
+  // plan text ("I'll build…") emitted BEFORE its first tool call rendered
+  // below it, and interleaved text→tool→text narration was flattened into
+  // [all tools][all texts]. The event log (per-session JSONL) is the ordering
+  // source of truth and both the live relay and replay deliver it in order —
+  // so arrival order IS chronological order. Don't reorder here.
+  const orderedMessages = messages;
 
   const turnStarters = useMemo(() => {
     const starters = new Map<string, Date>();
