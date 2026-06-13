@@ -666,6 +666,31 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS api_key_id_override TEXT`);
     },
   },
+  {
+    version: 25,
+    description: "Add documents table: per-agent (profile) knowledge files mounted read-only into containers at /knowledge for agentic retrieval (Read/Grep/Glob)",
+    up: async (handle) => {
+      await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS documents (
+        id TEXT PRIMARY KEY,
+        profile_id TEXT NOT NULL,
+        user_id TEXT,
+        name TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        content_b64 TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`);
+      await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS documents_profile_id_idx ON documents (profile_id)`);
+    },
+  },
+  {
+    version: 26,
+    description: "Add documents.session_id: scopes a knowledge doc to a single workspace (NULL = agent-level, shared across all the agent's chats)",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE documents ADD COLUMN IF NOT EXISTS session_id TEXT`);
+      await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS documents_session_id_idx ON documents (session_id)`);
+    },
+  },
 ];
 
 /**

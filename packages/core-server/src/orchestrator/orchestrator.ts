@@ -25,6 +25,7 @@ import { RetryHandler } from "./retry.js";
 import type { ProfileService } from "../services/profile-service.js";
 import type { ToolFileService } from "../services/tool-file-service.js";
 import type { SkillService } from "../services/skill-service.js";
+import type { DocumentService } from "../services/document-service.js";
 import type { SubagentService } from "../services/subagent-service.js";
 import type { GitProviderService } from "../services/git-provider-service.js";
 import type { MemoryService } from "../services/memory-service.js";
@@ -58,6 +59,7 @@ export interface OrchestratorDeps {
   toolFileService: ToolFileService;
   skillService: SkillService;
   subagentService: SubagentService;
+  documentService: DocumentService;
   gitProviderService: GitProviderService;
   memoryService?: MemoryService;
   secretVaultService?: SecretVaultService;
@@ -480,7 +482,7 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
-  private async dispatchBatch(task: Task, prefetchedProfile?: Profile): Promise<void> {
+  private async dispatchBatch(task: Task, prefetchedProfile?: ResolvedProfile): Promise<void> {
     let containerId: string | undefined;
     let workspacePath: string | undefined;
 
@@ -894,7 +896,7 @@ export class Orchestrator extends EventEmitter {
     return containerId;
   }
 
-  private async runAgent(task: Task, containerId: string, profile: Profile, env?: Record<string, string>, isResume?: boolean): Promise<TaskResult> {
+  private async runAgent(task: Task, containerId: string, profile: ResolvedProfile, env?: Record<string, string>, isResume?: boolean): Promise<TaskResult> {
     // Start Ollama auth proxy if needed — only once per container (skip if already running)
     if (env?.OLLAMA_TARGET_URL) {
       await this.runSetupCommands(containerId, ["node /app/ollama-proxy.cjs &\nsleep 0.3"], env);
@@ -1095,6 +1097,75 @@ export class Orchestrator extends EventEmitter {
       hasSkills = resolvedSkills.length > 0;
     }
 
+    // Resolve and mount per-agent knowledge documents at /knowledge (read-only).
+    // Deliberately OUTSIDE /workspace so a persistent-session volume never caches
+    // a stale copy — we wipe + re-sync on every container start, which also drops
+    // docs the user has since deleted. The agent reads them on demand with
+    // Read/Grep/Glob (PDFs via Read pages) — no embeddings/index (see #docs plan).
+    // Provider-aware doc-reading guidance. Anthropic's native Read ingests
+    // PDFs/images directly; Ollama/OpenAI-compat models can't, so steer them to
+    // extract text with pdftotext (baked into the agent image) instead.
+    const isAnthropicProvider = profile.resolved_provider === "api_key";
+    const pdfGuidance = isAnthropicProvider
+      ? "For PDFs, use Read with the `pages` parameter (a few pages at a time)."
+      : "Your model cannot read PDFs or images directly — Read on a binary file will fail. " +
+        "Extract text first, e.g. `pdftotext <file> -` (poppler-utils is installed), then work with the text. " +
+        "Images require a vision-capable model.";
+
+    let hasKnowledge = false;
+    // Names of the docs actually available to this agent — surfaced in the
+    // system prompt so the agent knows the KB exists every turn (no reminders).
+    const knowledgeManifest: string[] = [];
+    try {
+      const documents = await this.deps.documentService.resolveForMount(task.profile_id, task.session_id);
+      this.log.info(
+        { taskId: task.id, sessionId: task.session_id, profileId: task.profile_id, docCount: documents.length },
+        "knowledge: resolved documents for profile",
+      );
+      // Run as root: /knowledge lives at the container root, which the non-root
+      // agent user can't create or write. Root-created files default to
+      // world-readable (umask 022 → 644 / dirs 755), so the agent can still
+      // Read them — but not modify them, which is exactly the read-only intent.
+      const ROOT = "root";
+      await this.drainExec(containerId, ["sh", "-c", "rm -rf /knowledge"], undefined, ROOT);
+      if (documents.length > 0) {
+        await this.drainExec(containerId, ["mkdir", "-p", "/knowledge"], undefined, ROOT);
+        const indexLines: string[] = [];
+        const usedNames = new Set<string>();
+        for (const doc of documents) {
+          let safeName = doc.name.replace(/[^a-zA-Z0-9._-]/g, "_") || "document";
+          if (usedNames.has(safeName)) safeName = `${doc.id}_${safeName}`;
+          usedNames.add(safeName);
+          // Skip images for non-vision providers: a non-Anthropic model can't
+          // ingest an image, and if the agent Reads one the SDK 400s ("does not
+          // support image input") and POISONS the session for every later turn.
+          // Don't mount it at all — then a stray Read just fails cleanly
+          // (file-not-found) instead of bricking the chat. Note it in the index.
+          if (!isAnthropicProvider && doc.media_type.startsWith("image/")) {
+            indexLines.push(`- ${safeName} — image, NOT available to this model (needs a vision-capable model)`);
+            continue;
+          }
+          await this.drainExec(containerId, ["sh", "-c", `base64 -d > /knowledge/${safeName}`], doc.content_b64, ROOT);
+          indexLines.push(`- ${safeName} (${doc.media_type})`);
+          knowledgeManifest.push(`${safeName} (${doc.media_type})`);
+        }
+        const indexMd =
+          "# Knowledge\n\n" +
+          "Reference documents for this agent. Read them with Read/Grep/Glob. " +
+          pdfGuidance + "\n\n" +
+          indexLines.join("\n") + "\n";
+        await this.drainExec(containerId, ["sh", "-c", "cat > /knowledge/INDEX.md"], indexMd, ROOT);
+        // Ensure world-readable + traversable so the non-root agent can read them.
+        await this.drainExec(containerId, ["sh", "-c", "chmod -R a+rX /knowledge || true"], undefined, ROOT);
+        hasKnowledge = true;
+        this.log.info({ taskId: task.id, count: documents.length }, "knowledge: mounted /knowledge");
+      }
+    } catch (err) {
+      // A mount failure must not kill the task — the agent just runs without the
+      // docs. Surfaced in logs so we can see size/timeout issues.
+      this.log.error({ taskId: task.id, sessionId: task.session_id, err }, "knowledge: mount failed");
+    }
+
     // Model: task → workspace.model_override → profile.model. Shared
     // with the dashboard ModelPicker and the Telegram/Slack /model
     // pickers so all four code paths use the same precedence.
@@ -1199,7 +1270,19 @@ export class Orchestrator extends EventEmitter {
       output_schema: task.output_schema,
       mcp_servers: nonSdkServers.length > 0 ? nonSdkServers : undefined,
       tool_files: toolFiles.length > 0 ? toolFiles : undefined,
-      system_prompt: systemPrompt,
+      system_prompt: hasKnowledge
+        ? systemPrompt +
+          "\n\n## Knowledge base\n" +
+          "This agent has a curated knowledge base mounted read-only at `/knowledge`. " +
+          "ALWAYS treat it as the primary, authoritative source for the user's domain. " +
+          "Before answering a question or asking the user for information, FIRST check whether " +
+          "these documents are relevant and consult them (Read/Grep/Glob) — do not ask the user " +
+          "for things that are likely covered here.\n\n" +
+          (knowledgeManifest.length > 0
+            ? "Available documents:\n" + knowledgeManifest.map((m) => `- ${m}`).join("\n") + "\n\n"
+            : "See /knowledge/INDEX.md for the file list.\n\n") +
+          pdfGuidance
+        : systemPrompt,
       agents: subagents,
       has_skills: hasSkills,
     };
@@ -1395,6 +1478,21 @@ export class Orchestrator extends EventEmitter {
     const errorMessage = err instanceof Error ? err.message : String(err);
     const errorType = errorMessage.includes("timeout") ? "timeout" as const : "error" as const;
     this.log.error({ taskId: task.id, sessionId: task.session_id, error: errorMessage, errorType }, "Task failed");
+
+    // Self-heal a poisoned SDK conversation. A failed turn can leave content in
+    // the SDK session history that the model rejects on every resume — e.g. an
+    // image a non-vision model can't read ("400 does not support image input"),
+    // after which every subsequent turn replays it and 400s forever, bricking
+    // the chat. Drop the resume id so the NEXT turn starts a fresh SDK session
+    // instead of replaying the broken history. Prior context is lost, but the
+    // chat keeps working rather than being permanently stuck.
+    if (task.session_id) {
+      const session = this.deps.sessionRegistry.get(task.session_id) as Record<string, unknown> | null;
+      if (session && session.sdk_session_id) {
+        session.sdk_session_id = undefined;
+        this.log.info({ taskId: task.id, sessionId: task.session_id }, "Cleared SDK resume after failure (fresh session next turn)");
+      }
+    }
 
     if (this.retry.shouldRetry(task, errorType)) {
       const delay = this.retry.nextDelay(task);
@@ -1698,8 +1796,8 @@ export class Orchestrator extends EventEmitter {
     // Batch mode uses bind mounts (the correct approach for host -> container).
   }
 
-  private async drainExec(containerId: string, cmd: string[], stdin?: string): Promise<void> {
-    for await (const _ of this.deps.containerManager.execInContainer(containerId, cmd, stdin)) {
+  private async drainExec(containerId: string, cmd: string[], stdin?: string, user?: string): Promise<void> {
+    for await (const _ of this.deps.containerManager.execInContainer(containerId, cmd, stdin, undefined, user)) {
       // drain output
     }
   }
