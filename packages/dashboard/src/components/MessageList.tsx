@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Image, FileText, Loader2, Target, Check } from "lucide-react";
+import { Image, FileText, Loader2, Target, Check, Copy } from "lucide-react";
 import { type ChatMessage, ToolBlock, MarkdownContent, detectCSV, TableView } from "./ChatCore.js";
 import { ResponseFeedback } from "./ResponseFeedback.js";
 import { useOptionalUser } from "../contexts/UserContext.js";
@@ -105,6 +105,34 @@ function AgentHeaderStrip({ time }: { time: Date }) {
         </span>
       </div>
     </div>
+  );
+}
+
+/** Small hover copy-to-clipboard button for a single message's text. */
+function CopyMsgButton({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title="Copy message"
+      className={className}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch { /* clipboard unavailable — no-op */ }
+      }}
+      style={{
+        display: "inline-grid", placeItems: "center",
+        width: 22, height: 22, borderRadius: 5,
+        background: "transparent", border: "none",
+        color: copied ? "var(--vz-ok)" : "var(--vz-muted-2)",
+        cursor: "pointer",
+      }}
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+    </button>
   );
 }
 
@@ -386,6 +414,12 @@ export function MessageList({
               avatar={<UserAvatar letter={userInitial} />}
               name="You"
               time={msg.timestamp}
+              trailing={
+                <CopyMsgButton
+                  text={msg.content}
+                  className="opacity-0 group-hover/msg:opacity-100 transition-opacity"
+                />
+              }
             >
               {msg.images && msg.images.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-2">
@@ -454,11 +488,13 @@ export function MessageList({
               compact={compact}
               trailing={
                 !isLastStreaming ? (
-                  <ResponseFeedback
-                    responseText={msg.content}
-                    profileId={profileId}
-                    className="opacity-0 group-hover/msg:opacity-100 transition-opacity"
-                  />
+                  <span className="flex items-center gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                    <CopyMsgButton text={msg.content} />
+                    <ResponseFeedback
+                      responseText={msg.content}
+                      profileId={profileId}
+                    />
+                  </span>
                 ) : undefined
               }
             >

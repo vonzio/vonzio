@@ -235,8 +235,12 @@ export function Workspace() {
     if (!routeId) return;
     if (workspacesLoading) return;
     if (activeWorkspace) return;
+    // A just-created session navigates to /w/<id> BEFORE the workspace list
+    // refetches, so it isn't in the list yet — don't bounce it back to /
+    // (which stripped the session id from the URL on every new workspace).
+    if (routeId === activeWorkspaceId) return;
     navigate("/", { replace: true });
-  }, [routeId, workspacesLoading, activeWorkspace, navigate]);
+  }, [routeId, workspacesLoading, activeWorkspace, activeWorkspaceId, navigate]);
   // Resolve activeProfile in this order: real workspace owner → user's
   // empty-state pick from AgentPicker → first profile. The middle case
   // matters so the ModelPicker (and the rest of the composer chrome) shows
@@ -1075,12 +1079,9 @@ export function Workspace() {
                           />
                         );
                       })}
-                      {activeWorkspace?.name && (
-                        <>
-                          <span style={{ color: "var(--vz-muted-2)", padding: "0 2px" }}> · </span>
-                          <span className="truncate" style={{ minWidth: 0 }}>{activeWorkspace.name}</span>
-                        </>
-                      )}
+                      {/* Workspace title intentionally NOT repeated here — it
+                          already lives in the header; duplicating it in the
+                          composer meta line just crowds the footer. */}
                     </div>
 
                     {/* Send / Stop */}
