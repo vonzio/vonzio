@@ -80,6 +80,9 @@ function createMockManager(): ContainerManager & {
         yield JSON.stringify({ type: "exit", code: 0 });
       }
     },
+    async createTerminalSession() {
+      return { write() {}, resize() {}, onData() {}, onExit() {}, close() {} };
+    },
     async getContainerStatus(id) {
       return containers.has(id) ? "running" : "not_found";
     },

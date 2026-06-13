@@ -47,6 +47,7 @@ import { ImageRewriterService } from "./services/image-rewriter-service.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { workspaceFilesRoutes } from "./routes/workspace-files.js";
+import { workspaceTerminalRoutes } from "./routes/workspace-terminal.js";
 import { profileRoutes } from "./routes/profiles.js";
 import { userResourceRoutes } from "./routes/user-resources.js";
 import { poolRoutes } from "./routes/pool.js";
@@ -594,6 +595,7 @@ export async function buildServer(deps: ServerDeps) {
     });
     v1.register(workspaceRoutes, { workspaceService, profileService, apiKeyService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
+    v1.register(workspaceTerminalRoutes, { sessionRegistry, containerManager });
     v1.register(profileRoutes, {
       profileService,
       apiKeyService,
