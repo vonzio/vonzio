@@ -1,12 +1,23 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Image, FileText, Loader2, Target, Check, Copy } from "lucide-react";
-import { type ChatMessage, ToolBlock, MarkdownContent, detectCSV, TableView } from "./ChatCore.js";
+import { Image, FileText, Loader2, Target, Check, Copy, BookOpen } from "lucide-react";
+import { type ChatMessage, ToolBlock, MarkdownContent, detectCSV, TableView, extractCitations } from "./ChatCore.js";
 import { ResponseFeedback } from "./ResponseFeedback.js";
+import { DocViewerModal, type DocViewerTarget } from "./DocViewerModal.js";
+import {
+  fetchProfileDocuments, fetchWorkspaceDocuments,
+  profileDocumentRawUrl, workspaceDocumentRawUrl,
+} from "../api/client.js";
 import { useOptionalUser } from "../contexts/UserContext.js";
 import { useTheme } from "../hooks/useTheme.js";
 
 function formatClockTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+/** Match how the orchestrator names files under /knowledge, so /knowledge refs
+ *  and model-cited filenames resolve back to the stored document. */
+function sanitizeDocName(n: string): string {
+  return n.replace(/[^a-zA-Z0-9._-]/g, "_") || "document";
 }
 
 function initialOf(name?: string): string {
@@ -254,13 +265,17 @@ export function MessageList({
   streaming,
   containerId,
   profileId,
+  sessionId,
 }: {
   messages: ChatMessage[];
   showTools: boolean;
   streaming: boolean;
   containerId: string | null;
   profileId?: string;
+  /** Workspace session id — lets Source chips resolve to a doc + open it. */
+  sessionId?: string | null;
 }) {
+  const [sourceViewer, setSourceViewer] = useState<DocViewerTarget | null>(null);
   // Re-render every 30s so relative timestamps update
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -325,6 +340,92 @@ export function MessageList({
     }
     return starters;
   }, [messages, orderedMessages]);
+
+  // Per-turn knowledge "Sources": derived from the agent's actual Read calls on
+  // /knowledge files within the turn (ground truth — not the model self-citing,
+  // which can hallucinate). Keyed by the turn's LAST assistant message id, so a
+  // "Sources: …" footer renders under the answer. INDEX.md (the manifest) is
+  // excluded — reading it isn't using a source.
+  const turnSources = useMemo(() => {
+    const map = new Map<string, Array<{ name: string; pages: number[] }>>();
+    let start = 0;
+    // Match any /knowledge/<file> reference in a tool's input. Covers Read
+    // (file_path), Bash (`pdftotext /knowledge/x.pdf -` — how non-Anthropic
+    // models read PDFs), and Grep (path). INDEX.md is the manifest, not a source.
+    const KNOWLEDGE_REF = /\/knowledge\/([A-Za-z0-9._-]+)/g;
+    const flush = (end: number) => {
+      let lastAssistant: string | null = null;
+      const byFile = new Map<string, Set<number>>(); // name → page numbers
+      const note = (name: string | undefined, pages: number[] = []) => {
+        if (!name || name === "INDEX.md") return;
+        if (!byFile.has(name)) byFile.set(name, new Set());
+        for (const p of pages) byFile.get(name)!.add(p);
+      };
+      for (let j = start; j < end; j++) {
+        const m = orderedMessages[j];
+        if (m.role === "assistant") lastAssistant = m.id;
+        if (m.role !== "tool_use" || !m.toolInput) continue;
+        const ti = m.toolInput;
+        // Read carries a precise file_path + pages — the strongest signal.
+        const fp = ti.file_path;
+        if (m.tool === "Read" && typeof fp === "string" && fp.startsWith("/knowledge/")) {
+          const pages = String(ti.pages ?? "").match(/\d+/g)?.map(Number) ?? [];
+          note(fp.slice("/knowledge/".length), pages);
+        } else {
+          // Any other tool (Bash pdftotext, Grep) referencing /knowledge.
+          const blob = JSON.stringify(ti);
+          for (const match of blob.matchAll(KNOWLEDGE_REF)) note(match[1]);
+        }
+      }
+      if (lastAssistant && byFile.size > 0) {
+        map.set(lastAssistant, Array.from(byFile, ([name, pages]) => ({
+          name, pages: Array.from(pages).sort((a, b) => a - b),
+        })));
+      }
+    };
+    for (let i = 0; i < orderedMessages.length; i++) {
+      if (orderedMessages[i].role === "user" && i > start) { flush(i); start = i; }
+    }
+    flush(orderedMessages.length);
+    return map;
+  }, [orderedMessages]);
+
+  // Resolve /knowledge filenames → the actual doc (for click-to-view). Built
+  // from the workspace's agent + workspace docs; names are sanitized to match
+  // how the orchestrator writes them under /knowledge.
+  const [docMap, setDocMap] = useState<Map<string, { scope: "profile" | "workspace"; id: string; docId: string; media_type: string; name: string }>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const map = new Map<string, { scope: "profile" | "workspace"; id: string; docId: string; media_type: string; name: string }>();
+      try {
+        if (profileId) {
+          for (const d of await fetchProfileDocuments(profileId)) {
+            map.set(sanitizeDocName(d.name), { scope: "profile", id: profileId, docId: d.id, media_type: d.media_type, name: d.name });
+          }
+        }
+        if (sessionId) {
+          for (const d of await fetchWorkspaceDocuments(sessionId)) {
+            map.set(sanitizeDocName(d.name), { scope: "workspace", id: sessionId, docId: d.id, media_type: d.media_type, name: d.name });
+          }
+        }
+      } catch { /* leave chips non-clickable on failure */ }
+      if (!cancelled) setDocMap(map);
+    })();
+    return () => { cancelled = true; };
+  }, [profileId, sessionId]);
+
+  // Open a knowledge doc (by the filename the agent referenced) at a page.
+  const openDoc = (file: string, page?: number | null) => {
+    const doc = docMap.get(sanitizeDocName(file));
+    if (!doc) return;
+    setSourceViewer({
+      url: doc.scope === "workspace"
+        ? workspaceDocumentRawUrl(doc.id, doc.docId)
+        : profileDocumentRawUrl(doc.id, doc.docId),
+      mediaType: doc.media_type, name: doc.name, page: page ?? undefined,
+    });
+  };
 
   return (
     <>
@@ -516,6 +617,9 @@ export function MessageList({
 
         if (msg.role === "assistant") {
           const isLastStreaming = streaming && messages[messages.length - 1]?.id === msg.id;
+          // Pull the agent's structured citation block out of the prose (parsed
+          // into cards below; hidden from the rendered markdown).
+          const { text: cleanContent, citations } = extractCitations(msg.content);
           // Compact when this assistant bubble isn't the turn-starter — a
           // tool call already emitted the agent header above it.
           const compact = !isTurnStart;
@@ -549,7 +653,7 @@ export function MessageList({
                 className={`${proseClass} prose-sm max-w-none prose-pre:bg-[var(--vz-mute)] prose-pre:border prose-pre:border-[var(--vz-border)] prose-code:before:content-none prose-code:after:content-none [&_code]:text-[color:var(--vz-sodium)] [&_pre_code]:text-[color:var(--vz-ink-2)] [&_pre_code]:bg-transparent [&_pre_code]:border-0 [&_pre_code]:p-0 [&_a]:text-[color:var(--vz-sodium)] [&_a]:underline [&_a]:break-all hover:[&_a]:opacity-80 [&_h1]:text-[color:var(--vz-ink)] [&_h2]:text-[color:var(--vz-ink)] [&_h3]:text-[color:var(--vz-ink)] [&_h4]:text-[color:var(--vz-ink)] [&_strong]:text-[color:var(--vz-ink)] [&_blockquote]:not-italic [&_blockquote]:border-l-2 [&_blockquote]:border-[color:var(--vz-sodium)] [&_blockquote]:bg-[var(--vz-mute)] [&_blockquote]:rounded-r-md [&_blockquote]:px-4 [&_blockquote]:py-2 [&_blockquote]:my-3 [&_blockquote]:text-[color:var(--vz-ink-2)] [&_blockquote_p]:my-1 [&_blockquote_p]:before:content-none [&_blockquote_p]:after:content-none`}
                 style={{ fontSize: 14, lineHeight: 1.65, color: "var(--vz-ink)" }}
               >
-                <MarkdownContent content={msg.content} isStreaming={isLastStreaming} />
+                <MarkdownContent content={cleanContent} isStreaming={isLastStreaming} />
                 {isLastStreaming && (
                   <span
                     className="inline-block ml-0.5 animate-pulse rounded-sm"
@@ -557,6 +661,93 @@ export function MessageList({
                   />
                 )}
               </div>
+              {/* Citations. Prefer the agent's structured citations (file · page ·
+                  section + quote); otherwise fall back to the deterministic
+                  Sources chips derived from its tool calls. */}
+              {citations.length > 0 ? (
+                <div className="flex flex-col gap-1.5 mt-3">
+                  <span
+                    className="inline-flex items-center gap-1"
+                    style={{ fontSize: 10.5, fontFamily: "var(--vz-font-mono)", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--vz-muted-2)" }}
+                  >
+                    <BookOpen className="w-3 h-3" /> Sources
+                  </span>
+                  {citations.map((c, i) => {
+                    const resolvable = docMap.has(sanitizeDocName(c.file));
+                    return (
+                      <button
+                        key={`${c.file}-${i}`}
+                        type="button"
+                        onClick={resolvable ? () => openDoc(c.file, c.page) : undefined}
+                        disabled={!resolvable}
+                        className="text-left"
+                        style={{
+                          border: "1px solid var(--vz-border)", borderLeft: "3px solid var(--vz-sodium)",
+                          borderRadius: "var(--vz-radius-sm)", background: "var(--vz-mute)",
+                          padding: "6px 10px", cursor: resolvable ? "pointer" : "default",
+                        }}
+                        title={resolvable ? `Open ${c.file}${c.page ? ` · p.${c.page}` : ""}` : c.file}
+                      >
+                        <div className="flex items-center gap-1.5" style={{ fontSize: 11.5, color: "var(--vz-ink-2)" }}>
+                          <FileText className="w-3 h-3 shrink-0" style={{ color: "var(--vz-muted-2)" }} />
+                          <span className="font-medium truncate">{c.file}</span>
+                          {c.page != null && <span style={{ color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>· p.{c.page}</span>}
+                          {c.section && <span className="truncate" style={{ color: "var(--vz-muted-2)" }}>· {c.section}</span>}
+                        </div>
+                        {c.quote && (
+                          <div className="mt-1" style={{ fontSize: 11.5, color: "var(--vz-muted)", fontStyle: "italic", lineHeight: 1.4 }}>
+                            “{c.quote}”
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : turnSources.has(msg.id) ? (
+                <div className="flex flex-wrap items-center gap-1.5 mt-3">
+                  <span
+                    className="inline-flex items-center gap-1"
+                    style={{ fontSize: 10.5, fontFamily: "var(--vz-font-mono)", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--vz-muted-2)" }}
+                  >
+                    <BookOpen className="w-3 h-3" /> Sources
+                  </span>
+                  {turnSources.get(msg.id)!.map((src) => {
+                    const doc = docMap.get(src.name);
+                    const pageLabel = src.pages.length > 0
+                      ? ` · ${src.pages.slice(0, 3).map((p) => `p.${p}`).join(", ")}${src.pages.length > 3 ? "…" : ""}`
+                      : "";
+                    const open = doc
+                      ? () => setSourceViewer({
+                          url: doc.scope === "workspace"
+                            ? workspaceDocumentRawUrl(doc.id, doc.docId)
+                            : profileDocumentRawUrl(doc.id, doc.docId),
+                          mediaType: doc.media_type, name: doc.name,
+                          page: src.pages[0],
+                        })
+                      : undefined;
+                    return (
+                      <button
+                        key={src.name}
+                        type="button"
+                        onClick={open}
+                        disabled={!open}
+                        className="inline-flex items-center gap-1 max-w-[260px]"
+                        style={{
+                          fontSize: 11, color: "var(--vz-ink-3)",
+                          background: "var(--vz-mute)", border: "1px solid var(--vz-border)",
+                          padding: "2px 8px", borderRadius: 5,
+                          cursor: open ? "pointer" : "default",
+                        }}
+                        title={open ? `Open ${src.name}${pageLabel}` : src.name}
+                      >
+                        <FileText className="w-3 h-3 shrink-0" style={{ color: "var(--vz-muted-2)" }} />
+                        <span className="truncate">{src.name}</span>
+                        {pageLabel && <span style={{ color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>{pageLabel}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </MsgRow>
           );
         }
@@ -660,6 +851,7 @@ export function MessageList({
 
         return null;
       })}
+      {sourceViewer && <DocViewerModal target={sourceViewer} onClose={() => setSourceViewer(null)} />}
     </>
   );
 }

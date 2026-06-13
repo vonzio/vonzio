@@ -211,6 +211,15 @@ export class ProfileService {
       );
     }
     if (input.api_key_id !== undefined) updates.api_key_id = input.api_key_id || null;
+    // Keep the profile.provider column in sync with the linked key. Without
+    // this, changing the API key (e.g. Ollama → Anthropic) leaves a stale
+    // provider that can mislead anything reading the column directly.
+    if (input.provider !== undefined) {
+      updates.provider = input.provider;
+    } else if (input.api_key_id && this.apiKeyService) {
+      const key = await this.apiKeyService.get(input.api_key_id);
+      if (key?.provider) updates.provider = key.provider;
+    }
     if (input.default_tools !== undefined) updates.default_tools = input.default_tools;
     if (input.default_egress_domains !== undefined) updates.default_egress_domains = input.default_egress_domains;
     if (input.mcp_servers !== undefined) updates.mcp_servers = this.encryptMcpServers(input.mcp_servers, existing[0].mcp_servers);

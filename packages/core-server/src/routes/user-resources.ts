@@ -170,6 +170,27 @@ export const userResourceRoutes = fp(
       return { status: "deleted" };
     });
 
+    // Fetch + stream a verified document's bytes inline (shared by both scopes).
+    const serveRawDocument = async (reply: import("fastify").FastifyReply, docId: string) => {
+      const doc = await documentService.getContent(docId);
+      if (!doc) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Document not found"));
+      return reply
+        .header("Content-Type", doc.media_type || "application/octet-stream")
+        .header("Content-Disposition", `inline; filename="${doc.name.replace(/["\\]/g, "")}"`)
+        .send(doc.bytes);
+    };
+
+    // Raw bytes for the in-dashboard viewer (PDF/image). Inline disposition.
+    server.get<{ Params: { id: string; docId: string } }>("/v1/profiles/:id/documents/:docId/raw", async (request, reply) => {
+      const profile = await ownedProfile(request.params.id, request.user!);
+      if (!profile) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
+      const owner = await documentService.getOwner(request.params.docId);
+      if (!owner || owner.profile_id !== request.params.id || owner.session_id !== null) {
+        return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Document not found"));
+      }
+      return serveRawDocument(reply, request.params.docId);
+    });
+
     // ─── Documents (per-workspace knowledge) ────────────────
     // Scoped to a single workspace (session). Mounted at /knowledge alongside
     // the agent-level docs, but only for that conversation.
@@ -220,6 +241,16 @@ export const userResourceRoutes = fp(
       }
       await documentService.delete(request.params.docId);
       return { status: "deleted" };
+    });
+
+    server.get<{ Params: { id: string; docId: string } }>("/v1/workspaces/:id/documents/:docId/raw", async (request, reply) => {
+      const ws = await ownedWorkspace(request.params.id, request.user!);
+      if (!ws) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
+      const owner = await documentService.getOwner(request.params.docId);
+      if (!owner || owner.session_id !== request.params.id) {
+        return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Document not found"));
+      }
+      return serveRawDocument(reply, request.params.docId);
     });
 
     // ─── Subagents ──────────────────────────────────────────

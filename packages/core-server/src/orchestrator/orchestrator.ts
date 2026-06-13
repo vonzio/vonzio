@@ -1133,6 +1133,9 @@ export class Orchestrator extends EventEmitter {
         const indexLines: string[] = [];
         const usedNames = new Set<string>();
         for (const doc of documents) {
+          // Keep this in lockstep with sanitizeDocName() in the dashboard's
+          // MessageList — the UI maps /knowledge filenames back to docs (for
+          // clickable citations) using the identical transform.
           let safeName = doc.name.replace(/[^a-zA-Z0-9._-]/g, "_") || "document";
           if (usedNames.has(safeName)) safeName = `${doc.id}_${safeName}`;
           usedNames.add(safeName);
@@ -1281,7 +1284,18 @@ export class Orchestrator extends EventEmitter {
           (knowledgeManifest.length > 0
             ? "Available documents:\n" + knowledgeManifest.map((m) => `- ${m}`).join("\n") + "\n\n"
             : "See /knowledge/INDEX.md for the file list.\n\n") +
-          pdfGuidance
+          pdfGuidance +
+          "\n\n### Citing your sources\n" +
+          "When your final answer draws on these documents, END the message with a fenced code " +
+          "block tagged `vonzio:citations` containing a JSON array — one object per passage you " +
+          "actually used:\n" +
+          "```vonzio:citations\n" +
+          '[{"file":"<filename, e.g. drivermanual.pdf>","page":<PDF page number or null>,"section":"<heading/section or null>","quote":"<short exact excerpt, <200 chars>"}]\n' +
+          "```\n" +
+          "Rules: cite ONLY documents you actually opened/extracted this turn; use the real " +
+          "filename as shown above; `page` is the PDF page you read (null if unknown); keep quotes " +
+          "short and verbatim; never fabricate a citation. Emit nothing if you didn't use the docs. " +
+          "Put the block at the very end — it is parsed and hidden from the user, shown as citation chips."
         : systemPrompt,
       agents: subagents,
       has_skills: hasSkills,
