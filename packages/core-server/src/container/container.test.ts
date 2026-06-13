@@ -50,6 +50,10 @@ function createMockManager(): ContainerManager & {
       }
     },
 
+    async createTerminalSession() {
+      return { write() {}, resize() {}, onData() {}, onExit() {}, close() {} };
+    },
+
     async getContainerStatus(id) {
       const c = containers.get(id);
       if (!c) return "not_found";

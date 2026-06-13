@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { Globe, FolderOpen, Terminal, Info, X, Container, Bot, Copy, Check, Clock, HardDrive, Timer, BookOpen } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Globe, FolderOpen, Terminal, SquareTerminal, Info, X, Container, Bot, Copy, Check, Clock, HardDrive, Timer, BookOpen } from "lucide-react";
 import { PreviewTab } from "./PreviewTab.js";
 import { FilesTab } from "./FilesTab.js";
 import { LogsTab } from "./LogsTab.js";
+import { TerminalTab } from "./TerminalTab.js";
 import { KnowledgeSection } from "./KnowledgeSection.js";
 
-type TabId = "preview" | "files" | "logs" | "knowledge" | "info";
+type TabId = "preview" | "files" | "console" | "logs" | "knowledge" | "info";
 
 interface Props {
   workspaceId: string;
@@ -154,6 +155,7 @@ function InfoTab({ containerId, containerName, profileName, workspaceStatus, per
 const tabDefs: Array<{ value: TabId; label: string; icon: typeof Globe }> = [
   { value: "preview", label: "Preview", icon: Globe },
   { value: "files", label: "Files", icon: FolderOpen },
+  { value: "console", label: "Console", icon: SquareTerminal },
   { value: "knowledge", label: "Knowledge", icon: BookOpen },
   { value: "logs", label: "Logs", icon: Terminal },
   { value: "info", label: "Info", icon: Info },
@@ -163,6 +165,11 @@ export function RightPanel({
   workspaceId, containerId, containerName, profileName, profileId, workspaceStatus, persistent, createdAt, expiresAt,
   previewUrl, previewRefresh, isPublicPreview, onTogglePublicPreview, logs, activeTab, onTabChange, onClose,
 }: Props) {
+  // The Console mounts lazily on first open, then stays mounted (hidden when
+  // another tab is active) so its shells survive tab switches.
+  const [consoleMounted, setConsoleMounted] = useState(false);
+  useEffect(() => { if (activeTab === "console") setConsoleMounted(true); }, [activeTab]);
+
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--vz-page)" }}>
       {/* Tab header row — same 44px height as WorkspaceHeader on the left so
@@ -233,6 +240,16 @@ export function RightPanel({
               </div>
               <KnowledgeSection scope="agent" profileId={profileId} />
             </div>
+          </div>
+        )}
+        {/* Mounted persistently (once opened) so running shells survive tab
+            switches; only displayed when Console is the active tab. */}
+        {consoleMounted && (
+          <div
+            className="flex-1 min-h-0 flex-col"
+            style={{ display: activeTab === "console" ? "flex" : "none" }}
+          >
+            <TerminalTab workspaceId={workspaceId} containerId={containerId} active={activeTab === "console"} />
           </div>
         )}
         {activeTab === "logs" && <LogsTab logs={logs} />}

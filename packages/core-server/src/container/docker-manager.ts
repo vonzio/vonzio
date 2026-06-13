@@ -3,6 +3,8 @@ import type {
   ContainerManager,
   ContainerCreateOptions,
   ContainerInfo,
+  TerminalSession,
+  TerminalSessionOptions,
 } from "@vonzio/shared";
 
 const MANAGED_LABEL = "managed-by";
@@ -165,6 +167,64 @@ export class DockerManager implements ContainerManager {
         if (line.trim()) yield line;
       }
     }
+  }
+
+  async createTerminalSession(
+    id: string,
+    opts: TerminalSessionOptions = {},
+  ): Promise<TerminalSession> {
+    const container = this.docker.getContainer(id);
+    const cols = opts.cols && opts.cols > 0 ? Math.floor(opts.cols) : 80;
+    const rows = opts.rows && opts.rows > 0 ? Math.floor(opts.rows) : 24;
+
+    const exec = await container.exec({
+      // Login shell so the user's PATH/prompt/aliases load like a real terminal.
+      Cmd: [opts.shell ?? "/bin/bash", "-l"],
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: true,
+      User: opts.user,
+      WorkingDir: opts.cwd ?? "/workspace",
+      // TERM lets the shell + curses apps (vim, htop) emit proper escapes.
+      Env: ["TERM=xterm-256color"],
+    });
+
+    // With Tty:true the hijacked stream is a single RAW duplex — Docker does
+    // NOT prepend the 8-byte stdout/stderr frame headers that execInContainer
+    // has to demux. So output is piped straight through.
+    const stream = await exec.start({ hijack: true, stdin: true, Tty: true });
+    await exec.resize({ h: rows, w: cols }).catch(() => { /* race: pre-exit */ });
+
+    let exited = false;
+    const exitCbs: Array<(code: number | null) => void> = [];
+    const fireExit = async () => {
+      if (exited) return;
+      exited = true;
+      let code: number | null = null;
+      try { code = (await exec.inspect()).ExitCode ?? null; } catch { /* gone */ }
+      for (const cb of exitCbs) cb(code);
+    };
+    stream.on("end", () => void fireExit());
+    stream.on("close", () => void fireExit());
+    // A broken pipe surfaces as the exit above; don't let it crash the process.
+    stream.on("error", () => { /* handled via exit */ });
+
+    return {
+      write: (data: string) => { try { stream.write(data); } catch { /* closed */ } },
+      resize: (c: number, r: number) => {
+        if (c > 0 && r > 0) exec.resize({ h: Math.floor(r), w: Math.floor(c) }).catch(() => {});
+      },
+      onData: (cb) => {
+        stream.on("data", (chunk: Buffer | string) =>
+          cb(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      },
+      onExit: (cb) => { exitCbs.push(cb); if (exited) cb(null); },
+      close: () => {
+        try { stream.end(); } catch { /* already closed */ }
+        try { (stream as unknown as { destroy?: () => void }).destroy?.(); } catch { /* noop */ }
+      },
+    };
   }
 
   async getContainerStatus(
