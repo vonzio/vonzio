@@ -245,14 +245,18 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       }
 
       case "goal_eval": {
-        // Independent judge verdict for one goal-loop round.
+        // Independent judge verdict for one goal-loop round. Carries a
+        // structured payload so MessageList renders a verdict card.
         const v = (msg.verdict ?? {}) as { done?: boolean; missing?: string[]; rationale?: string };
         const iteration = (msg.iteration as number) ?? 0;
         const label = v.done
           ? `✓ Goal met — ${v.rationale ?? ""}`.trim()
           : `Goal review (round ${iteration + 1}): not done — ${(v.missing && v.missing.length > 0) ? v.missing.join("; ") : (v.rationale ?? "continuing")}`;
         log(`[${ts()}] ${label}`);
-        setMessages((prev) => [...prev, { id: nextId(), role: "system", content: label, timestamp: new Date() }]);
+        setMessages((prev) => [...prev, {
+          id: nextId(), role: "system", content: label, timestamp: new Date(),
+          goal: { kind: "eval", done: v.done, missing: v.missing, rationale: v.rationale, iteration },
+        }]);
         break;
       }
 
@@ -270,7 +274,10 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         };
         const label = `${human[reason] ?? `Goal loop stopped (${reason})`}${cost !== undefined ? ` · $${cost.toFixed(2)}` : ""}`;
         log(`[${ts()}] ${label}`);
-        setMessages((prev) => [...prev, { id: nextId(), role: "system", content: label, timestamp: new Date() }]);
+        setMessages((prev) => [...prev, {
+          id: nextId(), role: "system", content: label, timestamp: new Date(),
+          goal: { kind: "stop", done: reason === "done", reason, cost },
+        }]);
         break;
       }
       case "done":

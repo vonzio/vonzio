@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Image, FileText, Loader2 } from "lucide-react";
+import { Image, FileText, Loader2, Target, Check } from "lucide-react";
 import { type ChatMessage, ToolBlock, MarkdownContent, detectCSV, TableView } from "./ChatCore.js";
 import { ResponseFeedback } from "./ResponseFeedback.js";
 import { useOptionalUser } from "../contexts/UserContext.js";
@@ -306,6 +306,60 @@ export function MessageList({
             ? <AgentHeaderStrip key={`${msg.id}-hdr`} time={turnStartTime!} />
             : null;
         if (!showTools && (msg.role === "tool_use" || msg.role === "tool_result")) return null;
+
+        if (msg.role === "system" && msg.goal) {
+          // Goal-loop verdict card (judge review / final outcome).
+          const g = msg.goal;
+          const stopTitles: Record<string, string> = {
+            done: "Goal complete",
+            max_iterations: "Stopped — continuation limit reached",
+            budget: "Stopped — budget limit reached",
+            no_progress: "Stopped — no further progress",
+            judge_error: "Stopped — completion check unavailable",
+            agent_error: "Stopped — a turn failed",
+          };
+          const ok = g.done === true;
+          const accent = ok ? "var(--vz-accent, #00BFA5)" : "var(--vz-muted)";
+          const title = g.kind === "eval"
+            ? (ok ? "Goal met" : `Goal review · round ${(g.iteration ?? 0) + 1}`)
+            : (stopTitles[g.reason ?? ""] ?? "Goal loop stopped");
+          return (
+            <div key={msg.id} className="py-2">
+              <div
+                style={{
+                  border: "1px solid var(--vz-border)",
+                  borderLeft: `3px solid ${accent}`,
+                  borderRadius: "var(--vz-radius-sm)",
+                  background: "var(--vz-mute)",
+                  padding: "8px 12px",
+                  fontFamily: "var(--vz-font-sans)",
+                  fontSize: 12.5,
+                  color: "var(--vz-ink)",
+                }}
+              >
+                <div className="flex items-center gap-1.5" style={{ fontWeight: 600 }}>
+                  {ok
+                    ? <Check className="w-3.5 h-3.5" style={{ color: accent }} />
+                    : <Target className="w-3.5 h-3.5" style={{ color: accent }} />}
+                  <span>{title}</span>
+                  {g.kind === "stop" && typeof g.cost === "number" && (
+                    <span style={{ marginLeft: "auto", fontWeight: 400, fontFamily: "var(--vz-font-mono)", fontSize: 11, color: "var(--vz-muted)" }}>
+                      ${g.cost.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+                {g.kind === "eval" && g.rationale && (
+                  <div style={{ marginTop: 4, color: "var(--vz-muted)" }}>{g.rationale}</div>
+                )}
+                {g.kind === "eval" && !ok && g.missing && g.missing.length > 0 && (
+                  <ul style={{ margin: "6px 0 0", paddingLeft: 16, color: "var(--vz-muted)" }}>
+                    {g.missing.map((m, i) => <li key={i} style={{ marginTop: 2 }}>{m}</li>)}
+                  </ul>
+                )}
+              </div>
+            </div>
+          );
+        }
 
         if (msg.role === "system") {
           return (

@@ -23,6 +23,18 @@ export interface ChatMessage {
   timestamp: Date;
   images?: string[]; // base64 data URLs for display
   files?: Array<{ name: string; type: "image" | "document" }>; // all attachment metadata
+  /** Structured goal-loop payload (system messages from goal_eval/goal_stop).
+   *  When present, MessageList renders a verdict card instead of the plain
+   *  centered system line; `content` stays as a plain-text fallback. */
+  goal?: {
+    kind: "eval" | "stop";
+    done?: boolean;
+    missing?: string[];
+    rationale?: string;
+    reason?: string;
+    iteration?: number;
+    cost?: number;
+  };
 }
 
 let msgId = 0;
