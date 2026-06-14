@@ -221,10 +221,23 @@ export class ContainerPool {
       const sessionContainerIds = this.sessionRegistry
         ? new Set(this.sessionRegistry.containerSessionMap.keys())
         : new Set<string>();
+      // DB is authoritative: a container owned by ANY workspace row must never
+      // be reaped, even if it's momentarily absent from the in-memory Map
+      // (creation/reassignment window). Without this, the 5-min sweep deleted
+      // live workspace containers mid-run. Fail closed (skip the whole sweep)
+      // if the DB read errors, so a transient hiccup can't cause mass deletion.
+      let dbContainerIds: Set<string>;
+      try {
+        dbContainerIds = this.sessionRegistry
+          ? await this.sessionRegistry.dbContainerIds()
+          : new Set<string>();
+      } catch {
+        return;
+      }
 
       for (const container of allContainers) {
         const inPool = this.containers.has(container.id);
-        const inSession = sessionContainerIds.has(container.id);
+        const inSession = sessionContainerIds.has(container.id) || dbContainerIds.has(container.id);
         // VPN sidecars are owned by the orchestrator's ensureVpnSidecar
         // and paired-removed alongside their agent in safeRemoveContainer.
         // The pool doesn't track them, so they look like orphans here.
