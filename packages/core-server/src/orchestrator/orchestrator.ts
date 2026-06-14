@@ -776,8 +776,17 @@ export class Orchestrator extends EventEmitter {
           // container restart). errMsg() keeps it short for the UI/event log.
           let inContainerErr: string | undefined;
           let fallbackErr: string | undefined;
-          await this.ensureContainerRunning(containerId).catch((e) => { inContainerErr = errMsg(e); });
-          for (let attempt = 0; attempt < 2 && !judged; attempt++) {
+          // If the container is dead (e.g. OOM-killed), skip the doomed exec —
+          // it would just 409 and overwrite the real cause. ensureContainerRunning
+          // throws a descriptive reason (OOM etc.) we keep for the detail.
+          let containerAlive = true;
+          try {
+            await this.ensureContainerRunning(containerId);
+          } catch (e) {
+            containerAlive = false;
+            inContainerErr = errMsg(e);
+          }
+          for (let attempt = 0; containerAlive && attempt < 2 && !judged; attempt++) {
             try {
               judged = await this.agentComms.judge(
                 containerId,
@@ -1897,7 +1906,13 @@ export class Orchestrator extends EventEmitter {
       await this.deps.containerManager.unpauseContainer(containerId);
       return;
     }
-    throw new Error(`container ${containerId} is ${status}`);
+    // exited / not_found — surface WHY. OOM is the common culprit when an
+    // agent installs deps + runs tests under the memory cap.
+    const exit = await this.deps.containerManager.getContainerExit(containerId).catch(() => null);
+    if (exit?.oomKilled) {
+      throw new Error("workspace container was OOM-killed (out of memory) — raise CONTAINER_MEMORY_LIMIT_SESSION");
+    }
+    throw new Error(`workspace container is ${status}${exit?.exitCode != null ? ` (exit ${exit.exitCode})` : ""}`);
   }
 
   private async safeRemoveContainer(containerId: string): Promise<void> {

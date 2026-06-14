@@ -121,7 +121,10 @@ const configSchema = z.object({
   CONTAINER_MEMORY_LIMIT_SESSION: z
     .string()
     .regex(/^\d+[bkmg]$/i, "Must be a Docker memory value (e.g. 512m, 1g)")
-    .default("768m"),
+    // 2g: session agents routinely install deps + run a test suite (+ sometimes
+    // chromium); 768m OOM-killed the container mid-run, which surfaced as the
+    // goal judge's "container not running" (409). Raise the floor.
+    .default("2g"),
   // Max processes/threads per container (fork-bomb / PID-exhaustion guard).
   // 0 disables the limit.
   CONTAINER_PIDS_LIMIT: z.coerce.number().int().min(0).default(512),

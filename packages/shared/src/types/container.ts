@@ -75,6 +75,11 @@ export interface ContainerManager {
   getContainerStatus(
     id: string,
   ): Promise<"running" | "paused" | "exited" | "not_found">;
+  /** Exit details for a stopped container — used to report WHY it died (e.g.
+   *  OOM-killed). Returns null when the container no longer exists. */
+  getContainerExit(
+    id: string,
+  ): Promise<{ oomKilled: boolean; exitCode: number | null } | null>;
   listManagedContainers(): Promise<ContainerInfo[]>;
   /** Get the internal Docker IP address of a container */
   getContainerIp(id: string): Promise<string | null>;
