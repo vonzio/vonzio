@@ -89,7 +89,7 @@ export function App() {
           )}
           <Route path="/login" element={<Login onLogin={() => { window.location.href = "/"; }} showRegister={registrationEnabled ? () => { window.location.href = "/register"; } : undefined} authProviders={authProviders} turnstileSiteKey={turnstileSiteKey} marketingUrl={marketingUrl} emailEnabled={emailEnabled} />} />
           {registrationEnabled && (
-            <Route path="/register" element={<Register onRegister={() => { window.location.href = "/"; }} showLogin={() => { window.location.href = "/login"; }} authProviders={authProviders} turnstileSiteKey={turnstileSiteKey} />} />
+            <Route path="/register" element={<Register onRegister={() => { window.location.href = "/"; }} showLogin={() => { window.location.href = "/login"; }} authProviders={authProviders} turnstileSiteKey={turnstileSiteKey} marketingUrl={marketingUrl} />} />
           )}
           {/* Marketing/landing lives on the marketing domain (vonzio.com).
               Anything else hitting the app domain unauthenticated →
