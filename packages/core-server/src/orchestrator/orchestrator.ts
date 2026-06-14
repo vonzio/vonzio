@@ -886,6 +886,14 @@ export class Orchestrator extends EventEmitter {
           attempt: 1,
         };
 
+        // Reset the task timeout for each round: it bounds a single turn (the
+        // safety net for a stuck turn), NOT the whole goal loop. Without this,
+        // the one per-task window (default 300s) elapses across rounds and the
+        // timeout aborts a productive multi-round loop. The loop's own caps
+        // (max_continuations, budget) bound the total.
+        this.clearTaskTimeout(task.id);
+        this.startTaskTimeout(task.id, (task.timeout_seconds ?? this.deps.config.taskTimeoutSeconds) * 1000);
+
         // A continuation turn can hard-error (runAgent throws). Bail gracefully:
         // keep the work from prior rounds, emit goal_stop, and let completeTask
         // finish with the last good result rather than failing the whole task.
@@ -2259,10 +2267,15 @@ export class Orchestrator extends EventEmitter {
   }
 
   private startTaskTimeout(taskId: string, ms: number): void {
+    if (ms <= 0) return; // 0/negative = watchdog disabled
     const timer = setTimeout(async () => {
       const active = this.activeTasks.get(taskId);
       if (active) {
-        await this.agentComms.abort(active.containerId);
+        // Keep the container for session tasks — the timeout aborts the stuck
+        // turn's exec but must NOT destroy a warm/persistent session container
+        // (doing so killed it mid-goal-loop → continuation "container not
+        // running"). Batch tasks have no session and get the full stop.
+        await this.agentComms.abort(active.containerId, !!active.sessionId);
       }
     }, ms);
     this.activeTimers.set(taskId, timer);

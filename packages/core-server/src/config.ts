@@ -79,7 +79,12 @@ const configSchema = z.object({
 
   // Batch + pooled concurrency
   MAX_CONCURRENT_AGENTS: z.coerce.number().default(4),
-  TASK_TIMEOUT_SECONDS: z.coerce.number().default(300),
+  // Per-TURN watchdog (reset each goal-loop round), not a whole-loop cap. Only
+  // meant to catch a genuinely hung turn (model never responds / tool deadlock)
+  // so it can't hold a container + slot forever. 300s cut legitimate heavy
+  // turns (deps + tests + build in one turn); 1800s only trips on a real hang.
+  // 0 disables the watchdog entirely.
+  TASK_TIMEOUT_SECONDS: z.coerce.number().default(1800),
   MAX_TURNS: z.coerce.number().default(200),
 
   // Per-agent knowledge documents (mounted at /knowledge). Stored base64 in
