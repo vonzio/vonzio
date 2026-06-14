@@ -152,7 +152,7 @@ export function setupWsHandler(
   orchestrator.on("task:goal_eval", (taskId: string, sessionId: string | undefined, info: { iteration: number; verdict: unknown }) => {
     relayToSubscribers(taskId, sessionId, { type: "goal_eval", task_id: taskId, session_id: sessionId, ...info });
   });
-  orchestrator.on("task:goal_stop", (taskId: string, sessionId: string | undefined, info: { reason: string; iteration: number; total_cost_usd: number; verdict?: unknown }) => {
+  orchestrator.on("task:goal_stop", (taskId: string, sessionId: string | undefined, info: { reason: string; iteration: number; total_cost_usd: number; verdict?: unknown; detail?: string }) => {
     relayToSubscribers(taskId, sessionId, { type: "goal_stop", task_id: taskId, session_id: sessionId, ...info });
   });
 

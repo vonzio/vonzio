@@ -20,6 +20,7 @@ import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
 import { decideGoalNext } from "./goal-loop.js";
+import { judgeServerSide } from "./judge-server.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
 import type { ProfileService } from "../services/profile-service.js";
@@ -40,6 +41,12 @@ type TaskUpdate = Partial<typeof schema.tasks.$inferInsert>;
 /** Idle window before tearing down a VPN sidecar after its last
  *  agent detaches. Tuned for typical back-to-back task cadence. */
 const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
+
+/** Short, user-safe error string for surfacing a cause in events/logs. */
+function errMsg(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  return m.length > 200 ? `${m.slice(0, 200)}…` : m;
+}
 
 export interface Logger {
   info(obj: Record<string, unknown>, msg?: string): void;
@@ -619,7 +626,7 @@ export class Orchestrator extends EventEmitter {
         );
         await this.safeRemoveContainer(session.container_id);
         containerId = await this.createSessionContainer(task.session_id, profile, env, session.volume_id);
-        this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
+        await this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
         session.container_id = containerId;
         // Re-run setup commands since it's a fresh container (workspace files are preserved via volume)
         if (profile.setup_commands?.length) {
@@ -628,7 +635,7 @@ export class Orchestrator extends EventEmitter {
       } else {
         // Dead container, no volumes — create fresh
         containerId = await this.createSessionContainer(task.session_id, profile, env);
-        this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
+        await this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
         session.container_id = containerId;
         needsInit = true;
       }
@@ -658,7 +665,7 @@ export class Orchestrator extends EventEmitter {
           orgId,
         );
       } else {
-        this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
+        await this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
         session.container_id = containerId;
       }
       if (volumeId) {
@@ -698,7 +705,13 @@ export class Orchestrator extends EventEmitter {
     if (goalModeOn && task.session_id) {
       const maxIterations = profile.max_continuations ?? 5;
       const budgetCap = profile.continuation_budget_usd ?? Infinity;
-      const judgeModel = task.model ?? profile.model ?? "claude-opus-4-8";
+      // Resolve the judge's model the SAME way the turn does — task →
+      // workspace.model_override → profile.model. Using profile.model alone
+      // sent the profile default (e.g. an ollama model) to the workspace's
+      // overridden provider (e.g. an Anthropic key) → 404. The judge must run
+      // on the model the workspace actually uses.
+      const judgeWorkspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
+      const judgeModel = resolveTaskModel(task, judgeWorkspace, profile) ?? profile.model ?? "claude-opus-4-8";
       const judgeEffort = task.effort ?? profile.effort ?? undefined;
       const goal = task.prompt;
       // Per-message acceptance criteria from the composer (optional).
@@ -712,12 +725,18 @@ export class Orchestrator extends EventEmitter {
       let prevProgress = true;
       let priorMissing: string[] | undefined;
 
-      const stopGoal = (reason: GoalStopReason, verdict?: GoalVerdict) => {
+      // `detail` carries the human-readable underlying cause for reasons that
+      // are otherwise opaque (notably judge_error). It rides on the goal_stop
+      // event, which relayToSubscribers persists to the event log — so the UI
+      // can show WHY and it survives a container/server restart (the gap that
+      // made the original "completion check unavailable" undiagnosable).
+      const stopGoal = (reason: GoalStopReason, verdict?: GoalVerdict, detail?: string) => {
         this.emit("task:goal_stop", task.id, task.session_id, {
           reason,
           iteration,
           total_cost_usd: totalCost,
           verdict,
+          ...(detail ? { detail } : {}),
         });
       };
 
@@ -749,7 +768,25 @@ export class Orchestrator extends EventEmitter {
           // a while and emits nothing until its verdict).
           this.emit("task:goal_judging", task.id, task.session_id, { iteration });
           let judged: GoalVerdict | null = null;
-          for (let attempt = 0; attempt < 2 && !judged; attempt++) {
+          // Tier 1: the primary judge inspects the workspace files, so it needs
+          // the container alive. Unpause it if an idle sweep paused it between
+          // the turn and now (best-effort; a removed container falls to tier 2).
+          // Track the underlying cause so a judge_error stop can report WHY
+          // (the cause is otherwise only in server warn logs, which vanish on
+          // container restart). errMsg() keeps it short for the UI/event log.
+          let inContainerErr: string | undefined;
+          let fallbackErr: string | undefined;
+          // If the container is dead (e.g. OOM-killed), skip the doomed exec —
+          // it would just 409 and overwrite the real cause. ensureContainerRunning
+          // throws a descriptive reason (OOM etc.) we keep for the detail.
+          let containerAlive = true;
+          try {
+            await this.ensureContainerRunning(containerId);
+          } catch (e) {
+            containerAlive = false;
+            inContainerErr = errMsg(e);
+          }
+          for (let attempt = 0; containerAlive && attempt < 2 && !judged; attempt++) {
             try {
               judged = await this.agentComms.judge(
                 containerId,
@@ -764,12 +801,57 @@ export class Orchestrator extends EventEmitter {
                 env,
               );
             } catch (err) {
-              this.log.warn({ taskId: task.id, attempt, err }, "goal judge call failed");
+              inContainerErr = errMsg(err);
+              this.log.warn({ taskId: task.id, attempt, err }, "goal judge call failed (in-container)");
+            }
+          }
+          // Tier 2: container path unavailable (torn down / paused / flaky) —
+          // fall back to a server-side judge that calls the model directly with
+          // no container dependency. Weaker (no file inspection) but keeps the
+          // autonomous loop deciding instead of dead-stopping.
+          if (!judged) {
+            try {
+              // Ollama keys carry no base_url, but Ollama Cloud exposes an
+              // OpenAI-compatible API at OLLAMA_BASE_URL/v1 — supply it so the
+              // fallback works for ollama (the common "no verdict" case, since
+              // kimi-class models often can't emit the strict in-container
+              // json_schema verdict but parse fine via the lenient fallback).
+              let judgeBaseUrl = profile.resolved_base_url;
+              if (profile.resolved_provider === "ollama" && !judgeBaseUrl) {
+                const { OLLAMA_BASE_URL } = await import("../services/ollama-service.js");
+                judgeBaseUrl = `${OLLAMA_BASE_URL.replace(/\/+$/, "")}/v1`;
+              }
+              judged = await judgeServerSide(
+                {
+                  goal,
+                  acceptance_criteria: criteria,
+                  agent_result: result.text,
+                  prior_missing: priorMissing,
+                },
+                {
+                  apiKey: profile.resolved_api_key,
+                  provider: profile.resolved_provider,
+                  baseUrl: judgeBaseUrl,
+                  model: judgeModel,
+                },
+                this.log,
+              );
+              if (judged) {
+                this.log.info({ taskId: task.id }, "goal judge: used server-side fallback");
+              }
+            } catch (err) {
+              fallbackErr = errMsg(err);
+              this.log.warn({ taskId: task.id, err }, "server-side fallback judge failed");
             }
           }
           if (!judged) {
-            // Judge unavailable after a retry — keep the work done, stop looping.
-            stopGoal("judge_error");
+            // Both the in-container and server-side judges are unavailable —
+            // keep the work done, stop looping. Surface the cause.
+            const detail = [
+              inContainerErr && `workspace judge: ${inContainerErr}`,
+              fallbackErr && `fallback judge: ${fallbackErr}`,
+            ].filter(Boolean).join("; ") || undefined;
+            stopGoal("judge_error", undefined, detail);
             break;
           }
           verdict = judged;
@@ -803,6 +885,14 @@ export class Orchestrator extends EventEmitter {
             : this.buildContinuationPrompt(priorMissing ?? []),
           attempt: 1,
         };
+
+        // Reset the task timeout for each round: it bounds a single turn (the
+        // safety net for a stuck turn), NOT the whole goal loop. Without this,
+        // the one per-task window (default 300s) elapses across rounds and the
+        // timeout aborts a productive multi-round loop. The loop's own caps
+        // (max_continuations, budget) bound the total.
+        this.clearTaskTimeout(task.id);
+        this.startTaskTimeout(task.id, (task.timeout_seconds ?? this.deps.config.taskTimeoutSeconds) * 1000);
 
         // A continuation turn can hard-error (runAgent throws). Bail gracefully:
         // keep the work from prior rounds, emit goal_stop, and let completeTask
@@ -1453,7 +1543,7 @@ export class Orchestrator extends EventEmitter {
     // Create container (with volumes if persistent)
     const volumeId = profile.persistent_sessions ? sessionId : undefined;
     const containerId = await this.createSessionContainer(sessionId, profile, env, volumeId);
-    this.deps.sessionRegistry.reassignContainer(sessionId, containerId);
+    await this.deps.sessionRegistry.reassignContainer(sessionId, containerId);
     if (volumeId) {
       this.deps.sessionRegistry.setVolumeId(sessionId, volumeId);
     }
@@ -1822,6 +1912,27 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Best-effort: make sure a container is running before we exec into it
+   * (used by the goal judge, which can race an idle-sweep pause). Unpauses a
+   * paused container; throws for exited/removed so the caller can degrade.
+   */
+  private async ensureContainerRunning(containerId: string): Promise<void> {
+    const status = await this.deps.containerManager.getContainerStatus(containerId);
+    if (status === "running") return;
+    if (status === "paused") {
+      await this.deps.containerManager.unpauseContainer(containerId);
+      return;
+    }
+    // exited / not_found — surface WHY. OOM is the common culprit when an
+    // agent installs deps + runs tests under the memory cap.
+    const exit = await this.deps.containerManager.getContainerExit(containerId).catch(() => null);
+    if (exit?.oomKilled) {
+      throw new Error("workspace container was OOM-killed (out of memory) — raise CONTAINER_MEMORY_LIMIT_SESSION");
+    }
+    throw new Error(`workspace container is ${status}${exit?.exitCode != null ? ` (exit ${exit.exitCode})` : ""}`);
+  }
+
   private async safeRemoveContainer(containerId: string): Promise<void> {
     // If this agent was attached to a shared VPN sidecar, decrement
     // the tunnel's refcount. Only tear down the sidecar when the
@@ -2156,10 +2267,27 @@ export class Orchestrator extends EventEmitter {
   }
 
   private startTaskTimeout(taskId: string, ms: number): void {
+    if (ms <= 0) return; // 0/negative = watchdog disabled
     const timer = setTimeout(async () => {
       const active = this.activeTasks.get(taskId);
-      if (active) {
-        await this.agentComms.abort(active.containerId);
+      if (!active) return;
+      // Make this death greppable. A timeout-induced abort surfaces three
+      // layers away (abort → stopContainer → judge 409 → "completion check
+      // unavailable"); without this line, diagnosing it meant archaeology.
+      this.log.warn(
+        { taskId, ms, containerId: active.containerId, session: !!active.sessionId },
+        "task watchdog fired — aborting hung turn (container kept for sessions)",
+      );
+      try {
+        // Keep the container for session tasks — the timeout aborts the stuck
+        // turn's exec but must NOT destroy a warm/persistent session container
+        // (doing so killed it mid-goal-loop → continuation "container not
+        // running"). Batch tasks have no session and get the full stop.
+        await this.agentComms.abort(active.containerId, !!active.sessionId);
+      } catch (err) {
+        // Don't let an abort failure become an unhandled rejection in the
+        // timer callback — log and move on; the task's own paths still clean up.
+        this.log.warn({ err: errMsg(err), taskId }, "task watchdog: abort failed");
       }
     }, ms);
     this.activeTimers.set(taskId, timer);

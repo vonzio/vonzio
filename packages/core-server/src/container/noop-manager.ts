@@ -16,6 +16,9 @@ export class NoopContainerManager implements ContainerManager {
   async getContainerStatus(): Promise<"running" | "paused" | "exited" | "not_found"> {
     return "not_found";
   }
+  async getContainerExit(): Promise<{ oomKilled: boolean; exitCode: number | null } | null> {
+    return null;
+  }
   async listManagedContainers(): Promise<ContainerInfo[]> {
     return [];
   }
