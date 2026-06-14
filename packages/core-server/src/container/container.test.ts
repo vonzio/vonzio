@@ -59,6 +59,7 @@ function createMockManager(): ContainerManager & {
       if (!c) return "not_found";
       return c.status;
     },
+    async getContainerExit() { return null; },
 
     async listManagedContainers() {
       return Array.from(containers.entries()).map(([id, c]) => ({

@@ -334,11 +334,12 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           judge_error: "Stopped — completion check unavailable",
           agent_error: "Stopped — a turn failed",
         };
+        const detail = typeof msg.detail === "string" ? msg.detail : undefined;
         const label = `${human[reason] ?? `Goal loop stopped (${reason})`}${cost !== undefined ? ` · $${cost.toFixed(2)}` : ""}`;
-        log(`[${ts()}] ${label}`);
+        log(`[${ts()}] ${label}${detail ? ` — ${detail}` : ""}`);
         setMessages((prev) => [...prev, {
           id: nextId(), role: "system", content: label, timestamp: new Date(),
-          goal: { kind: "stop", done: reason === "done", reason, cost },
+          goal: { kind: "stop", done: reason === "done", reason, cost, detail },
         }]);
         break;
       }

@@ -494,6 +494,9 @@ export function MessageList({
                     </span>
                   )}
                 </div>
+                {g.kind === "stop" && g.detail && (
+                  <div style={{ marginTop: 4, color: "var(--vz-muted)" }}>{g.detail}</div>
+                )}
                 {g.kind === "eval" && g.rationale && (
                   <div style={{ marginTop: 4, color: "var(--vz-muted)" }}>{g.rationale}</div>
                 )}

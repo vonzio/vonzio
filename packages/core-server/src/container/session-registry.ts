@@ -419,6 +419,23 @@ export class SessionRegistry {
     return result;
   }
 
+  /**
+   * All container IDs recorded in the DB workspaces table — the AUTHORITATIVE
+   * set the orphan sweep must never reap. The in-memory Map alone misses
+   * containers in a brief window (freshly created + persisted, but not yet
+   * registered in memory; or a continuation that reassigned the container),
+   * which let the 5-minute sweep delete live workspace containers mid-run.
+   */
+  async dbContainerIds(): Promise<Set<string>> {
+    const rows = await this.db
+      .select({ container_id: schema.workspaces.container_id })
+      .from(schema.workspaces)
+      .where(isNotNull(schema.workspaces.container_id));
+    const set = new Set<string>();
+    for (const r of rows) if (r.container_id) set.add(r.container_id);
+    return set;
+  }
+
   get activeCount(): number {
     let count = 0;
     for (const s of this.sessions.values()) {

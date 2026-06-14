@@ -86,6 +86,7 @@ function createMockManager(): ContainerManager & {
     async getContainerStatus(id) {
       return containers.has(id) ? "running" : "not_found";
     },
+    async getContainerExit() { return null; },
     async listManagedContainers() {
       return [];
     },
