@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { authClient } from "../lib/auth-client.js";
+import { ThemeToggle } from "../components/ThemeToggle.js";
 import { useTurnstile } from "./Login.js";
+import "./login.css";
 
 /**
  * Two modes:
@@ -21,14 +23,43 @@ export function ResetPassword() {
   return token ? <SetNewPassword token={token} turnstileSiteKey={turnstileSiteKey} /> : <RequestReset turnstileSiteKey={turnstileSiteKey} />;
 }
 
-function VLogo() {
+/** Shared branded shell so the reset pages match Login/Register. */
+function AuthShell({ pullquote, eyebrow, title, lede, children }: {
+  pullquote: string;
+  eyebrow: string;
+  title: React.ReactNode;
+  lede?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <svg viewBox="0 0 512 512" className="w-10 h-10">
-      <polyline points="155,160 256,290 347,160"
-        fill="none" stroke="white" strokeWidth="50"
-        strokeLinecap="round" strokeLinejoin="round"/>
-      <rect x="190" y="330" width="132" height="28" rx="14" fill="#00BFA5"/>
-    </svg>
+    <div className="sodium-shell">
+      <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10 }}>
+        <ThemeToggle className="vz-action-btn" />
+      </div>
+      <div className="login-stage">
+        <a href="/" className="login-brand" aria-label="vonzio">
+          <span className="vm" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 64 64">
+              <path d="M18 22 L32 44 L46 22" fill="none" stroke="var(--vz-sodium)" strokeWidth="6.5" strokeLinecap="round" strokeLinejoin="round" />
+              <rect x="22" y="49" width="20" height="3.5" rx="1.75" fill="var(--vz-sodium)" />
+            </svg>
+          </span>
+          <span><span className="vletter">v</span>onzio</span>
+        </a>
+
+        <p className="login-pullquote">{pullquote}</p>
+
+        <div className="login-card">
+          <span className="vz-eyebrow">{eyebrow}</span>
+          <h1>{title}</h1>
+          {lede && <p className="lede">{lede}</p>}
+          {children}
+          <p className="register-prompt">
+            <button type="button" onClick={() => { window.location.href = "/login"; }}>← Back to sign in</button>
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -63,42 +94,45 @@ function RequestReset({ turnstileSiteKey }: { turnstileSiteKey: string | null })
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-primary px-4">
-      <div className="w-full max-w-sm">
-        <div className="flex flex-col items-center gap-3 mb-8">
-          <VLogo />
-          <h1 className="text-2xl font-bold text-white">Reset password</h1>
-        </div>
-
-        <div className="bg-white/5 backdrop-blur border border-white/10 rounded-2xl p-6 sm:p-8">
-          {sent ? (
-            <div className="text-center space-y-3">
-              <p className="text-sm text-white/80">Check your email for a reset link.</p>
-              <p className="text-xs text-white/40">If you don't see it, check your spam folder.</p>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <p className="text-sm text-white/60 mb-4">Enter your email and we'll send you a reset link.</p>
-              <div>
-                <label className="block text-sm font-medium text-white/70 mb-1.5">Email</label>
-                <input type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2.5 text-sm border border-white/10 rounded-lg bg-white/5 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-colors" required />
-              </div>
-              {turnstileSiteKey && <div ref={turnstileRef} />}
-              {error && <p className="text-red-400 text-sm">{error}</p>}
-              <button type="submit" disabled={loading || (!!turnstileSiteKey && !captchaToken)}
-                className="w-full py-2.5 bg-accent text-white text-sm font-medium rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors cursor-pointer">
-                {loading ? "Sending..." : "Send Reset Link"}
-              </button>
-            </form>
-          )}
-        </div>
-
-        <p className="text-center text-sm text-white/40 mt-5">
-          <a href="/login" className="text-accent hover:text-accent/80 transition-colors">Back to login</a>
+    <AuthShell
+      pullquote="It happens to the best of us."
+      eyebrow="Reset password"
+      title={<>Forgot your <em>password?</em></>}
+      lede={sent ? undefined : "Enter your email and we'll send a reset link."}
+    >
+      {sent ? (
+        <p className="lede" role="status">
+          Check your email for a reset link. If you don't see it, check your spam folder.
         </p>
-      </div>
-    </div>
+      ) : (
+        <form className="login-form" onSubmit={handleSubmit}>
+          <label className="vz-field">
+            <span className="vz-field__label">Email</span>
+            <input
+              type="email"
+              className="vz-input"
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+            />
+          </label>
+
+          {turnstileSiteKey && <div ref={turnstileRef} />}
+
+          {error && <p className="login-error" role="alert">{error}</p>}
+
+          <button
+            type="submit"
+            className="vz-btn vz-btn--primary vz-btn--mono login-submit"
+            disabled={loading || (!!turnstileSiteKey && !captchaToken)}
+          >
+            {loading ? "Sending…" : "Send reset link →"}
+          </button>
+        </form>
+      )}
+    </AuthShell>
   );
 }
 
@@ -142,41 +176,59 @@ function SetNewPassword({ token, turnstileSiteKey }: { token: string; turnstileS
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-primary px-4">
-      <div className="w-full max-w-sm">
-        <div className="flex flex-col items-center gap-3 mb-8">
-          <VLogo />
-          <h1 className="text-2xl font-bold text-white">New password</h1>
-        </div>
+    <AuthShell
+      pullquote="Almost there."
+      eyebrow="Reset password"
+      title={<>Set a new <em>password.</em></>}
+    >
+      {done ? (
+        <>
+          <p className="lede" role="status">Password updated.</p>
+          <a href="/login" className="vz-btn vz-btn--primary vz-btn--mono login-submit" style={{ textDecoration: "none" }}>
+            Sign in →
+          </a>
+        </>
+      ) : (
+        <form className="login-form" onSubmit={handleSubmit}>
+          <label className="vz-field">
+            <span className="vz-field__label">New password</span>
+            <input
+              type="password"
+              className="vz-input"
+              placeholder="Min 8 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="new-password"
+            />
+          </label>
 
-        <div className="bg-white/5 backdrop-blur border border-white/10 rounded-2xl p-6 sm:p-8">
-          {done ? (
-            <div className="text-center space-y-3">
-              <p className="text-sm text-white/80">Password updated.</p>
-              <a href="/login" className="inline-block mt-2 px-6 py-2.5 bg-accent text-white text-sm font-medium rounded-lg hover:bg-accent/90 transition-colors">Sign In</a>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-white/70 mb-1.5">New password</label>
-                <input type="password" placeholder="Min 8 characters" value={password} onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2.5 text-sm border border-white/10 rounded-lg bg-white/5 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-colors" required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-white/70 mb-1.5">Confirm password</label>
-                <input type="password" placeholder="Confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)}
-                  className="w-full px-3 py-2.5 text-sm border border-white/10 rounded-lg bg-white/5 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-colors" required />
-              </div>
-              {turnstileSiteKey && <div ref={turnstileRef} />}
-              {error && <p className="text-red-400 text-sm">{error}</p>}
-              <button type="submit" disabled={loading || (!!turnstileSiteKey && !captchaToken)}
-                className="w-full py-2.5 bg-accent text-white text-sm font-medium rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors cursor-pointer">
-                {loading ? "Updating..." : "Set New Password"}
-              </button>
-            </form>
-          )}
-        </div>
-      </div>
-    </div>
+          <label className="vz-field">
+            <span className="vz-field__label">Confirm password</span>
+            <input
+              type="password"
+              className="vz-input"
+              placeholder="Re-enter password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+              autoComplete="new-password"
+            />
+          </label>
+
+          {turnstileSiteKey && <div ref={turnstileRef} />}
+
+          {error && <p className="login-error" role="alert">{error}</p>}
+
+          <button
+            type="submit"
+            className="vz-btn vz-btn--primary vz-btn--mono login-submit"
+            disabled={loading || (!!turnstileSiteKey && !captchaToken)}
+          >
+            {loading ? "Updating…" : "Set new password →"}
+          </button>
+        </form>
+      )}
+    </AuthShell>
   );
 }
