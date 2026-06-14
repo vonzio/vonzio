@@ -58,11 +58,15 @@ export class ContainerPool {
       this.config.idleDrainSecs * 1000,
     );
 
-    // Sweep orphans every 5 minutes
-    this.orphanSweepInterval = setInterval(
-      () => this.sweepOrphans(),
-      5 * 60 * 1000,
-    );
+    // NOTE: no periodic orphan sweep. It existed to clean leftover *pool*
+    // containers, but pooled/batch modes are effectively unused (POOL_MIN_SIZE=0,
+    // product is session-only) so it had no legitimate work — meanwhile it
+    // force-removed (rm -f) LIVE session containers whenever their session ↔
+    // container_id link was briefly absent (resumable/expired/evicted/reassign
+    // race), causing mid-run "container not running" failures. Cross-restart
+    // leftovers are handled by the one-shot DB-guarded sweepOrphans() in init()
+    // above; the running session lifecycle (pause/resume/expire) owns session
+    // containers from then on.
   }
 
   async claim(): Promise<string> {
@@ -243,8 +247,13 @@ export class ContainerPool {
         // The pool doesn't track them, so they look like orphans here.
         // Skip them — the orchestrator's lifecycle is authoritative.
         const isVpnSidecar = container.labels["vonzio-mode"] === "vpn-sidecar";
+        // Session containers are owned by the SessionRegistry lifecycle
+        // (pause/resume/expire/evict) — never let the pool reap them, even on
+        // the startup sweep. Belt-and-suspenders on top of the pool/session/DB
+        // checks: the registry is authoritative for these.
+        const isSession = container.labels["vonzio-mode"] === "session";
 
-        if (!inPool && !inSession && !isVpnSidecar) {
+        if (!inPool && !inSession && !isVpnSidecar && !isSession) {
           try {
             await this.manager.removeContainer(container.id, true);
             this.onOrphanRemoved?.(container.id);

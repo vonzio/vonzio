@@ -626,7 +626,7 @@ export class Orchestrator extends EventEmitter {
         );
         await this.safeRemoveContainer(session.container_id);
         containerId = await this.createSessionContainer(task.session_id, profile, env, session.volume_id);
-        this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
+        await this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
         session.container_id = containerId;
         // Re-run setup commands since it's a fresh container (workspace files are preserved via volume)
         if (profile.setup_commands?.length) {
@@ -635,7 +635,7 @@ export class Orchestrator extends EventEmitter {
       } else {
         // Dead container, no volumes — create fresh
         containerId = await this.createSessionContainer(task.session_id, profile, env);
-        this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
+        await this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
         session.container_id = containerId;
         needsInit = true;
       }
@@ -665,7 +665,7 @@ export class Orchestrator extends EventEmitter {
           orgId,
         );
       } else {
-        this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
+        await this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
         session.container_id = containerId;
       }
       if (volumeId) {
@@ -1535,7 +1535,7 @@ export class Orchestrator extends EventEmitter {
     // Create container (with volumes if persistent)
     const volumeId = profile.persistent_sessions ? sessionId : undefined;
     const containerId = await this.createSessionContainer(sessionId, profile, env, volumeId);
-    this.deps.sessionRegistry.reassignContainer(sessionId, containerId);
+    await this.deps.sessionRegistry.reassignContainer(sessionId, containerId);
     if (volumeId) {
       this.deps.sessionRegistry.setVolumeId(sessionId, volumeId);
     }
