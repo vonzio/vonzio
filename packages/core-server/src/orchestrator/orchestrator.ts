@@ -20,6 +20,7 @@ import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
 import { decideGoalNext } from "./goal-loop.js";
+import { judgeServerSide } from "./judge-server.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
 import type { ProfileService } from "../services/profile-service.js";
@@ -749,6 +750,10 @@ export class Orchestrator extends EventEmitter {
           // a while and emits nothing until its verdict).
           this.emit("task:goal_judging", task.id, task.session_id, { iteration });
           let judged: GoalVerdict | null = null;
+          // Tier 1: the primary judge inspects the workspace files, so it needs
+          // the container alive. Unpause it if an idle sweep paused it between
+          // the turn and now (best-effort; a removed container falls to tier 2).
+          await this.ensureContainerRunning(containerId).catch(() => {});
           for (let attempt = 0; attempt < 2 && !judged; attempt++) {
             try {
               judged = await this.agentComms.judge(
@@ -764,11 +769,40 @@ export class Orchestrator extends EventEmitter {
                 env,
               );
             } catch (err) {
-              this.log.warn({ taskId: task.id, attempt, err }, "goal judge call failed");
+              this.log.warn({ taskId: task.id, attempt, err }, "goal judge call failed (in-container)");
+            }
+          }
+          // Tier 2: container path unavailable (torn down / paused / flaky) —
+          // fall back to a server-side judge that calls the model directly with
+          // no container dependency. Weaker (no file inspection) but keeps the
+          // autonomous loop deciding instead of dead-stopping.
+          if (!judged) {
+            try {
+              judged = await judgeServerSide(
+                {
+                  goal,
+                  acceptance_criteria: criteria,
+                  agent_result: result.text,
+                  prior_missing: priorMissing,
+                },
+                {
+                  apiKey: profile.resolved_api_key,
+                  provider: profile.resolved_provider,
+                  baseUrl: profile.resolved_base_url,
+                  model: judgeModel,
+                },
+                this.log,
+              );
+              if (judged) {
+                this.log.info({ taskId: task.id }, "goal judge: used server-side fallback");
+              }
+            } catch (err) {
+              this.log.warn({ taskId: task.id, err }, "server-side fallback judge failed");
             }
           }
           if (!judged) {
-            // Judge unavailable after a retry — keep the work done, stop looping.
+            // Both the in-container and server-side judges are unavailable —
+            // keep the work done, stop looping.
             stopGoal("judge_error");
             break;
           }
@@ -1820,6 +1854,21 @@ export class Orchestrator extends EventEmitter {
     for await (const _ of this.deps.containerManager.execInContainer(containerId, cmd, undefined, undefined, "root")) {
       // drain output
     }
+  }
+
+  /**
+   * Best-effort: make sure a container is running before we exec into it
+   * (used by the goal judge, which can race an idle-sweep pause). Unpauses a
+   * paused container; throws for exited/removed so the caller can degrade.
+   */
+  private async ensureContainerRunning(containerId: string): Promise<void> {
+    const status = await this.deps.containerManager.getContainerStatus(containerId);
+    if (status === "running") return;
+    if (status === "paused") {
+      await this.deps.containerManager.unpauseContainer(containerId);
+      return;
+    }
+    throw new Error(`container ${containerId} is ${status}`);
   }
 
   private async safeRemoveContainer(containerId: string): Promise<void> {
