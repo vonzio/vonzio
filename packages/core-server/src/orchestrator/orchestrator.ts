@@ -42,6 +42,12 @@ type TaskUpdate = Partial<typeof schema.tasks.$inferInsert>;
  *  agent detaches. Tuned for typical back-to-back task cadence. */
 const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
 
+/** Short, user-safe error string for surfacing a cause in events/logs. */
+function errMsg(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  return m.length > 200 ? `${m.slice(0, 200)}…` : m;
+}
+
 export interface Logger {
   info(obj: Record<string, unknown>, msg?: string): void;
   warn(obj: Record<string, unknown>, msg?: string): void;
@@ -713,12 +719,18 @@ export class Orchestrator extends EventEmitter {
       let prevProgress = true;
       let priorMissing: string[] | undefined;
 
-      const stopGoal = (reason: GoalStopReason, verdict?: GoalVerdict) => {
+      // `detail` carries the human-readable underlying cause for reasons that
+      // are otherwise opaque (notably judge_error). It rides on the goal_stop
+      // event, which relayToSubscribers persists to the event log — so the UI
+      // can show WHY and it survives a container/server restart (the gap that
+      // made the original "completion check unavailable" undiagnosable).
+      const stopGoal = (reason: GoalStopReason, verdict?: GoalVerdict, detail?: string) => {
         this.emit("task:goal_stop", task.id, task.session_id, {
           reason,
           iteration,
           total_cost_usd: totalCost,
           verdict,
+          ...(detail ? { detail } : {}),
         });
       };
 
@@ -753,7 +765,12 @@ export class Orchestrator extends EventEmitter {
           // Tier 1: the primary judge inspects the workspace files, so it needs
           // the container alive. Unpause it if an idle sweep paused it between
           // the turn and now (best-effort; a removed container falls to tier 2).
-          await this.ensureContainerRunning(containerId).catch(() => {});
+          // Track the underlying cause so a judge_error stop can report WHY
+          // (the cause is otherwise only in server warn logs, which vanish on
+          // container restart). errMsg() keeps it short for the UI/event log.
+          let inContainerErr: string | undefined;
+          let fallbackErr: string | undefined;
+          await this.ensureContainerRunning(containerId).catch((e) => { inContainerErr = errMsg(e); });
           for (let attempt = 0; attempt < 2 && !judged; attempt++) {
             try {
               judged = await this.agentComms.judge(
@@ -769,6 +786,7 @@ export class Orchestrator extends EventEmitter {
                 env,
               );
             } catch (err) {
+              inContainerErr = errMsg(err);
               this.log.warn({ taskId: task.id, attempt, err }, "goal judge call failed (in-container)");
             }
           }
@@ -797,13 +815,18 @@ export class Orchestrator extends EventEmitter {
                 this.log.info({ taskId: task.id }, "goal judge: used server-side fallback");
               }
             } catch (err) {
+              fallbackErr = errMsg(err);
               this.log.warn({ taskId: task.id, err }, "server-side fallback judge failed");
             }
           }
           if (!judged) {
             // Both the in-container and server-side judges are unavailable —
-            // keep the work done, stop looping.
-            stopGoal("judge_error");
+            // keep the work done, stop looping. Surface the cause.
+            const detail = [
+              inContainerErr && `workspace judge: ${inContainerErr}`,
+              fallbackErr && `fallback judge: ${fallbackErr}`,
+            ].filter(Boolean).join("; ") || undefined;
+            stopGoal("judge_error", undefined, detail);
             break;
           }
           verdict = judged;
