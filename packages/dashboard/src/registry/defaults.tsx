@@ -121,7 +121,7 @@ export function registerDefaults(): void {
     component: IntegrationsAndGitSection,
     order: 40,
   });
-  registerSettingsSection({ id: "apitokens", label: "API tokens", lede: "API tokens for programmatic access — embed widgets, CLI, or external integrations.", component: ApiTokenSection, order: 60 });
+  registerSettingsSection({ id: "apitokens", label: "API tokens", lede: "API tokens for programmatic access — CLI or external integrations.", component: ApiTokenSection, order: 60 });
 
   registerOnboardingStep({
     id: "first-api-key",

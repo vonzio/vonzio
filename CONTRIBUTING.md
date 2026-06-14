@@ -49,7 +49,7 @@ If you touched dashboard UI, take a screenshot and include it in the PR descript
 
 ## What's in scope
 
-The OSS repository (`vonzio/vonzio`) covers the **data plane**: agent runtime, dashboard, widget, integrations runtime, MCP, sessions, playbooks, memories. Anything a single-user self-hoster needs.
+The OSS repository (`vonzio/vonzio`) covers the **data plane**: agent runtime, dashboard, integrations runtime, MCP, sessions, playbooks, memories. Anything a single-user self-hoster needs.
 
 What's **not** in this repo (and won't be accepted as a PR here):
 - Multi-tenant signup, invites, plans, billing (lives in the proprietary `cp-server` package, behind a stable interface seam).

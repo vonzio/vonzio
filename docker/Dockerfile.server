@@ -41,7 +41,6 @@ COPY packages/plugin-api/package.json packages/plugin-api/
 COPY packages/plugins/ packages/plugins/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
-COPY packages/widget/package.json packages/widget/
 COPY agent-runner/package.json agent-runner/
 
 RUN npm install
@@ -53,7 +52,6 @@ COPY packages/shared/ packages/shared/
 COPY packages/plugin-api/ packages/plugin-api/
 COPY packages/core-server/ packages/core-server/
 COPY packages/dashboard/ packages/dashboard/
-COPY packages/widget/ packages/widget/
 # Built-in plugin policy: read at dashboard BUILD time (the Vite plugin bundles
 # the approved built-in frontends) and at RUNTIME (the loader classifies slack +
 # telegram as builtin instead of external, and the dashboard parity check
@@ -76,12 +74,11 @@ COPY tools/ ./tools/
 COPY scripts/start-prod.sh ./scripts/start-prod.sh
 RUN chmod +x ./scripts/start-prod.sh
 
-# ── Layer 3: build dashboard + widget ──
+# ── Layer 3: build dashboard ──
 RUN cd packages/dashboard && npx vite build
-RUN cd packages/widget && npx vite build
 
 # ── Layer 4: prune devDependencies ──
-# After vite has built the dashboard + widget bundles we no longer need
+# After vite has built the dashboard bundles we no longer need
 # vite, drizzle-kit, vitest, tailwindcss, or any other build-time tool.
 # Pruning removes them from the runtime image, which cuts the attack
 # surface significantly: drizzle-kit pulls in the deprecated

@@ -10,7 +10,7 @@ Open-core architecture
 
 vonzio is built as two layers:
 
-  • Data plane — the agent runtime, dashboard, chat widget, shared types.
+  • Data plane — the agent runtime, dashboard, shared types.
     Distributed as the open-source `vonzio/core` repository on GitHub.
     AGPL-3.0-or-later. Self-hostable as a single-user instance via
     `make docker-dev-oss` (see README).
@@ -19,7 +19,6 @@ vonzio is built as two layers:
       - @vonzio/shared          types + cross-package interfaces
       - @vonzio/core-server     Fastify API + orchestrator + auth
       - @vonzio/dashboard       customer SPA (React)
-      - @vonzio/widget          embeddable chat widget
 
   • Control plane — multi-tenant SaaS overlay (signup, invites, billing,
     plans, quotas, admin UI). Closed source. Operated at https://vonz.io.
