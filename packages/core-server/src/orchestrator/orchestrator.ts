@@ -705,7 +705,13 @@ export class Orchestrator extends EventEmitter {
     if (goalModeOn && task.session_id) {
       const maxIterations = profile.max_continuations ?? 5;
       const budgetCap = profile.continuation_budget_usd ?? Infinity;
-      const judgeModel = task.model ?? profile.model ?? "claude-opus-4-8";
+      // Resolve the judge's model the SAME way the turn does — task →
+      // workspace.model_override → profile.model. Using profile.model alone
+      // sent the profile default (e.g. an ollama model) to the workspace's
+      // overridden provider (e.g. an Anthropic key) → 404. The judge must run
+      // on the model the workspace actually uses.
+      const judgeWorkspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
+      const judgeModel = resolveTaskModel(task, judgeWorkspace, profile) ?? profile.model ?? "claude-opus-4-8";
       const judgeEffort = task.effort ?? profile.effort ?? undefined;
       const goal = task.prompt;
       // Per-message acceptance criteria from the composer (optional).
