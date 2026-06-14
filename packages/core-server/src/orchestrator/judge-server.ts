@@ -133,10 +133,12 @@ async function callOpenAICompatible(prompt: string, creds: ServerJudgeCreds): Pr
       "Content-Type": "application/json",
       Authorization: `Bearer ${creds.apiKey}`,
     },
+    // No response_format: some OpenAI-compatible providers (e.g. Ollama Cloud)
+    // reject json_object mode with a 400. The prompt demands a bare JSON object
+    // and parseVerdict() extracts it leniently, so we don't need the flag.
     body: JSON.stringify({
       model: creds.model,
       messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
     }),
   });
   if (!res.ok) throw new Error(`server-side judge: OpenAI-compat ${res.status} ${(await res.text()).slice(0, 200)}`);

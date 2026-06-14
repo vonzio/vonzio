@@ -811,6 +811,16 @@ export class Orchestrator extends EventEmitter {
           // autonomous loop deciding instead of dead-stopping.
           if (!judged) {
             try {
+              // Ollama keys carry no base_url, but Ollama Cloud exposes an
+              // OpenAI-compatible API at OLLAMA_BASE_URL/v1 — supply it so the
+              // fallback works for ollama (the common "no verdict" case, since
+              // kimi-class models often can't emit the strict in-container
+              // json_schema verdict but parse fine via the lenient fallback).
+              let judgeBaseUrl = profile.resolved_base_url;
+              if (profile.resolved_provider === "ollama" && !judgeBaseUrl) {
+                const { OLLAMA_BASE_URL } = await import("../services/ollama-service.js");
+                judgeBaseUrl = `${OLLAMA_BASE_URL.replace(/\/+$/, "")}/v1`;
+              }
               judged = await judgeServerSide(
                 {
                   goal,
@@ -821,7 +831,7 @@ export class Orchestrator extends EventEmitter {
                 {
                   apiKey: profile.resolved_api_key,
                   provider: profile.resolved_provider,
-                  baseUrl: profile.resolved_base_url,
+                  baseUrl: judgeBaseUrl,
                   model: judgeModel,
                 },
                 this.log,
