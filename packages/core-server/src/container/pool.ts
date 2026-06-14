@@ -246,12 +246,12 @@ export class ContainerPool {
         // and paired-removed alongside their agent in safeRemoveContainer.
         // The pool doesn't track them, so they look like orphans here.
         // Skip them — the orchestrator's lifecycle is authoritative.
-        const isVpnSidecar = container.labels["vonzio-mode"] === "vpn-sidecar";
+        const isVpnSidecar = container.labels?.["vonzio-mode"] === "vpn-sidecar";
         // Session containers are owned by the SessionRegistry lifecycle
         // (pause/resume/expire/evict) — never let the pool reap them, even on
         // the startup sweep. Belt-and-suspenders on top of the pool/session/DB
         // checks: the registry is authoritative for these.
-        const isSession = container.labels["vonzio-mode"] === "session";
+        const isSession = container.labels?.["vonzio-mode"] === "session";
 
         if (!inPool && !inSession && !isVpnSidecar && !isSession) {
           try {

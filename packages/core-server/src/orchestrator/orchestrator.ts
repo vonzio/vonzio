@@ -2270,19 +2270,24 @@ export class Orchestrator extends EventEmitter {
     if (ms <= 0) return; // 0/negative = watchdog disabled
     const timer = setTimeout(async () => {
       const active = this.activeTasks.get(taskId);
-      if (active) {
-        // Make this death greppable. A timeout-induced abort surfaces three
-        // layers away (abort → stopContainer → judge 409 → "completion check
-        // unavailable"); without this line, diagnosing it meant archaeology.
-        this.log.warn(
-          { taskId, ms, containerId: active.containerId, session: !!active.sessionId },
-          "task watchdog fired — aborting hung turn (container kept for sessions)",
-        );
+      if (!active) return;
+      // Make this death greppable. A timeout-induced abort surfaces three
+      // layers away (abort → stopContainer → judge 409 → "completion check
+      // unavailable"); without this line, diagnosing it meant archaeology.
+      this.log.warn(
+        { taskId, ms, containerId: active.containerId, session: !!active.sessionId },
+        "task watchdog fired — aborting hung turn (container kept for sessions)",
+      );
+      try {
         // Keep the container for session tasks — the timeout aborts the stuck
         // turn's exec but must NOT destroy a warm/persistent session container
         // (doing so killed it mid-goal-loop → continuation "container not
         // running"). Batch tasks have no session and get the full stop.
         await this.agentComms.abort(active.containerId, !!active.sessionId);
+      } catch (err) {
+        // Don't let an abort failure become an unhandled rejection in the
+        // timer callback — log and move on; the task's own paths still clean up.
+        this.log.warn({ err: errMsg(err), taskId }, "task watchdog: abort failed");
       }
     }, ms);
     this.activeTimers.set(taskId, timer);

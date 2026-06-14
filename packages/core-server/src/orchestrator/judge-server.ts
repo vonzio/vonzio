@@ -1,5 +1,9 @@
 import type { GoalVerdict } from "./agent-comms.js";
 
+/** Hard cap on the fallback judge's HTTP call. A verdict is a small, fast
+ * request; 60s is generous and still bounds a dead/hung provider. */
+const JUDGE_HTTP_TIMEOUT_MS = 60_000;
+
 /**
  * Server-side completion judge — the resilience fallback for the in-container
  * judge (agent-comms.judge). It runs as a direct model API call from
@@ -108,6 +112,10 @@ export async function judgeServerSide(
 async function callAnthropic(prompt: string, creds: ServerJudgeCreds): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
+    // Bound the call: this runs on the server thread, so a hung response would
+    // freeze the goal loop indefinitely — the per-task watchdog only aborts the
+    // in-container agent exec, not a stuck fetch here.
+    signal: AbortSignal.timeout(JUDGE_HTTP_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       "x-api-key": creds.apiKey!,
@@ -129,6 +137,9 @@ async function callOpenAICompatible(prompt: string, creds: ServerJudgeCreds): Pr
   if (!base) throw new Error("server-side judge: no base_url for OpenAI-compatible provider");
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
+    // See callAnthropic: bound the server-side call so a hung provider can't
+    // strand the goal loop.
+    signal: AbortSignal.timeout(JUDGE_HTTP_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${creds.apiKey}`,
