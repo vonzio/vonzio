@@ -36,9 +36,12 @@ export class ApiKeyService {
     const row = {
       id,
       user_id: userId ?? null,
-      // user-side create path never sets org_id; only the cp-server
-      // materialization path (OrgCredentialService) populates it.
-      org_id: null,
+      // Pin the caller's active org (SaaS) so the org_id-NOT-NULL CHECK on
+      // api_keys is satisfied — same seam workspaces use via the active-org
+      // ALS (see session-registry). In OSS there's no active org, so this is
+      // null and the column stays NULL as before. Org-level shared creds are
+      // a separate path (OrgCredentialService materialization).
+      org_id: getActiveOrgId(),
       name: input.name,
       provider: input.provider,
       encrypted_api_key: input.api_key ? encrypt(input.api_key, this.encryptionKey) : null,
