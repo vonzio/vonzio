@@ -97,14 +97,25 @@ RUN npm prune --omit=dev
 # drop drizzle-kit + the deprecated @esbuild-kit (its ancient esbuild Go
 # binary is what Trivy flagged).
 #
-# DO NOT delete `esbuild` / `@esbuild`: npm HOISTS a single esbuild to the
-# top level and `tsx` (a RUNTIME dependency -- start-prod.sh runs the server
-# via `npx tsx`) imports it from there. Deleting it crashed the prod image at
-# boot with `Cannot find package 'esbuild' imported from tsx`. The kept copy
-# is tsx's current esbuild, not the @esbuild-kit one.
+# DO NOT delete the TOP-LEVEL `esbuild` / `@esbuild`: `tsx` (a RUNTIME
+# dependency -- start-prod.sh runs the server via `npx tsx`) imports the
+# hoisted esbuild from there. core-server pins `esbuild@0.28.1` as a direct
+# dependency, so the hoisted top-level copy is deterministically the patched
+# version regardless of how the rest of the tree resolves.
+#
+# DO purge every NESTED esbuild: better-auth declares drizzle-kit AND vitest
+# as peerOptional, which npm keeps even with --omit=dev. vitest drags in vite,
+# whose nested @esbuild is an OLD Go build (Trivy CRITICAL/HIGH on its embedded
+# Go stdlib). These are build/test-only and never used at runtime. The find
+# removes all nested esbuild/@esbuild dirs (depth >= 2), leaving only the
+# patched top-level copy tsx uses. Hoisting differs darwin<->linux, so a
+# blanket nested-purge is more robust than naming each parent.
 RUN rm -rf \
     node_modules/drizzle-kit \
-    node_modules/@esbuild-kit
+    node_modules/@esbuild-kit \
+    node_modules/vitest \
+    node_modules/@vitest \
+ && find node_modules -mindepth 2 -type d \( -name esbuild -o -name '@esbuild' \) -exec rm -rf {} + 2>/dev/null || true
 
 ARG VONZIO_VERSION=dev
 ENV VONZIO_VERSION=$VONZIO_VERSION
