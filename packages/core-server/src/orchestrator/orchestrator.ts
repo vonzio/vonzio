@@ -2271,6 +2271,13 @@ export class Orchestrator extends EventEmitter {
     const timer = setTimeout(async () => {
       const active = this.activeTasks.get(taskId);
       if (active) {
+        // Make this death greppable. A timeout-induced abort surfaces three
+        // layers away (abort → stopContainer → judge 409 → "completion check
+        // unavailable"); without this line, diagnosing it meant archaeology.
+        this.log.warn(
+          { taskId, ms, containerId: active.containerId, session: !!active.sessionId },
+          "task watchdog fired — aborting hung turn (container kept for sessions)",
+        );
         // Keep the container for session tasks — the timeout aborts the stuck
         // turn's exec but must NOT destroy a warm/persistent session container
         // (doing so killed it mid-goal-loop → continuation "container not
