@@ -254,6 +254,21 @@ export class DockerManager implements ContainerManager {
     }
   }
 
+  async getContainerExit(
+    id: string,
+  ): Promise<{ oomKilled: boolean; exitCode: number | null } | null> {
+    try {
+      const info = await this.docker.getContainer(id).inspect();
+      return {
+        oomKilled: info.State.OOMKilled === true,
+        exitCode: typeof info.State.ExitCode === "number" ? info.State.ExitCode : null,
+      };
+    } catch {
+      // Container removed (404) or inspect failed — no exit info available.
+      return null;
+    }
+  }
+
   async listManagedContainers(): Promise<ContainerInfo[]> {
     const containers = await this.docker.listContainers({
       all: true,

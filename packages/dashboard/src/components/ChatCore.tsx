@@ -37,6 +37,8 @@ export interface ChatMessage {
     reason?: string;
     iteration?: number;
     cost?: number;
+    /** Human-readable underlying cause (e.g. why the completion check failed). */
+    detail?: string;
   };
 }
 

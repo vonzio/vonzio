@@ -79,7 +79,12 @@ const configSchema = z.object({
 
   // Batch + pooled concurrency
   MAX_CONCURRENT_AGENTS: z.coerce.number().default(4),
-  TASK_TIMEOUT_SECONDS: z.coerce.number().default(300),
+  // Per-TURN watchdog (reset each goal-loop round), not a whole-loop cap. Only
+  // meant to catch a genuinely hung turn (model never responds / tool deadlock)
+  // so it can't hold a container + slot forever. 300s cut legitimate heavy
+  // turns (deps + tests + build in one turn); 1800s only trips on a real hang.
+  // 0 disables the watchdog entirely.
+  TASK_TIMEOUT_SECONDS: z.coerce.number().default(1800),
   MAX_TURNS: z.coerce.number().default(200),
 
   // Per-agent knowledge documents (mounted at /knowledge). Stored base64 in
@@ -121,7 +126,10 @@ const configSchema = z.object({
   CONTAINER_MEMORY_LIMIT_SESSION: z
     .string()
     .regex(/^\d+[bkmg]$/i, "Must be a Docker memory value (e.g. 512m, 1g)")
-    .default("768m"),
+    // 2g: session agents routinely install deps + run a test suite (+ sometimes
+    // chromium); 768m OOM-killed the container mid-run, which surfaced as the
+    // goal judge's "container not running" (409). Raise the floor.
+    .default("2g"),
   // Max processes/threads per container (fork-bomb / PID-exhaustion guard).
   // 0 disables the limit.
   CONTAINER_PIDS_LIMIT: z.coerce.number().int().min(0).default(512),
