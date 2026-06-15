@@ -29,11 +29,11 @@
 
 ## What it does
 
-vonzio runs agents in fresh Docker containers — one per conversation. You bring a credential for any supported model provider; vonzio brings the orchestration: a chat UI, a workspace for files, a session that remembers, MCP tools, integrations, and an embeddable chat widget.
+vonzio runs agents in fresh Docker containers — one per conversation. You bring a credential for any supported model provider; vonzio brings the orchestration: a chat UI, a workspace for files, a session that remembers, MCP tools, and integrations.
 
 - **Provider-agnostic** — Anthropic (Claude Sonnet/Opus/Haiku), Ollama Cloud (or any Anthropic-compatible gateway), and OpenAI / any OpenAI-compatible endpoint (translated in-container by a built-in gateway). Pick per profile or per workspace.
 - **Containerized sessions** — each conversation runs in its own Docker container with a bind-mounted workspace
-- **Chat surface + widget** — full dashboard for direct use, plus a `/chat` embed you can drop into any page
+- **Chat surface** — full dashboard for direct use
 - **Integrations** — GitHub, GitLab, Bitbucket, Slack, Telegram, Gmail; bank data (Teller) and more via external plugins
 - **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success criteria
 - **Memory and skills** — persistent agent memories, reusable skill snippets, custom subagents
@@ -48,7 +48,6 @@ it on infrastructure you own, with prompts and tools you control.
 
 - Personal coding agents on your laptop or a private box
 - A trusted team running shared agents against your own data
-- Embedding a customer-support widget where you control the system prompt
 - Self-hosting an agent runtime that other people on your team can use
 
 **Do not use it (without further hardening) for**
@@ -104,10 +103,10 @@ Three processes on your host, one fresh Docker container per conversation.
         │   │  (React SPA)   │◀──── stream ──│       (Fastify)        │    │
         │   └───────────────┘                │                        │    │
         │                                    │  • Better Auth         │    │
-        │   ┌───────────────┐                │  • Drizzle / Postgres  │    │
-        │   │  Chat widget   │ ──────────────▶│  • Orchestrator        │    │
-        │   │  (drop-in JS)  │                │  • Container pool      │    │
-        │   └───────────────┘                │  • MCP runtime         │    │
+        │                                    │  • Drizzle / Postgres  │    │
+        │                                    │  • Orchestrator        │    │
+        │                                    │  • Container pool      │    │
+        │                                    │  • MCP runtime         │    │
         │                                    └──────────┬─────────────┘    │
         │                                               │ docker exec       │
         │                                               ▼                   │
@@ -124,7 +123,7 @@ Three processes on your host, one fresh Docker container per conversation.
 
 **The path of a message.**
 
-1. The dashboard (or your widget embed) opens a WebSocket to `core-server` and posts a message.
+1. The dashboard opens a WebSocket to `core-server` and posts a message.
 2. The orchestrator resolves the user's **profile** — model, system prompt, tools, MCP servers, container image — then asks the pool for a container. The pool either hands one back warm or provisions a fresh one with the profile's image and a bind-mounted `workspace/` directory.
 3. Inside the container, `agent-runner` calls the configured **LLM provider** (Anthropic API key, Anthropic subscription token, Ollama Cloud, or any OpenAI-compatible endpoint), streams tokens back over the WebSocket, and runs tools / MCP calls in-process.
 4. core-server logs every event (token, tool call, file write) and persists the session so the next message resumes in the same container with the same memory.
@@ -146,7 +145,6 @@ Three processes on your host, one fresh Docker container per conversation.
 - `@vonzio/shared` — types + cross-package interfaces (`ContainerManager`, `CoreDeps`, `Profile`, …)
 - `@vonzio/core-server` — Fastify API, orchestrator, container lifecycle, MCP runtime, integrations
 - `@vonzio/dashboard` — customer SPA (React + Vite)
-- `@vonzio/widget` — embeddable chat widget
 - `agent-runner/` — the in-container process that drives the LLM and exposes the tool / MCP surface
 
 ## Screenshots
@@ -198,7 +196,6 @@ packages/
 ├── shared/          types and seam interfaces
 ├── core-server/     Fastify API + agent runtime + DB
 ├── dashboard/       customer React SPA
-└── widget/          embeddable JS widget
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution flow.

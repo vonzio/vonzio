@@ -54,7 +54,7 @@ jobs:
           cat >"$notes_file" <<EOF
           ## vonzio core ${{ steps.version.outputs.version }}
 
-          Self-hostable Claude Code agent runtime + dashboard + chat widget.
+          Self-hostable Claude Code agent runtime + dashboard.
 
           ### Install
 

@@ -25,7 +25,6 @@ build: node_modules ## Build all packages
 	npx tsc --project packages/shared/tsconfig.json
 	npx tsc --project packages/core-server/tsconfig.json
 	cd packages/dashboard && npx vite build
-	cd packages/widget && npx vite build
 
 agent-image: ## Build the Docker agent image
 	docker build -t vonzio-agent:latest -f docker/Dockerfile.agent .
@@ -197,12 +196,12 @@ migrate-to-pg: ## Migrate SQLite data to PostgreSQL. Usage: make migrate-to-pg S
 	npx tsx packages/core-server/src/scripts/migrate-sqlite-to-pg.ts $(SQLITE) $(PG_URL)
 
 clean: ## Remove build artifacts and DB
-	rm -rf packages/shared/dist packages/plugin-api/dist packages/dashboard-registry/dist packages/core-server/dist packages/dashboard/dist packages/widget/dist
+	rm -rf packages/shared/dist packages/plugin-api/dist packages/dashboard-registry/dist packages/core-server/dist packages/dashboard/dist
 	rm -f packages/*/dist/*.tgz packages/shared/tsconfig.tsbuildinfo packages/core-server/tsconfig.tsbuildinfo
 	rm -f vonzio.db vonzio.db-wal vonzio.db-shm
 
 clean-all: clean ## Remove everything including node_modules
-	rm -rf node_modules packages/shared/node_modules packages/core-server/node_modules packages/dashboard/node_modules packages/widget/node_modules agent-runner/node_modules
+	rm -rf node_modules packages/shared/node_modules packages/core-server/node_modules packages/dashboard/node_modules agent-runner/node_modules
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
