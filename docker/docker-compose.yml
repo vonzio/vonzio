@@ -155,6 +155,29 @@ services:
     networks:
       - vonzio
 
+  # Egress enforcement point (feature 0005). Long-lived, always-on when the
+  # `egress` profile is active (enforcement deploys set COMPOSE_PROFILES=egress).
+  # Dual-homed: `vonzio` gives it internet (NAT) for upstream; `vonzio-egress`
+  # is the internal (no-direct-internet) network agents sit on — they reach it
+  # by its service name `egress-proxy`. Run as a service (not created by the
+  # orchestrator) so it survives server restarts/crashes and never strands a
+  # running agent. Secret = ENCRYPTION_KEY (the server signs tokens with the
+  # same); override only by setting EGRESS_PROXY_SECRET on BOTH this service and
+  # the server.
+  egress-proxy:
+    image: ${EGRESS_PROXY_IMAGE:-vonzio-egress-proxy:latest}
+    restart: unless-stopped
+    profiles: ["egress"]
+    environment:
+      - "EGRESS_PROXY_SECRET=${ENCRYPTION_KEY:?required — set in .env or run ./install.sh}"
+      - EGRESS_PROXY_PORT=8080
+    labels:
+      - managed-by=vonzio
+      - vonzio-mode=egress-proxy
+    networks:
+      - vonzio
+      - vonzio-egress
+
   # Flavored agent images (build individually with: docker compose build agent-go)
   agent-go:
     build:
@@ -206,6 +229,13 @@ networks:
     # collide (install.sh sets VONZIO_NETWORK=<project>-network). Defaults to
     # vonzio-network. MUST match DOCKER_NETWORK on the server service above.
     name: ${VONZIO_NETWORK:-vonzio-network}
+  # Internal (no-direct-internet) network for egress-enforced agents (feature
+  # 0005). `internal: true` means the only way out is the dual-homed egress
+  # proxy. Name MUST match the server's EGRESS_PROXY_NETWORK. Only used when the
+  # `egress` profile is active.
+  vonzio-egress:
+    name: ${EGRESS_PROXY_NETWORK:-vonzio-egress}
+    internal: true
 
 volumes:
   vonzio-data:

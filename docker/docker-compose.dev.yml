@@ -83,9 +83,10 @@ services:
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
       - DOCKER_NETWORK=vonzio-network
-      # Egress enforcement (feature 0005) — off by default in dev.
+      # Egress enforcement (feature 0005) — off by default in dev. To try it:
+      # EGRESS_ENFORCEMENT=1 COMPOSE_PROFILES=egress make docker-dev-oss
       - EGRESS_ENFORCEMENT=${EGRESS_ENFORCEMENT:-false}
-      - EGRESS_PROXY_IMAGE=${EGRESS_PROXY_IMAGE:-vonzio-egress-proxy:latest}
+      - EGRESS_PROXY_NETWORK=${EGRESS_PROXY_NETWORK:-vonzio-egress}
       - LOG_LEVEL=debug
       - PORT=3000
       - HOST=0.0.0.0

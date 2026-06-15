@@ -414,19 +414,6 @@ export class DockerManager implements ContainerManager {
     }
   }
 
-  async connectNetwork(network: string, containerId: string, aliases?: string[]): Promise<void> {
-    try {
-      await this.docker.getNetwork(network).connect({
-        Container: containerId,
-        EndpointConfig: aliases?.length ? { Aliases: aliases } : undefined,
-      });
-    } catch (err) {
-      // Already connected is not an error for our idempotent callers.
-      if (err instanceof Error && /already exists|endpoint with name/i.test(err.message)) return;
-      throw err;
-    }
-  }
-
   async createNamedVolume(name: string): Promise<void> {
     await this.docker.createVolume({ Name: name });
   }

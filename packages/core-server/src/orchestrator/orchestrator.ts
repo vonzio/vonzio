@@ -9,7 +9,6 @@ import type { ConcurrencyLimiter, VpnTunnelProvider } from "@vonzio/shared";
 import type { McpServerSpec } from "@vonzio/plugin-api";
 import { buildPluginMcpInjection } from "./plugin-mcp.js";
 import { decrypt } from "../auth/crypto.js";
-import { createHash } from "node:crypto";
 import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
@@ -117,7 +116,6 @@ export interface OrchestratorDeps {
     /** Egress enforcement (feature 0005). When true, non-VPN agents run on an
      *  internal network and reach the internet only through the egress proxy. */
     egressEnforcement?: boolean;
-    egressProxyImage?: string;
     egressProxyNetwork?: string;
     egressProxySecret?: string;
   };
@@ -177,11 +175,9 @@ export class Orchestrator extends EventEmitter {
   // wait this long before actually removing the sidecar — back-to-back
   // tasks reuse the same tunnel without re-handshaking.
   private sidecarTeardownTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // Egress enforcement (feature 0005): one long-lived shared proxy, dual-homed
-  // on the internal agent network + an internet-facing network. Lazily created,
-  // adopted across restarts via its label. Not torn down per task.
-  private egressProxy: { containerId: string; networkName: string; alias: string; port: number } | null = null;
-  private egressProxyInFlight: Promise<{ networkName: string; alias: string; port: number } | null> | null = null;
+  // Egress enforcement (feature 0005). The proxy is a long-lived compose
+  // service (profile: egress) — the orchestrator only verifies it and points
+  // agents at it; it never creates/owns the container.
   private readonly EGRESS_PROXY_PORT = 8080;
   private readonly EGRESS_PROXY_ALIAS = "egress-proxy";
   // Token lifetime — generous (tasks can run long); bounds replay if a token
@@ -2021,71 +2017,33 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
-   * Ensure the shared egress proxy + its internal network exist, returning the
-   * info needed to point an agent at it. Null when enforcement is off. Throws
-   * when enforcement is ON but the proxy can't be brought up — fail-closed: we
-   * must NOT silently place the agent on a network with direct internet.
-   * Serialized so concurrent dispatches don't each create a proxy.
+   * Verify the always-on egress proxy is available and return the info needed
+   * to point an agent at it. Null when enforcement is off. The proxy is a
+   * long-lived compose service (profile: egress) — not created here — so it
+   * survives server restarts/crashes and never strands a running agent. Throws
+   * (fail-closed) when enforcement is ON but the proxy service isn't running:
+   * we must NOT silently place an agent on a network with no way out (or worse,
+   * direct internet).
    */
   private async ensureEgressProxy(): Promise<{ networkName: string; alias: string; port: number } | null> {
     const cfg = this.deps.config;
     if (!cfg.egressEnforcement) return null;
     const network = cfg.egressProxyNetwork || "vonzio-egress";
-    const secret = cfg.egressProxySecret;
-    const image = cfg.egressProxyImage || "vonzio-egress-proxy:latest";
-    if (!secret) throw new Error("EGRESS_ENFORCEMENT on but no egress proxy secret (set EGRESS_PROXY_SECRET or ENCRYPTION_KEY)");
 
+    const running = (await this.deps.containerManager.listManagedContainers())
+      .some((c) => c.labels["vonzio-mode"] === "egress-proxy" && c.status === "running");
+    if (!running) {
+      throw new Error(
+        "EGRESS_ENFORCEMENT is on but the egress-proxy service is not running. " +
+        "Start it with the 'egress' compose profile (e.g. COMPOSE_PROFILES=egress).",
+      );
+    }
+    // Defense against a pre-existing non-internal network of the same name
+    // (would be a fail-OPEN bypass). ensureNetwork throws on a posture mismatch;
+    // the network already exists (the proxy is attached to it), so this verifies
+    // rather than creates.
     await this.deps.containerManager.ensureNetwork(network, { internal: true });
-
-    if (this.egressProxy) {
-      const status = await this.deps.containerManager.getContainerStatus(this.egressProxy.containerId).catch(() => "not_found" as const);
-      if (status === "running") {
-        return { networkName: network, alias: this.egressProxy.alias, port: this.egressProxy.port };
-      }
-      this.egressProxy = null; // died — recreate
-    }
-    if (this.egressProxyInFlight) return this.egressProxyInFlight;
-
-    // Stamp the proxy with a fingerprint of the secret it was started with, so
-    // adoption only reuses a proxy that verifies tokens with the CURRENT secret.
-    // On rotation (incl. rotating because the secret leaked) the stale proxy is
-    // torn down rather than adopted — otherwise leaked tokens keep working and
-    // freshly-minted tokens get 407'd.
-    const secretTag = createHash("sha256").update(secret).digest("hex").slice(0, 16);
-    this.egressProxyInFlight = (async () => {
-      const managed = await this.deps.containerManager.listManagedContainers();
-      const proxies = managed.filter((c) => c.labels["vonzio-mode"] === "egress-proxy");
-      const usable = proxies.find((c) => c.status === "running" && c.labels["vonzio-egress-secret"] === secretTag);
-      if (usable) {
-        // Idempotently ensure it's on the internal network. A failure here means
-        // agents would land on the internal net with no reachable proxy and hang
-        // — surface it instead of swallowing.
-        await this.deps.containerManager.connectNetwork(network, usable.id, [this.EGRESS_PROXY_ALIAS]);
-        this.egressProxy = { containerId: usable.id, networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
-        return { networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
-      }
-      // Remove stale proxies (wrong/old secret) so leaked tokens stop working.
-      for (const stale of proxies) {
-        await this.deps.containerManager.removeContainer(stale.id, true).catch(() => {});
-      }
-      // Primary network = the default (internet-facing) one; then dual-home onto
-      // the internal agent network so agents can reach it by alias.
-      const proxyId = await this.deps.containerManager.createContainer({
-        image,
-        env: { EGRESS_PROXY_SECRET: secret, EGRESS_PROXY_PORT: String(this.EGRESS_PROXY_PORT) },
-        labels: { "vonzio-mode": "egress-proxy", "vonzio-egress-secret": secretTag },
-      });
-      await this.deps.containerManager.startContainer(proxyId);
-      await this.deps.containerManager.connectNetwork(network, proxyId, [this.EGRESS_PROXY_ALIAS]);
-      this.egressProxy = { containerId: proxyId, networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
-      this.log.info({ proxyId, network }, "Egress proxy started");
-      return { networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
-    })();
-    try {
-      return await this.egressProxyInFlight;
-    } finally {
-      this.egressProxyInFlight = null;
-    }
+    return { networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
   }
 
   /**

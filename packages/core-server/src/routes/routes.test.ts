@@ -74,7 +74,6 @@ function createMockManager(): ContainerManager {
     async pauseContainer() {},
     async unpauseContainer() {},
     async ensureNetwork() {},
-    async connectNetwork() {},
     async createNamedVolume() {},
     async removeNamedVolume() {},
     async listImages() { return []; },

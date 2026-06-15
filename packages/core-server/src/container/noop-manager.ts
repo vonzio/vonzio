@@ -37,7 +37,6 @@ export class NoopContainerManager implements ContainerManager {
   async pauseContainer(): Promise<void> {}
   async unpauseContainer(): Promise<void> {}
   async ensureNetwork(): Promise<void> {}
-  async connectNetwork(): Promise<void> {}
   async createNamedVolume(): Promise<void> {}
   async removeNamedVolume(): Promise<void> {}
   async listImages() {
