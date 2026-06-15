@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Copy, Trash2, Shield, Plus } from "lucide-react";
+import { Trash2, Shield, Plus, Copy, Check } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
+import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard.js";
 import {
   fetchApiTokens,
   createApiToken,
@@ -13,11 +14,11 @@ import {
 } from "../../../api/client.js";
 import {
   Card, Button, Field, Input,
-  Modal, EmptyState, DataTable,
+  Modal, EmptyState, DataTable, Banner, Pill,
   type DataColumn,
 } from "../../../brand/components.js";
 import { formatDate } from "../../../lib/utils.js";
-import { ErrorBanner, SubLabel } from "./_shared.js";
+import { ErrorBanner } from "./_shared.js";
 
 // ───────────────────────────────────────────────────────────────────
 // API tokens
@@ -32,6 +33,7 @@ export function ApiTokenSection() {
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
   const [rpm, setRpm] = useState("60");
   const [newKeyResult, setNewKeyResult] = useState<{ name: string; token: string } | null>(null);
+  const [copied, copyToken] = useCopyToClipboard();
   const [error, setError] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -43,6 +45,14 @@ export function ApiTokenSection() {
   const openEdit = (k: ApiTokenInfo) => {
     setEditingId(k.id); setNewName(k.name);
     setSelectedProfileIds([...k.allowed_profile_ids]); setRpm(String(k.rate_limit_rpm));
+    setShowForm(true);
+  };
+
+  // New tokens default to ALL profiles allowed (the common case); the user can
+  // deselect to narrow scope.
+  const openCreate = () => {
+    setEditingId(null); setNewName(""); setRpm("60");
+    setSelectedProfileIds(profiles?.map((p) => p.id) ?? []);
     setShowForm(true);
   };
 
@@ -135,30 +145,38 @@ export function ApiTokenSection() {
       {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
 
       {newKeyResult && (
-        <Card style={{ marginBottom: 16, borderLeft: "3px solid var(--vz-ok)" }}>
-          <SubLabel>New token</SubLabel>
-          <p style={{ fontSize: 13.5, color: "var(--vz-ink)", margin: 0 }}>
-            <strong>{newKeyResult.name}</strong>:{" "}
-            <code style={{ fontFamily: "var(--vz-font-mono)", fontSize: 12.5, background: "var(--vz-mute)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--vz-border)" }}>
+        <Card style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <Pill tone="ok" dot>Token created</Pill>
+            <span style={{ fontSize: 13, color: "var(--vz-muted)" }}>{newKeyResult.name}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <code
+              style={{
+                flex: 1, minWidth: 0,
+                fontFamily: "var(--vz-font-mono)", fontSize: 12.5,
+                background: "var(--vz-mute)", border: "1px solid var(--vz-border)",
+                borderRadius: "var(--vz-radius-sm)", padding: "8px 10px",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                color: "var(--vz-ink)",
+              }}
+              title={newKeyResult.token}
+            >
               {newKeyResult.token}
             </code>
-          </p>
-          <p style={{ fontSize: 11.5, color: "var(--vz-warn)", margin: "8px 0 0", fontFamily: "var(--vz-font-mono)" }}>
-            save this — it won't be shown again
-          </p>
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--vz-border)" }}>
-            <SubLabel>Quick start</SubLabel>
-            <CodeRow
-              label="chat page"
-              value={`${window.location.origin}/chat?key=${newKeyResult.token}`}
-            />
-            <CodeRow
-              label="embed widget"
-              value={`<script src="${window.location.origin}/widget/vonzio.js" data-key="${newKeyResult.token}"></script>`}
-            />
+            <Button
+              variant="ghost" size="sm"
+              icon={copied ? <Check size={14} /> : <Copy size={14} />}
+              onClick={() => copyToken(newKeyResult.token)}
+            >
+              {copied ? "Copied" : "Copy"}
+            </Button>
           </div>
-          <div style={{ marginTop: 10 }}>
-            <Button variant="ghost" size="sm" onClick={() => setNewKeyResult(null)}>Dismiss</Button>
+          <div style={{ marginTop: 12 }}>
+            <Banner>Copy and store this token now — it won't be shown again.</Banner>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Button size="sm" onClick={() => setNewKeyResult(null)}>Done</Button>
           </div>
         </Card>
       )}
@@ -171,13 +189,13 @@ export function ApiTokenSection() {
         rowKey={(k) => k.id}
         onRowClick={openEdit}
         loading={loading}
-        actions={<Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Create token</Button>}
+        actions={<Button size="sm" icon={<Plus size={14} />} onClick={openCreate}>Create token</Button>}
         emptyState={
           <EmptyState
             icon={<Shield size={20} />}
             title="No API tokens yet"
-            description="Create a token for embed widgets, the CLI, or programmatic access."
-            action={<Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Create token</Button>}
+            description="Create a token for the CLI or programmatic access."
+            action={<Button size="sm" icon={<Plus size={14} />} onClick={openCreate}>Create token</Button>}
           />
         }
       />
@@ -232,7 +250,7 @@ export function ApiTokenSection() {
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
         title="Delete API token?"
-        description="Any client (widget, CLI, integration) using this token will stop working."
+        description="Any client (CLI, integration) using this token will stop working."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
@@ -241,41 +259,5 @@ export function ApiTokenSection() {
         }
       />
     </>
-  );
-}
-
-function CodeRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-      <span style={{
-        fontFamily: "var(--vz-font-mono)", fontSize: 10.5,
-        letterSpacing: "0.04em", color: "var(--vz-muted-2)",
-        width: 90, flexShrink: 0,
-      }}>
-        {label}
-      </span>
-      <code
-        style={{
-          flex: 1,
-          fontFamily: "var(--vz-font-mono)", fontSize: 11,
-          background: "var(--vz-mute)", border: "1px solid var(--vz-border)",
-          borderRadius: "var(--vz-radius-sm)",
-          padding: "4px 8px",
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          color: "var(--vz-ink-3)",
-        }}
-        title={value}
-      >
-        {value}
-      </code>
-      <button
-        type="button"
-        className="vz-action-btn"
-        title="Copy"
-        onClick={() => navigator.clipboard.writeText(value)}
-      >
-        <Copy size={12} />
-      </button>
-    </div>
   );
 }
