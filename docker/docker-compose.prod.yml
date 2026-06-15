@@ -76,6 +76,12 @@ services:
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
       - DOCKER_NETWORK=vonzio-network
+      # Egress enforcement (feature 0005). OFF by default; set EGRESS_ENFORCEMENT=1
+      # in .env to place agents on an internal network reachable only via the
+      # egress proxy. EGRESS_PROXY_IMAGE should point at the pulled image in a
+      # registry deploy (EGRESS_PROXY_SECRET falls back to ENCRYPTION_KEY).
+      - EGRESS_ENFORCEMENT=${EGRESS_ENFORCEMENT:-false}
+      - EGRESS_PROXY_IMAGE=${EGRESS_PROXY_IMAGE:-vonzio-egress-proxy:latest}
       - LOG_LEVEL=info
       - PORT=3000
       - HOST=0.0.0.0

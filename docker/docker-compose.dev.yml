@@ -83,6 +83,9 @@ services:
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
       - DOCKER_NETWORK=vonzio-network
+      # Egress enforcement (feature 0005) — off by default in dev.
+      - EGRESS_ENFORCEMENT=${EGRESS_ENFORCEMENT:-false}
+      - EGRESS_PROXY_IMAGE=${EGRESS_PROXY_IMAGE:-vonzio-egress-proxy:latest}
       - LOG_LEVEL=debug
       - PORT=3000
       - HOST=0.0.0.0
