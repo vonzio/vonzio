@@ -25,7 +25,7 @@ import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom"
 import { ArrowLeft, Plus } from "lucide-react";
 import {
   Button, Field, Input, Textarea, Select, type SelectOption,
-  Checkbox, Panel, Tabs, type TabDef, Modal,
+  Checkbox, Panel, Tabs, type TabDef, Modal, Banner,
 } from "../brand/components.js";
 import { ErrorBanner } from "./MyAgents.js";
 import {
@@ -572,6 +572,11 @@ export function EditAgent() {
 
               <Panel title="Network egress">
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <Banner>
+                    Advisory only — these domains are passed to the agent as
+                    guidance, not yet enforced at the network layer. The agent
+                    (and shell commands like curl) can still reach other hosts.
+                  </Banner>
                   <Checkbox checked={allowAllEgress} onChange={setAllowAllEgress}>Allow all egress</Checkbox>
                   {!allowAllEgress && (
                     <Field label="Allowed domains" hint="Type a domain and press Enter.">
