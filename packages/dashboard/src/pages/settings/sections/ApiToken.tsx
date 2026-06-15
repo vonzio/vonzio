@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Trash2, Shield, Plus } from "lucide-react";
+import { Trash2, Shield, Plus, Copy, Check } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
   fetchApiTokens,
@@ -13,11 +13,11 @@ import {
 } from "../../../api/client.js";
 import {
   Card, Button, Field, Input,
-  Modal, EmptyState, DataTable,
+  Modal, EmptyState, DataTable, Banner, Pill,
   type DataColumn,
 } from "../../../brand/components.js";
 import { formatDate } from "../../../lib/utils.js";
-import { ErrorBanner, SubLabel } from "./_shared.js";
+import { ErrorBanner } from "./_shared.js";
 
 // ───────────────────────────────────────────────────────────────────
 // API tokens
@@ -32,6 +32,7 @@ export function ApiTokenSection() {
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
   const [rpm, setRpm] = useState("60");
   const [newKeyResult, setNewKeyResult] = useState<{ name: string; token: string } | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -143,19 +144,42 @@ export function ApiTokenSection() {
       {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
 
       {newKeyResult && (
-        <Card style={{ marginBottom: 16, borderLeft: "3px solid var(--vz-ok)" }}>
-          <SubLabel>New token</SubLabel>
-          <p style={{ fontSize: 13.5, color: "var(--vz-ink)", margin: 0 }}>
-            <strong>{newKeyResult.name}</strong>:{" "}
-            <code style={{ fontFamily: "var(--vz-font-mono)", fontSize: 12.5, background: "var(--vz-mute)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--vz-border)" }}>
+        <Card style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <Pill tone="ok" dot>Token created</Pill>
+            <span style={{ fontSize: 13, color: "var(--vz-muted)" }}>{newKeyResult.name}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <code
+              style={{
+                flex: 1, minWidth: 0,
+                fontFamily: "var(--vz-font-mono)", fontSize: 12.5,
+                background: "var(--vz-mute)", border: "1px solid var(--vz-border)",
+                borderRadius: "var(--vz-radius-sm)", padding: "8px 10px",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                color: "var(--vz-ink)",
+              }}
+              title={newKeyResult.token}
+            >
               {newKeyResult.token}
             </code>
-          </p>
-          <p style={{ fontSize: 11.5, color: "var(--vz-warn)", margin: "8px 0 0", fontFamily: "var(--vz-font-mono)" }}>
-            save this — it won't be shown again
-          </p>
-          <div style={{ marginTop: 10 }}>
-            <Button variant="ghost" size="sm" onClick={() => setNewKeyResult(null)}>Dismiss</Button>
+            <Button
+              variant="ghost" size="sm"
+              icon={copied ? <Check size={14} /> : <Copy size={14} />}
+              onClick={() => {
+                navigator.clipboard.writeText(newKeyResult.token);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Banner>Copy and store this token now — it won't be shown again.</Banner>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Button size="sm" onClick={() => { setNewKeyResult(null); setCopied(false); }}>Done</Button>
           </div>
         </Card>
       )}
