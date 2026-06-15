@@ -16,6 +16,11 @@ export interface PublicRoute {
 
 const routes: PublicRoute[] = [];
 
+/**
+ * Register a public route. Call once at app startup (before App mounts), not
+ * during render. Idempotent by path, so an HMR re-run of the registrant won't
+ * accumulate duplicates.
+ */
 export function registerPublicRoute(route: PublicRoute): void {
   if (!routes.some((r) => r.path === route.path)) routes.push(route);
 }

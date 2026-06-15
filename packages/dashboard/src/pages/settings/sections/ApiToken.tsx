@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Trash2, Shield, Plus, Copy, Check } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
+import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard.js";
 import {
   fetchApiTokens,
   createApiToken,
@@ -32,7 +33,7 @@ export function ApiTokenSection() {
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
   const [rpm, setRpm] = useState("60");
   const [newKeyResult, setNewKeyResult] = useState<{ name: string; token: string } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, copyToken] = useCopyToClipboard();
   const [error, setError] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -166,11 +167,7 @@ export function ApiTokenSection() {
             <Button
               variant="ghost" size="sm"
               icon={copied ? <Check size={14} /> : <Copy size={14} />}
-              onClick={() => {
-                navigator.clipboard.writeText(newKeyResult.token);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              }}
+              onClick={() => copyToken(newKeyResult.token)}
             >
               {copied ? "Copied" : "Copy"}
             </Button>
@@ -179,7 +176,7 @@ export function ApiTokenSection() {
             <Banner>Copy and store this token now — it won't be shown again.</Banner>
           </div>
           <div style={{ marginTop: 12 }}>
-            <Button size="sm" onClick={() => { setNewKeyResult(null); setCopied(false); }}>Done</Button>
+            <Button size="sm" onClick={() => setNewKeyResult(null)}>Done</Button>
           </div>
         </Card>
       )}
