@@ -46,6 +46,14 @@ export function ApiTokenSection() {
     setShowForm(true);
   };
 
+  // New tokens default to ALL profiles allowed (the common case); the user can
+  // deselect to narrow scope.
+  const openCreate = () => {
+    setEditingId(null); setNewName(""); setRpm("60");
+    setSelectedProfileIds(profiles?.map((p) => p.id) ?? []);
+    setShowForm(true);
+  };
+
   const handleSave = async () => {
     setError("");
     try {
@@ -160,13 +168,13 @@ export function ApiTokenSection() {
         rowKey={(k) => k.id}
         onRowClick={openEdit}
         loading={loading}
-        actions={<Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Create token</Button>}
+        actions={<Button size="sm" icon={<Plus size={14} />} onClick={openCreate}>Create token</Button>}
         emptyState={
           <EmptyState
             icon={<Shield size={20} />}
             title="No API tokens yet"
             description="Create a token for the CLI or programmatic access."
-            action={<Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Create token</Button>}
+            action={<Button size="sm" icon={<Plus size={14} />} onClick={openCreate}>Create token</Button>}
           />
         }
       />
