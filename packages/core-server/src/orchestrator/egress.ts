@@ -1,16 +1,25 @@
-// Egress enforcement helpers (feature 0005). Pure functions + a thin bridge to
-// the proxy's token signer, kept separate from the orchestrator so they're unit-
-// testable without Docker. See docker/egress-proxy.cjs for the enforcement point
-// and the token format.
-import { createRequire } from "node:module";
+// Egress enforcement helpers (feature 0005). Pure functions, kept separate from
+// the orchestrator so they're unit-testable without Docker. See
+// docker/egress-proxy.cjs for the enforcement point and the token format.
+import { createHmac } from "node:crypto";
 
-// The proxy runs as a standalone CJS file (no build step). Reuse its token
-// signer here so there is exactly ONE token implementation across the proxy,
-// its tests, and the orchestrator that mints tokens.
-const require = createRequire(import.meta.url);
-const { signToken } = require("../../../../docker/egress-proxy.cjs") as {
-  signToken: (domains: string[], secret: string, ttlSeconds?: number) => string;
-};
+// Mint the per-agent proxy token. MUST stay byte-compatible with the verifier in
+// docker/egress-proxy.cjs (verifyToken) — egress.test.ts round-trips a token
+// minted here through that verifier to guard the two against drift. (We can't
+// import the .cjs at runtime: docker/ isn't shipped inside the server image.)
+function b64url(buf: Buffer): string {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function signToken(domains: string[], secret: string, ttlSeconds?: number): string {
+  const claims: { d: string[]; exp?: number } = { d: domains };
+  if (ttlSeconds && ttlSeconds > 0) {
+    claims.exp = Math.floor(Date.now() / 1000) + Math.floor(ttlSeconds);
+  }
+  const payload = b64url(Buffer.from(JSON.stringify(claims)));
+  const sig = b64url(createHmac("sha256", secret).update(payload).digest());
+  return `${payload}.${sig}`;
+}
 
 /** Env keys whose values are model-endpoint URLs the agent must always reach. */
 const MODEL_URL_ENV_KEYS = [
@@ -88,5 +97,3 @@ export function buildProxyEnv(opts: {
     no_proxy: "localhost,127.0.0.1,::1",
   };
 }
-
-export { signToken };
