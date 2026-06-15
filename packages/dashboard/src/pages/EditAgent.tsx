@@ -33,6 +33,7 @@ import {
   fetchUserSkills, fetchUserAgents, createUserAgent, createUserSkill,
   fetchUserGitProviders, type GitProviderInfo,
   fetchUserAnthropicKeys, type UserAnthropicKey,
+  fetchWorkspaces,
 } from "../api/client.js";
 import { fetchDockerImages, type DockerImageInfo } from "../api/admin.js";
 import { useApi } from "../hooks/useApi.js";
@@ -50,6 +51,11 @@ const TAB_VALUES = ["overview", "tools", "extensions", "network"] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
 const slugifyName = (value: string): string => slugify(value, 48);
+
+/** Stable signature of an egress config, for detecting changes across a save. */
+function egressKey(allowAll: boolean, domains: string[]): string {
+  return allowAll ? "*" : [...domains].map((d) => d.trim().toLowerCase()).filter(Boolean).sort().join(",");
+}
 
 export function EditAgent() {
   const { id: routeId } = useParams<{ id: string }>();
@@ -82,6 +88,10 @@ export function EditAgent() {
   const [egressDomains, setEgressDomains] = useState<string[]>([]);
   const [egressInput, setEgressInput] = useState("");
   const [allowAllEgress, setAllowAllEgress] = useState(false);
+  // Egress at load time — to detect a change on save and nudge about live
+  // sessions (which keep their old network rules until restarted).
+  const [initialEgressKey, setInitialEgressKey] = useState("");
+  const [egressNudge, setEgressNudge] = useState<number | null>(null);
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
@@ -173,8 +183,12 @@ export function EditAgent() {
           setSlug((full.slug as string) ?? "");
         }
         const egress = (full.default_egress_domains as string[]) ?? [];
-        setAllowAllEgress(egress.includes("*"));
-        setEgressDomains(egress.filter((d) => d !== "*"));
+        const allowAll = egress.includes("*");
+        const domains = egress.filter((d) => d !== "*");
+        setAllowAllEgress(allowAll);
+        setEgressDomains(domains);
+        // Duplicated agents are brand-new (no live sessions) → no baseline to nudge against.
+        if (!isDuplicate) setInitialEgressKey(egressKey(allowAll, domains));
         setApiKeyId((full.api_key_id as string) ?? "");
         setClaudeMd((full.claude_md as string) ?? "");
         const rawMcp = (full.mcp_servers as McpServerConfig[]) ?? [];
@@ -264,6 +278,20 @@ export function EditAgent() {
       };
       if (editingId) await updateProfile(editingId, body);
       else await createProfile(body);
+
+      // Under enforcement, egress changes only apply to NEW sessions — a running
+      // workspace keeps the network rules it was created with (incl. when
+      // TIGHTENING). If egress changed and this agent has live sessions, nudge
+      // the user to restart them instead of silently navigating away.
+      const enforced = !!(window as unknown as { __VONZIO_EGRESS_ENFORCEMENT?: boolean }).__VONZIO_EGRESS_ENFORCEMENT;
+      const egressDidChange = egressKey(allowAllEgress, allowAllEgress ? [] : resolvedEgressDomains()) !== initialEgressKey;
+      if (editingId && enforced && egressDidChange) {
+        try {
+          const { workspaces } = await fetchWorkspaces();
+          const live = workspaces.filter((w) => w.profile_id === editingId && w.container_id && !w.archived).length;
+          if (live > 0) { setEgressNudge(live); setSaving(false); return; }
+        } catch { /* nudge is best-effort — fall through to navigate */ }
+      }
       navigate("/agents");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
@@ -766,6 +794,24 @@ export function EditAgent() {
             <Textarea value={newSkillBody} onChange={(e) => setNewSkillBody(e.target.value)} rows={6} placeholder="Markdown / instructions the skill exposes when invoked…" />
           </Field>
         </div>
+      </Modal>
+
+      <Modal
+        open={egressNudge !== null}
+        onClose={() => navigate("/agents")}
+        title="Network rules saved — restart to apply"
+        description="Egress changes take effect on new sessions only."
+        footer={
+          <Button size="sm" onClick={() => navigate("/agents")}>Got it</Button>
+        }
+      >
+        <p style={{ fontSize: 13, color: "var(--vz-ink-2)", lineHeight: 1.5, margin: 0 }}>
+          {egressNudge} running workspace{egressNudge === 1 ? "" : "s"} for this agent
+          {egressNudge === 1 ? " keeps" : " keep"} the network rules
+          {egressNudge === 1 ? " it was" : " they were"} started with — including a
+          tighter allowlist. Start a new workspace, or restart a running one, for the
+          updated egress to apply.
+        </p>
       </Modal>
     </div>
   );
