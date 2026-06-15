@@ -24,6 +24,8 @@
  */
 const http = require("http");
 const https = require("https");
+const net = require("net");
+const tls = require("tls");
 
 // ---------------------------------------------------------------------------
 // Request translation: Anthropic Messages -> OpenAI Chat Completions
@@ -486,15 +488,93 @@ function readBody(req) {
   });
 }
 
-function upstreamRequest(method, url, headers, bodyBuf) {
-  const u = new URL(url);
+// When egress enforcement is on, agents sit on a no-direct-internet network and
+// reach the model only through the egress proxy. Node's http/https do NOT honor
+// HTTP(S)_PROXY env, so the gateway — the single component that talks to the
+// real provider — must route through the proxy itself: CONNECT-tunnel for https,
+// absolute-form for http. The proxy token rides in the proxy URL's userinfo and
+// is replayed as Proxy-Authorization. NO_PROXY isn't consulted: the gateway only
+// ever dials external provider hosts (the SDK→gateway hop is localhost).
+function proxyForUrl(u) {
+  const env = u.protocol === "https:"
+    ? (process.env.HTTPS_PROXY || process.env.https_proxy)
+    : (process.env.HTTP_PROXY || process.env.http_proxy);
+  return env ? new URL(env) : null;
+}
+
+function proxyAuthHeader(p) {
+  if (!p.username) return null;
+  // username = signed token, password empty (Basic user:pass form).
+  return "Basic " + Buffer.from(`${decodeURIComponent(p.username)}:`).toString("base64");
+}
+
+/**
+ * Build an outbound ClientRequest to `fullUrl`, transparently routed through the
+ * egress proxy when one is configured. Returns the ClientRequest so the caller
+ * can either write a buffered body or pipe a stream. Mirrors the dial logic the
+ * SDK would need if it honored proxy env.
+ */
+function makeUpstreamReq(method, fullUrl, headers, cb) {
+  const u = new URL(fullUrl);
+  const hdrs = { ...headers, host: u.host };
+  const proxy = proxyForUrl(u);
+
+  if (proxy && u.protocol === "https:") {
+    const port = Number(u.port) || 443;
+    const proxyPort = Number(proxy.port) || 8080;
+    const auth = proxyAuthHeader(proxy);
+    return https.request(fullUrl, {
+      method,
+      headers: hdrs,
+      // Defer the dial: open a TCP socket to the proxy, CONNECT, then TLS over
+      // the tunnel. We hand the established TLS socket back via `oncreate`.
+      createConnection(_opts, oncreate) {
+        const sock = net.connect({ host: proxy.hostname, port: proxyPort });
+        let buf = "";
+        const onData = (chunk) => {
+          buf += chunk.toString("latin1");
+          if (!buf.includes("\r\n\r\n")) return;
+          sock.removeListener("data", onData);
+          const status = buf.split("\r\n")[0];
+          if (/ 200 /.test(status)) {
+            const tlsSock = tls.connect({ socket: sock, servername: u.hostname }, () => oncreate(null, tlsSock));
+            tlsSock.once("error", oncreate);
+          } else {
+            sock.destroy();
+            oncreate(new Error("proxy CONNECT failed: " + status.trim()));
+          }
+        };
+        sock.once("error", oncreate);
+        sock.on("data", onData);
+        sock.once("connect", () => {
+          let h = `CONNECT ${u.hostname}:${port} HTTP/1.1\r\nHost: ${u.hostname}:${port}\r\n`;
+          if (auth) h += `Proxy-Authorization: ${auth}\r\n`;
+          sock.write(h + "\r\n");
+        });
+        return undefined; // socket delivered via oncreate
+      },
+    }, cb);
+  }
+
+  if (proxy && u.protocol === "http:") {
+    const auth = proxyAuthHeader(proxy);
+    if (auth) hdrs["proxy-authorization"] = auth;
+    return http.request({
+      host: proxy.hostname,
+      port: Number(proxy.port) || 8080,
+      method,
+      path: fullUrl, // absolute-form for a forward proxy
+      headers: hdrs,
+    }, cb);
+  }
+
   const lib = u.protocol === "https:" ? https : http;
+  return lib.request(fullUrl, { method, headers: hdrs }, cb);
+}
+
+function upstreamRequest(method, url, headers, bodyBuf) {
   return new Promise((resolve, reject) => {
-    const r = lib.request(
-      url,
-      { method, headers: { ...headers, host: u.host } },
-      (res) => resolve(res),
-    );
+    const r = makeUpstreamReq(method, url, headers, (res) => resolve(res));
     r.on("error", reject);
     if (bodyBuf) r.write(bodyBuf);
     r.end();
@@ -664,8 +744,9 @@ async function handlePassthrough(req, res) {
   const apiKey = req.headers["x-api-key"] || "";
   const headers = { ...req.headers, authorization: `Bearer ${apiKey}`, host: new URL(TARGET).hostname };
   delete headers["x-api-key"];
-  const lib = new URL(TARGET).protocol === "https:" ? https : http;
-  const proxyReq = lib.request(`${TARGET}${req.url}`, { method: req.method, headers }, (proxyRes) => {
+  // Route through the egress proxy when configured (HTTPS_PROXY) so the model
+  // call works on the no-direct-internet network; direct otherwise.
+  const proxyReq = makeUpstreamReq(req.method, `${TARGET}${req.url}`, headers, (proxyRes) => {
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     proxyRes.pipe(res);
   });
