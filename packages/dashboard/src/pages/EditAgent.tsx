@@ -212,6 +212,34 @@ export function EditAgent() {
     };
   }, [editingId, duplicateFromId, serverMaxTurns]);
 
+  // Add one or more domains (Enter, comma, blur, or pasted "a.com, b.com").
+  // Splits on commas/whitespace, trims, dedupes — case-insensitively, since the
+  // proxy matches case-insensitively.
+  function addEgressDomains(raw: string) {
+    const parts = raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return;
+    setEgressDomains((prev) => {
+      const seen = new Set(prev.map((d) => d.toLowerCase()));
+      const merged = [...prev];
+      for (const p of parts) {
+        if (!seen.has(p.toLowerCase())) { seen.add(p.toLowerCase()); merged.push(p); }
+      }
+      return merged;
+    });
+    setEgressInput("");
+  }
+
+  // The committed pills PLUS any text still sitting in the input — so a typed-
+  // but-not-Entered domain isn't silently dropped on Save.
+  function resolvedEgressDomains(): string[] {
+    const pending = egressInput.trim();
+    if (!pending) return egressDomains;
+    const seen = new Set(egressDomains.map((d) => d.toLowerCase()));
+    const extra = pending.split(/[\s,]+/).map((s) => s.trim())
+      .filter((p) => p && !seen.has(p.toLowerCase()));
+    return [...egressDomains, ...extra];
+  }
+
   async function handleSave() {
     setError("");
     setSaving(true);
@@ -219,7 +247,7 @@ export function EditAgent() {
       const body: Record<string, unknown> = {
         name, slug: slug.trim() || undefined,
         api_key_id: apiKeyId || null, model: profileModel || undefined, effort: effort || undefined,
-        default_tools: tools, default_egress_domains: allowAllEgress ? ["*"] : egressDomains,
+        default_tools: tools, default_egress_domains: allowAllEgress ? ["*"] : resolvedEgressDomains(),
         claude_md: claudeMd.trim() || "", mcp_servers: mcpServers,
         agent_ids: agentIds, skill_ids: skillIds, git_provider_ids: gitProviderIds,
         container_image: containerImage || undefined,
@@ -589,7 +617,7 @@ export function EditAgent() {
                   )}
                   <Checkbox checked={allowAllEgress} onChange={setAllowAllEgress}>Allow all egress</Checkbox>
                   {!allowAllEgress && (
-                    <Field label="Allowed domains" hint="Type a domain and press Enter.">
+                    <Field label="Allowed domains" hint="Type a domain and press Enter or comma to add it.">
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                         {egressDomains.map((d, i) => (
                           <span
@@ -617,13 +645,13 @@ export function EditAgent() {
                         value={egressInput}
                         onChange={(e) => setEgressInput(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" && egressInput.trim()) {
+                          if ((e.key === "Enter" || e.key === ",") && egressInput.trim()) {
                             e.preventDefault();
-                            setEgressDomains((prev) => [...prev, egressInput.trim()]);
-                            setEgressInput("");
+                            addEgressDomains(egressInput);
                           }
                         }}
-                        placeholder="github.com, api.openai.com…"
+                        onBlur={() => addEgressDomains(egressInput)}
+                        placeholder="github.com"
                       />
                     </Field>
                   )}
