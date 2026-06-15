@@ -20,6 +20,7 @@ import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
 import { decideGoalNext } from "./goal-loop.js";
+import { modelHostsFromEnv, planEgress, buildProxyEnv } from "./egress.js";
 import { judgeServerSide } from "./judge-server.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
@@ -112,6 +113,12 @@ export interface OrchestratorDeps {
     internalServerUrl?: string;
     /** Used to decrypt VPN tunnel configs before passing to the sidecar. */
     encryptionKey?: string;
+    /** Egress enforcement (feature 0005). When true, non-VPN agents run on an
+     *  internal network and reach the internet only through the egress proxy. */
+    egressEnforcement?: boolean;
+    egressProxyImage?: string;
+    egressProxyNetwork?: string;
+    egressProxySecret?: string;
   };
 }
 
@@ -169,6 +176,16 @@ export class Orchestrator extends EventEmitter {
   // wait this long before actually removing the sidecar — back-to-back
   // tasks reuse the same tunnel without re-handshaking.
   private sidecarTeardownTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Egress enforcement (feature 0005): one long-lived shared proxy, dual-homed
+  // on the internal agent network + an internet-facing network. Lazily created,
+  // adopted across restarts via its label. Not torn down per task.
+  private egressProxy: { containerId: string; networkName: string; alias: string; port: number } | null = null;
+  private egressProxyInFlight: Promise<{ networkName: string; alias: string; port: number } | null> | null = null;
+  private readonly EGRESS_PROXY_PORT = 8080;
+  private readonly EGRESS_PROXY_ALIAS = "egress-proxy";
+  // Token lifetime — generous (tasks can run long); bounds replay if a token
+  // leaks from a container env.
+  private readonly EGRESS_TOKEN_TTL_SECONDS = 24 * 60 * 60;
   private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
@@ -503,6 +520,7 @@ export class Orchestrator extends EventEmitter {
       const profile = prefetchedProfile ?? await this.fetchProfile(task);
       const env = await this.buildEnvFromProfile(profile);
       const vpn = await this.ensureVpnSidecar(profile);
+      const egress = await this.applyEgress(task.egress_domains, env, !!vpn);
 
       containerId = await this.deps.containerManager.createContainer({
         image: profile.container_image,
@@ -511,7 +529,7 @@ export class Orchestrator extends EventEmitter {
         binds,
         cpus: this.deps.config.containerCpuBatch,
         memory: this.deps.config.containerMemoryBatch,
-        networkMode: vpn?.networkMode,
+        networkMode: egress?.networkMode ?? vpn?.networkMode,
         labels: {
           "vonzio-mode": "batch",
           "vonzio-task-id": task.id,
@@ -562,8 +580,11 @@ export class Orchestrator extends EventEmitter {
     const hasTunnel = profile.user_id && provider
       ? !!(await provider.resolveActiveTunnel(profile.user_id, profile.id))
       : false;
-    if (profile.container_image || profile.setup_commands?.length || hasTunnel) {
-      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel }, "Pooled incompatible, falling back to batch");
+    // Pre-warmed pool containers are profile-agnostic, so they can't carry a
+    // per-profile egress token / sit on the internal network. Under enforcement,
+    // fall back to batch (a dedicated container wired to the proxy).
+    if (profile.container_image || profile.setup_commands?.length || hasTunnel || this.deps.config.egressEnforcement) {
+      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel, egress: this.deps.config.egressEnforcement }, "Pooled incompatible, falling back to batch");
       return this.dispatchBatch(task, profile);
     }
 
@@ -952,6 +973,10 @@ export class Orchestrator extends EventEmitter {
     }
 
     const vpn = await this.ensureVpnSidecar(profile, sessionId);
+    // Session containers are reused across a session's tasks, so enforcement
+    // uses the PROFILE default allowlist (baked into env at create time) — not
+    // per-task egress, which can't retro-apply to a long-lived container.
+    const egress = await this.applyEgress(profile.default_egress_domains, env, !!vpn);
     const containerId = await this.deps.containerManager.createContainer({
       image: profile.container_image,
       registryAuth: this.buildRegistryAuth(profile),
@@ -959,7 +984,7 @@ export class Orchestrator extends EventEmitter {
       binds: binds.length > 0 ? binds : undefined,
       cpus: this.deps.config.containerCpuSession,
       memory: this.deps.config.containerMemorySession,
-      networkMode: vpn?.networkMode,
+      networkMode: egress?.networkMode ?? vpn?.networkMode,
       labels: {
         "vonzio-mode": "session",
         "vonzio-session-id": sessionId,
@@ -1992,6 +2017,114 @@ export class Orchestrator extends EventEmitter {
     } catch {
       // Container may already be gone
     }
+  }
+
+  /**
+   * Ensure the shared egress proxy + its internal network exist, returning the
+   * info needed to point an agent at it. Null when enforcement is off. Throws
+   * when enforcement is ON but the proxy can't be brought up — fail-closed: we
+   * must NOT silently place the agent on a network with direct internet.
+   * Serialized so concurrent dispatches don't each create a proxy.
+   */
+  private async ensureEgressProxy(): Promise<{ networkName: string; alias: string; port: number } | null> {
+    const cfg = this.deps.config;
+    if (!cfg.egressEnforcement) return null;
+    const network = cfg.egressProxyNetwork || "vonzio-egress";
+    const secret = cfg.egressProxySecret;
+    const image = cfg.egressProxyImage || "vonzio-egress-proxy:latest";
+    if (!secret) throw new Error("EGRESS_ENFORCEMENT on but no egress proxy secret (set EGRESS_PROXY_SECRET or ENCRYPTION_KEY)");
+
+    await this.deps.containerManager.ensureNetwork(network, { internal: true });
+
+    if (this.egressProxy) {
+      const status = await this.deps.containerManager.getContainerStatus(this.egressProxy.containerId).catch(() => "not_found" as const);
+      if (status === "running") {
+        return { networkName: network, alias: this.egressProxy.alias, port: this.egressProxy.port };
+      }
+      this.egressProxy = null; // died — recreate
+    }
+    if (this.egressProxyInFlight) return this.egressProxyInFlight;
+
+    this.egressProxyInFlight = (async () => {
+      // Adopt an existing proxy (e.g. after a server restart) before creating one.
+      const existing = (await this.deps.containerManager.listManagedContainers())
+        .find((c) => c.labels["vonzio-mode"] === "egress-proxy" && c.status === "running");
+      if (existing) {
+        this.egressProxy = { containerId: existing.id, networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
+        // Idempotently make sure it's on the internal network too.
+        await this.deps.containerManager.connectNetwork(network, existing.id, [this.EGRESS_PROXY_ALIAS]).catch(() => {});
+        return { networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
+      }
+      // Primary network = the default (internet-facing) one; then dual-home onto
+      // the internal agent network so agents can reach it by alias.
+      const proxyId = await this.deps.containerManager.createContainer({
+        image,
+        env: { EGRESS_PROXY_SECRET: secret, EGRESS_PROXY_PORT: String(this.EGRESS_PROXY_PORT) },
+        labels: { "vonzio-mode": "egress-proxy" },
+      });
+      await this.deps.containerManager.startContainer(proxyId);
+      await this.deps.containerManager.connectNetwork(network, proxyId, [this.EGRESS_PROXY_ALIAS]);
+      this.egressProxy = { containerId: proxyId, networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
+      this.log.info({ proxyId, network }, "Egress proxy started");
+      return { networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
+    })();
+    try {
+      return await this.egressProxyInFlight;
+    } finally {
+      this.egressProxyInFlight = null;
+    }
+  }
+
+  /**
+   * Apply egress enforcement to an agent about to be created: mutate `env` to
+   * route all egress through the proxy (and force the native-Anthropic model
+   * path through the in-container gateway, since the Node SDK ignores proxy
+   * env) and return the internal networkMode to attach it to. Returns null when
+   * enforcement is off, the profile opted out (`["*"]`), or a VPN already
+   * constrains egress (v1 leaves the VPN path unchanged). `egressDomains` is the
+   * resolved allowlist (per-task for batch; profile default for session).
+   */
+  private async applyEgress(
+    egressDomains: string[] | undefined,
+    env: Record<string, string>,
+    vpnActive: boolean,
+  ): Promise<{ networkMode: string } | null> {
+    if (!this.deps.config.egressEnforcement) return null;
+    if (vpnActive) return null; // VPN already routes/locks egress; compose in v2
+    if ((egressDomains ?? []).includes("*")) return null; // explicit opt-out
+
+    // Force the model call through the proxy-aware gateway BEFORE deriving model
+    // hosts, so api.anthropic.com (native path) ends up in the allowlist.
+    this.forceModelThroughGateway(env);
+    const plan = planEgress(egressDomains, modelHostsFromEnv(env));
+
+    const proxy = await this.ensureEgressProxy();
+    if (!proxy) throw new Error("egress enforcement enabled but proxy unavailable");
+    Object.assign(env, buildProxyEnv({
+      domains: plan.domains,
+      secret: this.deps.config.egressProxySecret!,
+      proxyAlias: proxy.alias,
+      proxyPort: proxy.port,
+      ttlSeconds: this.EGRESS_TOKEN_TTL_SECONDS,
+    }));
+    return { networkMode: proxy.networkName };
+  }
+
+  /**
+   * Native-Anthropic agents talk to api.anthropic.com directly from the SDK,
+   * which ignores proxy env. Under enforcement, redirect them through the
+   * in-container gateway (raw passthrough, preserving x-api-key) so the single
+   * proxy-aware component carries the model traffic. OpenAI/Ollama already use
+   * the gateway, so leave those untouched.
+   */
+  private forceModelThroughGateway(env: Record<string, string>): void {
+    if (env.LLM_GATEWAY_MODE) return; // already gatewayed (openai/ollama)
+    const base = env.ANTHROPIC_BASE_URL;
+    const target = base && !/^https?:\/\/(localhost|127\.0\.0\.1)/i.test(base) ? base : "https://api.anthropic.com";
+    env.LLM_GATEWAY_MODE = "passthrough";
+    env.LLM_GATEWAY_PASSTHROUGH_RAW = "1";
+    env.LLM_GATEWAY_TARGET_URL = target;
+    env.ANTHROPIC_BASE_URL = `http://127.0.0.1:11434`;
   }
 
   /**

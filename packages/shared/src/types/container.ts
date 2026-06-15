@@ -93,6 +93,13 @@ export interface ContainerManager {
   pauseContainer(id: string): Promise<void>;
   /** Unpause a paused container */
   unpauseContainer(id: string): Promise<void>;
+  /** Ensure a user-defined Docker network exists (idempotent). `internal: true`
+   *  creates a network with NO external connectivity — the substrate for egress
+   *  enforcement (feature 0005). */
+  ensureNetwork(name: string, opts?: { internal?: boolean }): Promise<void>;
+  /** Attach an existing container to an additional network, optionally under DNS
+   *  aliases. Used to dual-home the egress proxy (external + internal). */
+  connectNetwork(network: string, containerId: string, aliases?: string[]): Promise<void>;
   /** Create a named Docker volume */
   createNamedVolume(name: string): Promise<void>;
   /** Remove a named Docker volume */

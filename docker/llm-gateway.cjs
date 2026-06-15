@@ -740,10 +740,19 @@ function readAll(stream) {
   });
 }
 
+// Raw passthrough preserves the client's own auth (x-api-key, anthropic-version,
+// ...) instead of rewriting x-api-key -> Bearer. Used when egress enforcement
+// forces the native-Anthropic model path through the gateway purely to reach the
+// proxy: the upstream IS api.anthropic.com, which expects x-api-key, not Bearer.
+const PASSTHROUGH_RAW = process.env.LLM_GATEWAY_PASSTHROUGH_RAW === "1";
+
 async function handlePassthrough(req, res) {
-  const apiKey = req.headers["x-api-key"] || "";
-  const headers = { ...req.headers, authorization: `Bearer ${apiKey}`, host: new URL(TARGET).hostname };
-  delete headers["x-api-key"];
+  const headers = { ...req.headers, host: new URL(TARGET).hostname };
+  if (!PASSTHROUGH_RAW) {
+    const apiKey = req.headers["x-api-key"] || "";
+    headers.authorization = `Bearer ${apiKey}`;
+    delete headers["x-api-key"];
+  }
   // Route through the egress proxy when configured (HTTPS_PROXY) so the model
   // call works on the no-direct-internet network; direct otherwise.
   const proxyReq = makeUpstreamReq(req.method, `${TARGET}${req.url}`, headers, (proxyRes) => {

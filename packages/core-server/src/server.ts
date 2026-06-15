@@ -300,6 +300,10 @@ export async function buildServer(deps: ServerDeps) {
       previewUrlTemplate: config.PREVIEW_URL_TEMPLATE,
       internalServerUrl: config.INTERNAL_SERVER_URL,
       encryptionKey: config.ENCRYPTION_KEY,
+      egressEnforcement: config.EGRESS_ENFORCEMENT,
+      egressProxyImage: config.EGRESS_PROXY_IMAGE,
+      egressProxyNetwork: config.EGRESS_PROXY_NETWORK,
+      egressProxySecret: config.EGRESS_PROXY_SECRET ?? config.ENCRYPTION_KEY,
     },
   });
 

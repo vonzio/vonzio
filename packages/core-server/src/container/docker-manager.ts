@@ -379,6 +379,40 @@ export class DockerManager implements ContainerManager {
     await container.unpause();
   }
 
+  async ensureNetwork(name: string, opts?: { internal?: boolean }): Promise<void> {
+    try {
+      await this.docker.getNetwork(name).inspect();
+      return; // already exists
+    } catch { /* not found — create below */ }
+    try {
+      await this.docker.createNetwork({
+        Name: name,
+        Driver: "bridge",
+        Internal: opts?.internal ?? false,
+        // Keep enforcement IPv4-only: an IPv6 path would be a second egress
+        // route the proxy isn't filtering.
+        EnableIPv6: false,
+        Labels: { [MANAGED_LABEL]: MANAGED_VALUE },
+      });
+    } catch (err) {
+      // Lost a create race with a concurrent dispatch — fine if it now exists.
+      await this.docker.getNetwork(name).inspect().catch(() => { throw err; });
+    }
+  }
+
+  async connectNetwork(network: string, containerId: string, aliases?: string[]): Promise<void> {
+    try {
+      await this.docker.getNetwork(network).connect({
+        Container: containerId,
+        EndpointConfig: aliases?.length ? { Aliases: aliases } : undefined,
+      });
+    } catch (err) {
+      // Already connected is not an error for our idempotent callers.
+      if (err instanceof Error && /already exists|endpoint with name/i.test(err.message)) return;
+      throw err;
+    }
+  }
+
   async createNamedVolume(name: string): Promise<void> {
     await this.docker.createVolume({ Name: name });
   }
