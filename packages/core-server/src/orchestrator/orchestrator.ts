@@ -21,7 +21,7 @@ import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
 import { decideGoalNext } from "./goal-loop.js";
-import { modelHostsFromEnv, planEgress, buildProxyEnv } from "./egress.js";
+import { modelHostsFromEnv, planEgress, buildProxyEnv, routeModelThroughGateway } from "./egress.js";
 import { judgeServerSide } from "./judge-server.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
@@ -2107,9 +2107,9 @@ export class Orchestrator extends EventEmitter {
     if (vpnActive) return null; // VPN already routes/locks egress; compose in v2
     if ((egressDomains ?? []).includes("*")) return null; // explicit opt-out
 
-    // Force the model call through the proxy-aware gateway BEFORE deriving model
-    // hosts, so api.anthropic.com (native path) ends up in the allowlist.
-    this.forceModelThroughGateway(env);
+    // Force the native-Anthropic model call through the proxy-aware gateway
+    // BEFORE deriving model hosts, so api.anthropic.com ends up in the allowlist.
+    routeModelThroughGateway(env);
     const plan = planEgress(egressDomains, modelHostsFromEnv(env));
 
     const proxy = await this.ensureEgressProxy();
@@ -2125,23 +2125,6 @@ export class Orchestrator extends EventEmitter {
       ttlSeconds: opts?.tokenTtlSeconds,
     }));
     return { networkMode: proxy.networkName };
-  }
-
-  /**
-   * Native-Anthropic agents talk to api.anthropic.com directly from the SDK,
-   * which ignores proxy env. Under enforcement, redirect them through the
-   * in-container gateway (raw passthrough, preserving x-api-key) so the single
-   * proxy-aware component carries the model traffic. OpenAI/Ollama already use
-   * the gateway, so leave those untouched.
-   */
-  private forceModelThroughGateway(env: Record<string, string>): void {
-    if (env.LLM_GATEWAY_MODE) return; // already gatewayed (openai/ollama)
-    const base = env.ANTHROPIC_BASE_URL;
-    const target = base && !/^https?:\/\/(localhost|127\.0\.0\.1)/i.test(base) ? base : "https://api.anthropic.com";
-    env.LLM_GATEWAY_MODE = "passthrough";
-    env.LLM_GATEWAY_PASSTHROUGH_RAW = "1";
-    env.LLM_GATEWAY_TARGET_URL = target;
-    env.ANTHROPIC_BASE_URL = `http://127.0.0.1:11434`;
   }
 
   /**

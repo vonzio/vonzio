@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
-import { modelHostsFromEnv, planEgress, buildProxyEnv, signToken } from "./egress.js";
+import { modelHostsFromEnv, planEgress, buildProxyEnv, signToken, routeModelThroughGateway } from "./egress.js";
 
 const require = createRequire(import.meta.url);
 const proxy = require("../../../../docker/egress-proxy.cjs") as {
@@ -46,6 +46,50 @@ describe("planEgress", () => {
     const plan = planEgress(["api.github.com", "api.anthropic.com"], ["api.anthropic.com"]);
     expect(plan.mode).toBe("enforce");
     expect(plan.domains.sort()).toEqual(["api.anthropic.com", "api.github.com"]);
+  });
+});
+
+describe("routeModelThroughGateway", () => {
+  it("redirects a native-Anthropic agent through the gateway (raw passthrough)", () => {
+    const env: Record<string, string> = { ANTHROPIC_API_KEY: "sk-..." };
+    routeModelThroughGateway(env);
+    expect(env.LLM_GATEWAY_MODE).toBe("passthrough");
+    expect(env.LLM_GATEWAY_PASSTHROUGH_RAW).toBe("1");
+    expect(env.LLM_GATEWAY_TARGET_URL).toBe("https://api.anthropic.com");
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:11434");
+    // and the model host is now derivable for the allowlist
+    expect(modelHostsFromEnv(env)).toEqual(["api.anthropic.com"]);
+  });
+
+  it("preserves a custom external ANTHROPIC_BASE_URL as the gateway target", () => {
+    const env: Record<string, string> = { ANTHROPIC_BASE_URL: "https://anthropic.example.com" };
+    routeModelThroughGateway(env);
+    expect(env.LLM_GATEWAY_TARGET_URL).toBe("https://anthropic.example.com");
+    expect(modelHostsFromEnv(env)).toEqual(["anthropic.example.com"]);
+  });
+
+  it("leaves an OpenAI-compatible agent untouched (already gatewayed)", () => {
+    const env: Record<string, string> = {
+      LLM_GATEWAY_MODE: "openai",
+      LLM_GATEWAY_TARGET_URL: "https://api.openai.com",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:11434",
+    };
+    const before = { ...env };
+    routeModelThroughGateway(env);
+    expect(env).toEqual(before);
+  });
+
+  it("leaves an Ollama agent untouched (ollama-proxy is itself proxy-aware)", () => {
+    const env: Record<string, string> = {
+      OLLAMA_TARGET_URL: "https://ollama.com",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:11434",
+    };
+    const before = { ...env };
+    routeModelThroughGateway(env);
+    // must NOT set LLM_GATEWAY_MODE (would race a 2nd gateway on :11434) and must
+    // NOT pollute the allowlist with api.anthropic.com
+    expect(env).toEqual(before);
+    expect(modelHostsFromEnv(env)).toEqual(["ollama.com"]);
   });
 });
 

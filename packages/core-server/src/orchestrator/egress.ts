@@ -52,6 +52,28 @@ export function modelHostsFromEnv(env: Record<string, string>): string[] {
   return [...hosts];
 }
 
+/**
+ * Native-Anthropic agents talk to api.anthropic.com directly from the SDK, which
+ * ignores proxy env — so under enforcement they'd have no route. Redirect them
+ * through the in-container llm-gateway (raw passthrough, preserving x-api-key) so
+ * the single proxy-aware component carries the model traffic. Mutates `env`.
+ *
+ * No-op when the model already goes through an in-container, proxy-aware gateway:
+ *  - OpenAI(-compatible): sets LLM_GATEWAY_MODE.
+ *  - Ollama: sets OLLAMA_TARGET_URL (ollama-proxy.cjs is itself proxy-aware).
+ * Forcing those would race a second gateway on :11434 and pollute the allowlist.
+ */
+export function routeModelThroughGateway(env: Record<string, string>): void {
+  if (env.LLM_GATEWAY_MODE || env.OLLAMA_TARGET_URL) return;
+  const base = env.ANTHROPIC_BASE_URL;
+  // Already pointed at a localhost gateway — leave it.
+  if (base && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(base)) return;
+  env.LLM_GATEWAY_MODE = "passthrough";
+  env.LLM_GATEWAY_PASSTHROUGH_RAW = "1";
+  env.LLM_GATEWAY_TARGET_URL = base || "https://api.anthropic.com";
+  env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
+}
+
 export interface EgressPlan {
   /** "bypass" = profile opted into unrestricted egress (["*"]) → no proxy. */
   mode: "bypass" | "enforce";
