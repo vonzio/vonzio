@@ -252,8 +252,14 @@ export class ContainerPool {
         // the startup sweep. Belt-and-suspenders on top of the pool/session/DB
         // checks: the registry is authoritative for these.
         const isSession = container.labels?.["vonzio-mode"] === "session";
+        // The egress proxy (feature 0005) is a long-lived shared infra service
+        // (a compose service), not a pool/agent container. It carries
+        // managed-by=vonzio so the orchestrator can find it, which makes it look
+        // like an orphan here — never reap it, or every enforced task fails
+        // closed ("egress-proxy not running").
+        const isEgressProxy = container.labels?.["vonzio-mode"] === "egress-proxy";
 
-        if (!inPool && !inSession && !isVpnSidecar && !isSession) {
+        if (!inPool && !inSession && !isVpnSidecar && !isSession && !isEgressProxy) {
           try {
             await this.manager.removeContainer(container.id, true);
             this.onOrphanRemoved?.(container.id);
