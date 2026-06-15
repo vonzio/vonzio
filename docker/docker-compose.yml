@@ -53,6 +53,12 @@ services:
       EVENTS: 1
       PING: 1
       POST: 1
+      # Required for egress enforcement (feature 0005): the orchestrator creates
+      # the internal agent network + connects the egress proxy to it via the
+      # Networks API. A small incremental grant on top of CONTAINERS+EXEC (which
+      # already give full container control). Harmless when EGRESS_ENFORCEMENT is
+      # off — the API section is simply never called.
+      NETWORKS: 1
     networks:
       - vonzio
     # Deliberately no host port — TCP is reachable only from peers on
