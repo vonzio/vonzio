@@ -572,11 +572,21 @@ export function EditAgent() {
 
               <Panel title="Network egress">
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  <Banner>
-                    Advisory only — these domains are passed to the agent as
-                    guidance, not yet enforced at the network layer. The agent
-                    (and shell commands like curl) can still reach other hosts.
-                  </Banner>
+                  {(window as unknown as { __VONZIO_EGRESS_ENFORCEMENT?: boolean }).__VONZIO_EGRESS_ENFORCEMENT ? (
+                    <Banner>
+                      Enforced at the network layer — the agent can reach the
+                      model endpoint and the domains below; everything else is
+                      blocked (including shell commands like curl). "Allow all
+                      egress" disables the restriction.
+                    </Banner>
+                  ) : (
+                    <Banner>
+                      Advisory only — these domains are passed to the agent as
+                      guidance, not enforced at the network layer on this server.
+                      The agent (and shell commands like curl) can still reach
+                      other hosts. (Set EGRESS_ENFORCEMENT=1 to enforce.)
+                    </Banner>
+                  )}
                   <Checkbox checked={allowAllEgress} onChange={setAllowAllEgress}>Allow all egress</Checkbox>
                   {!allowAllEgress && (
                     <Field label="Allowed domains" hint="Type a domain and press Enter.">

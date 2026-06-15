@@ -389,6 +389,10 @@ export async function buildServer(deps: ServerDeps) {
       maxTurns: config.MAX_TURNS,
       ollamaEnabled: config.OLLAMA_ENABLED,
       maxDocumentMb: config.MAX_DOCUMENT_MB,
+      // Whether agent egress allowlists are enforced at the network layer
+      // (feature 0005). Drives the Network panel banner: "enforced" vs the
+      // advisory note when off.
+      egressEnforcement: config.EGRESS_ENFORCEMENT,
     };
   });
 
