@@ -165,6 +165,9 @@ services:
   # same); override only by setting EGRESS_PROXY_SECRET on BOTH this service and
   # the server.
   egress-proxy:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.egress-proxy
     image: ${EGRESS_PROXY_IMAGE:-vonzio-egress-proxy:latest}
     restart: unless-stopped
     profiles: ["egress"]
