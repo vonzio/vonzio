@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Trash2, Shield, Plus } from "lucide-react";
+import { Trash2, Shield, Plus } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
   fetchApiTokens,
@@ -146,17 +146,6 @@ export function ApiTokenSection() {
           <p style={{ fontSize: 11.5, color: "var(--vz-warn)", margin: "8px 0 0", fontFamily: "var(--vz-font-mono)" }}>
             save this — it won't be shown again
           </p>
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--vz-border)" }}>
-            <SubLabel>Quick start</SubLabel>
-            <CodeRow
-              label="chat page"
-              value={`${window.location.origin}/chat?key=${newKeyResult.token}`}
-            />
-            <CodeRow
-              label="embed widget"
-              value={`<script src="${window.location.origin}/widget/vonzio.js" data-key="${newKeyResult.token}"></script>`}
-            />
-          </div>
           <div style={{ marginTop: 10 }}>
             <Button variant="ghost" size="sm" onClick={() => setNewKeyResult(null)}>Dismiss</Button>
           </div>
@@ -176,7 +165,7 @@ export function ApiTokenSection() {
           <EmptyState
             icon={<Shield size={20} />}
             title="No API tokens yet"
-            description="Create a token for embed widgets, the CLI, or programmatic access."
+            description="Create a token for the CLI or programmatic access."
             action={<Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Create token</Button>}
           />
         }
@@ -232,7 +221,7 @@ export function ApiTokenSection() {
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
         title="Delete API token?"
-        description="Any client (widget, CLI, integration) using this token will stop working."
+        description="Any client (CLI, integration) using this token will stop working."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
@@ -241,41 +230,5 @@ export function ApiTokenSection() {
         }
       />
     </>
-  );
-}
-
-function CodeRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-      <span style={{
-        fontFamily: "var(--vz-font-mono)", fontSize: 10.5,
-        letterSpacing: "0.04em", color: "var(--vz-muted-2)",
-        width: 90, flexShrink: 0,
-      }}>
-        {label}
-      </span>
-      <code
-        style={{
-          flex: 1,
-          fontFamily: "var(--vz-font-mono)", fontSize: 11,
-          background: "var(--vz-mute)", border: "1px solid var(--vz-border)",
-          borderRadius: "var(--vz-radius-sm)",
-          padding: "4px 8px",
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          color: "var(--vz-ink-3)",
-        }}
-        title={value}
-      >
-        {value}
-      </code>
-      <button
-        type="button"
-        className="vz-action-btn"
-        title="Copy"
-        onClick={() => navigator.clipboard.writeText(value)}
-      >
-        <Copy size={12} />
-      </button>
-    </div>
   );
 }

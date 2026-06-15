@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { Login } from "./pages/Login.js";
 import { Register } from "./pages/Register.js";
 import { Settings } from "./pages/Settings.js";
-import { ChatEmbed } from "./pages/ChatEmbed.js";
 import { AcceptInvite } from "./pages/AcceptInvite.js";
 import { ResetPassword } from "./pages/ResetPassword.js";
 import { Setup } from "./pages/Setup.js";
@@ -18,6 +17,7 @@ import { AppConfigContext } from "./contexts/AppConfigContext.js";
 import { AppShell } from "./components/AppShell.js";
 import { track, initClickTracking } from "./lib/track.js";
 import { EntitlementsProvider, getRoutes, registerDefaults, useEntitlements } from "./registry/index.js";
+import { getPublicRoutes } from "./public-routes.js";
 
 registerDefaults();
 
@@ -50,14 +50,24 @@ export function App() {
     }).catch(() => {}).finally(() => setConfigLoaded(true));
   }, []);
 
-  // Public routes — no auth required
-  if (window.location.pathname === "/chat" || window.location.pathname === "/invite" || window.location.pathname === "/reset-password") {
+  // Public routes — no auth required. /invite + /reset-password are core OSS
+  // pages; any cloud-only public surface (e.g. the embeddable /chat page, now
+  // in cp-dashboard) registers via getPublicRoutes() — empty in OSS.
+  const extraPublicRoutes = getPublicRoutes();
+  const publicPaths = new Set<string>([
+    "/invite",
+    "/reset-password",
+    ...extraPublicRoutes.map((r) => r.path),
+  ]);
+  if (publicPaths.has(window.location.pathname)) {
     return (
       <BrowserRouter>
         <Routes>
-          <Route path="/chat" element={<ChatEmbed />} />
           <Route path="/invite" element={<AcceptInvite />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          {extraPublicRoutes.map((r) => (
+            <Route key={r.path} path={r.path} element={r.element} />
+          ))}
         </Routes>
       </BrowserRouter>
     );
