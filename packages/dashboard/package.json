@@ -29,7 +29,10 @@
     "./components/ToolPillSelect": "./src/components/ToolPillSelect.tsx",
     "./components/ProfileModelSelect": "./src/components/ProfileModelSelect.tsx",
     "./App": "./src/App.tsx",
-    "./app.css": "./src/app.css"
+    "./app.css": "./src/app.css",
+    "./public-routes": "./src/public-routes.tsx",
+    "./components/ChatCore": "./src/components/ChatCore.tsx",
+    "./components/MessageList": "./src/components/MessageList.tsx"
   },
   "scripts": {
     "build": "tsc -b && vite build",
