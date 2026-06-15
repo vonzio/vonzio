@@ -9,6 +9,7 @@ import type { ConcurrencyLimiter, VpnTunnelProvider } from "@vonzio/shared";
 import type { McpServerSpec } from "@vonzio/plugin-api";
 import { buildPluginMcpInjection } from "./plugin-mcp.js";
 import { decrypt } from "../auth/crypto.js";
+import { createHash } from "node:crypto";
 import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
@@ -520,7 +521,7 @@ export class Orchestrator extends EventEmitter {
       const profile = prefetchedProfile ?? await this.fetchProfile(task);
       const env = await this.buildEnvFromProfile(profile);
       const vpn = await this.ensureVpnSidecar(profile);
-      const egress = await this.applyEgress(task.egress_domains, env, !!vpn);
+      const egress = await this.applyEgress(task.egress_domains, env, !!vpn, { tokenTtlSeconds: this.EGRESS_TOKEN_TTL_SECONDS });
 
       containerId = await this.deps.containerManager.createContainer({
         image: profile.container_image,
@@ -2045,22 +2046,34 @@ export class Orchestrator extends EventEmitter {
     }
     if (this.egressProxyInFlight) return this.egressProxyInFlight;
 
+    // Stamp the proxy with a fingerprint of the secret it was started with, so
+    // adoption only reuses a proxy that verifies tokens with the CURRENT secret.
+    // On rotation (incl. rotating because the secret leaked) the stale proxy is
+    // torn down rather than adopted — otherwise leaked tokens keep working and
+    // freshly-minted tokens get 407'd.
+    const secretTag = createHash("sha256").update(secret).digest("hex").slice(0, 16);
     this.egressProxyInFlight = (async () => {
-      // Adopt an existing proxy (e.g. after a server restart) before creating one.
-      const existing = (await this.deps.containerManager.listManagedContainers())
-        .find((c) => c.labels["vonzio-mode"] === "egress-proxy" && c.status === "running");
-      if (existing) {
-        this.egressProxy = { containerId: existing.id, networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
-        // Idempotently make sure it's on the internal network too.
-        await this.deps.containerManager.connectNetwork(network, existing.id, [this.EGRESS_PROXY_ALIAS]).catch(() => {});
+      const managed = await this.deps.containerManager.listManagedContainers();
+      const proxies = managed.filter((c) => c.labels["vonzio-mode"] === "egress-proxy");
+      const usable = proxies.find((c) => c.status === "running" && c.labels["vonzio-egress-secret"] === secretTag);
+      if (usable) {
+        // Idempotently ensure it's on the internal network. A failure here means
+        // agents would land on the internal net with no reachable proxy and hang
+        // — surface it instead of swallowing.
+        await this.deps.containerManager.connectNetwork(network, usable.id, [this.EGRESS_PROXY_ALIAS]);
+        this.egressProxy = { containerId: usable.id, networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
         return { networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
+      }
+      // Remove stale proxies (wrong/old secret) so leaked tokens stop working.
+      for (const stale of proxies) {
+        await this.deps.containerManager.removeContainer(stale.id, true).catch(() => {});
       }
       // Primary network = the default (internet-facing) one; then dual-home onto
       // the internal agent network so agents can reach it by alias.
       const proxyId = await this.deps.containerManager.createContainer({
         image,
         env: { EGRESS_PROXY_SECRET: secret, EGRESS_PROXY_PORT: String(this.EGRESS_PROXY_PORT) },
-        labels: { "vonzio-mode": "egress-proxy" },
+        labels: { "vonzio-mode": "egress-proxy", "vonzio-egress-secret": secretTag },
       });
       await this.deps.containerManager.startContainer(proxyId);
       await this.deps.containerManager.connectNetwork(network, proxyId, [this.EGRESS_PROXY_ALIAS]);
@@ -2088,6 +2101,7 @@ export class Orchestrator extends EventEmitter {
     egressDomains: string[] | undefined,
     env: Record<string, string>,
     vpnActive: boolean,
+    opts?: { tokenTtlSeconds?: number },
   ): Promise<{ networkMode: string } | null> {
     if (!this.deps.config.egressEnforcement) return null;
     if (vpnActive) return null; // VPN already routes/locks egress; compose in v2
@@ -2105,7 +2119,10 @@ export class Orchestrator extends EventEmitter {
       secret: this.deps.config.egressProxySecret!,
       proxyAlias: proxy.alias,
       proxyPort: proxy.port,
-      ttlSeconds: this.EGRESS_TOKEN_TTL_SECONDS,
+      // Per-task (batch) tokens expire to bound replay if leaked; session tokens
+      // are baked into a long-lived container's env with no refresh path, so
+      // they don't expire (a mid-session 407 would otherwise kill the session).
+      ttlSeconds: opts?.tokenTtlSeconds,
     }));
     return { networkMode: proxy.networkName };
   }

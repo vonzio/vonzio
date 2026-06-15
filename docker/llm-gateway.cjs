@@ -529,22 +529,43 @@ function makeUpstreamReq(method, fullUrl, headers, cb) {
       // Defer the dial: open a TCP socket to the proxy, CONNECT, then TLS over
       // the tunnel. We hand the established TLS socket back via `oncreate`.
       createConnection(_opts, oncreate) {
+        const proxyTimeout = Number(process.env.LLM_GATEWAY_PROXY_TIMEOUT || 15000);
         const sock = net.connect({ host: proxy.hostname, port: proxyPort });
-        let buf = "";
+        let settled = false;
+        // oncreate must fire exactly once: a blackholed proxy, a CONNECT error,
+        // and a TLS-handshake failure are all funneled here under the guard.
+        const fail = (err) => { if (settled) return; settled = true; sock.destroy(); oncreate(err instanceof Error ? err : new Error(String(err))); };
+        const onProxyError = (err) => fail(err);
+        sock.setTimeout(proxyTimeout, () => fail(new Error("proxy CONNECT timeout")));
+        sock.once("error", onProxyError);
+        const chunks = [];
         const onData = (chunk) => {
-          buf += chunk.toString("latin1");
-          if (!buf.includes("\r\n\r\n")) return;
+          chunks.push(chunk);
+          const buf = Buffer.concat(chunks);
+          const sep = buf.indexOf("\r\n\r\n");
+          if (sep === -1) return; // CONNECT reply headers not complete yet
           sock.removeListener("data", onData);
-          const status = buf.split("\r\n")[0];
-          if (/ 200 /.test(status)) {
-            const tlsSock = tls.connect({ socket: sock, servername: u.hostname }, () => oncreate(null, tlsSock));
-            tlsSock.once("error", oncreate);
-          } else {
-            sock.destroy();
-            oncreate(new Error("proxy CONNECT failed: " + status.trim()));
+          sock.removeListener("error", onProxyError);
+          sock.setTimeout(0);
+          const status = buf.slice(0, buf.indexOf("\r\n")).toString("latin1");
+          if (!/^HTTP\/1\.[01] 200\b/.test(status)) {
+            return fail(new Error("proxy CONNECT failed: " + status.trim()));
           }
+          // Bytes after the header terminator belong to the TLS stream — push
+          // them back so the TLS socket reads them (avoids a desync if the proxy
+          // coalesces the 200 reply with the first TLS bytes).
+          const remainder = buf.slice(sep + 4);
+          if (remainder.length) sock.unshift(remainder);
+          const tlsSock = tls.connect({ socket: sock, servername: u.hostname });
+          const onTlsErr = (err) => fail(err); // handshake failure → single oncreate
+          tlsSock.once("error", onTlsErr);
+          tlsSock.once("secureConnect", () => {
+            if (settled) { tlsSock.destroy(); return; }
+            settled = true;
+            tlsSock.removeListener("error", onTlsErr); // post-handshake errors go to http
+            oncreate(null, tlsSock);
+          });
         };
-        sock.once("error", oncreate);
         sock.on("data", onData);
         sock.once("connect", () => {
           let h = `CONNECT ${u.hostname}:${port} HTTP/1.1\r\nHost: ${u.hostname}:${port}\r\n`;
@@ -746,8 +767,19 @@ function readAll(stream) {
 // proxy: the upstream IS api.anthropic.com, which expects x-api-key, not Bearer.
 const PASSTHROUGH_RAW = process.env.LLM_GATEWAY_PASSTHROUGH_RAW === "1";
 
+// Hop-by-hop headers (RFC 7230 §6.1) must not be blindly forwarded upstream —
+// a client-controlled Transfer-Encoding/Connection enables request smuggling,
+// and a stray proxy-authorization would leak the proxy token to the provider.
+const HOP_BY_HOP = new Set([
+  "connection", "keep-alive", "proxy-authorization", "proxy-connection",
+  "te", "trailer", "transfer-encoding", "upgrade",
+]);
+
 async function handlePassthrough(req, res) {
-  const headers = { ...req.headers, host: new URL(TARGET).hostname };
+  const headers = { host: new URL(TARGET).hostname };
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (k.toLowerCase() !== "host" && !HOP_BY_HOP.has(k.toLowerCase())) headers[k] = v;
+  }
   if (!PASSTHROUGH_RAW) {
     const apiKey = req.headers["x-api-key"] || "";
     headers.authorization = `Bearer ${apiKey}`;

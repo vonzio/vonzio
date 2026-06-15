@@ -86,8 +86,10 @@ describe("egress-proxy hostMatches", () => {
     expect(proxy.hostMatches("example.com", ["*.example.com"])).toBe(true);
   });
 
-  it("treats '*' as allow-any-host", () => {
-    expect(proxy.hostMatches("anything.io", ["*"])).toBe(true);
+  it("does NOT honor a bare '*' (orchestrator bypasses instead of minting it)", () => {
+    expect(proxy.hostMatches("anything.io", ["*"])).toBe(false);
+    // a real entry alongside a stray '*' still matches on its own merits
+    expect(proxy.hostMatches("api.github.com", ["*", "github.com"])).toBe(true);
   });
 
   it("fails closed on an empty allowlist", () => {

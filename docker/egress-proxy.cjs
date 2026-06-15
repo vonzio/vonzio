@@ -110,15 +110,17 @@ function verifyToken(token, secret, nowSeconds) {
 // Host allowlist matching. An entry allows itself AND its subdomains
 // (`github.com` permits `api.github.com`), matching safe-webhook-fetch's
 // isAllowlisted. A leading "*." is accepted and stripped to the same suffix.
-// "*" allows any hostname.
+// A bare "*" is NOT honored here: the orchestrator treats "*" as a full
+// bypass (agent on a normal network, no proxy), so a "*" token never legitimately
+// reaches us — refusing it keeps a stray "*" claim from silently opening all egress.
 // ---------------------------------------------------------------------------
 
 function hostMatches(host, domains) {
   if (!host) return false;
   const h = host.toLowerCase();
   for (const raw of domains) {
-    if (raw === "*") return true;
     let suffix = String(raw).toLowerCase().trim();
+    if (suffix === "*") continue; // see note above — not an allow-all here
     if (!suffix) continue;
     if (suffix.startsWith("*.")) suffix = suffix.slice(2);
     if (h === suffix) return true;

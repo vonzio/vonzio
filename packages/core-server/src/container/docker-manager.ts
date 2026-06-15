@@ -380,10 +380,24 @@ export class DockerManager implements ContainerManager {
   }
 
   async ensureNetwork(name: string, opts?: { internal?: boolean }): Promise<void> {
+    const wantInternal = opts?.internal ?? false;
+    let info: { Internal?: boolean; EnableIPv6?: boolean } | null = null;
     try {
-      await this.docker.getNetwork(name).inspect();
-      return; // already exists
-    } catch { /* not found — create below */ }
+      info = await this.docker.getNetwork(name).inspect();
+    } catch { info = null; /* not found — create below */ }
+    if (info) {
+      // SECURITY: refuse to (re)use a pre-existing network whose posture is
+      // weaker than required. Silently placing agents on an internet-routable
+      // or IPv6-enabled network while enforcement reports "on" would be a
+      // fail-OPEN bypass — the proxy/token become optional. Fail closed.
+      if (wantInternal && !info.Internal) {
+        throw new Error(`Network "${name}" exists but is not internal; egress enforcement requires it. Remove it (docker network rm ${name}) or point EGRESS_PROXY_NETWORK at a fresh name.`);
+      }
+      if (wantInternal && info.EnableIPv6) {
+        throw new Error(`Network "${name}" has IPv6 enabled, which bypasses IPv4 egress filtering. Recreate it without IPv6 or point EGRESS_PROXY_NETWORK at a fresh name.`);
+      }
+      return;
+    }
     try {
       await this.docker.createNetwork({
         Name: name,
