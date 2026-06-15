@@ -27,7 +27,6 @@ COPY packages/plugin-api/package.json packages/plugin-api/
 COPY packages/plugins/ packages/plugins/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
-COPY packages/widget/package.json packages/widget/
 COPY agent-runner/package.json agent-runner/
 
 RUN npm install

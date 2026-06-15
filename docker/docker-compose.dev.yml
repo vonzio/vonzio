@@ -30,7 +30,6 @@ services:
       # vite.config.ts imports this; without the mount the dev container's
       # vite config loader fails with "Could not resolve ./vite-vonzio-plugins.js".
       - ../packages/dashboard/vite-vonzio-plugins.ts:/app/packages/dashboard/vite-vonzio-plugins.ts
-      - ../packages/widget/src:/app/packages/widget/src
       - ../agent-runner/src:/app/agent-runner/src
       - ../config:/app/config
       - ../tools:/app/tools
