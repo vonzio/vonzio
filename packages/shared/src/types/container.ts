@@ -93,6 +93,11 @@ export interface ContainerManager {
   pauseContainer(id: string): Promise<void>;
   /** Unpause a paused container */
   unpauseContainer(id: string): Promise<void>;
+  /** Verify a user-defined Docker network exists with the expected posture, or
+   *  create it (idempotent). `internal: true` means NO external connectivity —
+   *  the substrate for egress enforcement (feature 0005); a pre-existing
+   *  non-internal network of the same name is rejected (fail-closed). */
+  ensureNetwork(name: string, opts?: { internal?: boolean }): Promise<void>;
   /** Create a named Docker volume */
   createNamedVolume(name: string): Promise<void>;
   /** Remove a named Docker volume */

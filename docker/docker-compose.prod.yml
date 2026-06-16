@@ -76,6 +76,13 @@ services:
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
       - DOCKER_NETWORK=vonzio-network
+      # Egress enforcement (feature 0005). OFF by default; to enable, set
+      # EGRESS_ENFORCEMENT=1 AND start the egress-proxy service via the profile
+      # (COMPOSE_PROFILES=egress) — agents then sit on the internal network and
+      # reach the internet only through that proxy. EGRESS_PROXY_NETWORK must
+      # match the compose network name (default vonzio-egress).
+      - EGRESS_ENFORCEMENT=${EGRESS_ENFORCEMENT:-false}
+      - EGRESS_PROXY_NETWORK=${EGRESS_PROXY_NETWORK:-vonzio-egress}
       - LOG_LEVEL=info
       - PORT=3000
       - HOST=0.0.0.0

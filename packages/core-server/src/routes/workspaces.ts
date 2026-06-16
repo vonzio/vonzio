@@ -18,7 +18,7 @@ export interface WorkspaceRoutesOptions {
   eventLog?: EventLog;
   /** Optional — when present, GET responses are enriched with
    *  `attached_tunnel` for the chat header VPN pill. */
-  orchestrator?: Pick<Orchestrator, "getActiveTunnelByAgentContainer">;
+  orchestrator?: Pick<Orchestrator, "getActiveTunnelByAgentContainer" | "restartWorkspaceContainer">;
 }
 
 export const workspaceRoutes = fp(
@@ -124,6 +124,42 @@ export const workspaceRoutes = fp(
       }
       await workspaceService.delete(request.params.id, { orgId: orgCtxId });
       return { status: "deleted", session_id: request.params.id };
+    });
+
+    server.post<{ Params: { id: string } }>("/v1/workspaces/:id/restart", {
+      schema: {
+        summary: "Restart a workspace's container",
+        description:
+          "Tears down the workspace's running container so the next message recreates a fresh one. " +
+          "Applies config baked at creation time (egress allowlist, network, env) without losing the " +
+          "conversation — the SDK session resumes and persistent workspace files survive via the volume.",
+        tags: ["Workspaces"],
+        params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+      },
+    }, async (request, reply) => {
+      const session = workspaceService.get(request.params.id);
+      const orgCtxId = request.orgContext?.org_id;
+      const isAdmin = request.user!.role === "admin";
+      let allowed: boolean;
+      if (!session) allowed = false;
+      else if (isAdmin) allowed = true;
+      else if (orgCtxId) allowed = (session.org_id ?? null) === orgCtxId;
+      else allowed = session.user_id === request.user!.id;
+      if (!session || !allowed) {
+        return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Session not found"));
+      }
+      if (!orchestrator?.restartWorkspaceContainer) {
+        return reply.code(503).send(errorResponse(ErrorCodes.INTERNAL_ERROR, "Restart unavailable"));
+      }
+      try {
+        await orchestrator.restartWorkspaceContainer(request.params.id);
+      } catch (err) {
+        if (err && typeof err === "object" && (err as { code?: string }).code === "WORKSPACE_BUSY") {
+          return reply.code(409).send(errorResponse(ErrorCodes.CONFLICT, (err as Error).message));
+        }
+        throw err;
+      }
+      return { status: "restarting", session_id: request.params.id };
     });
 
     server.patch<{

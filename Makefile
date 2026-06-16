@@ -64,8 +64,8 @@ dev-oss: ## Same as `make dev` but with REGISTRATION_ENABLED=false (OSS single-u
 better-auth-migrate: ## Create Better Auth tables on a fresh DB (run once after `docker run vonzio-pg`)
 	npx @better-auth/cli@latest migrate -y
 
-docker-dev-oss: ## Same as `make docker-dev` but with REGISTRATION_ENABLED=false (OSS single-user mode)
-	REGISTRATION_ENABLED=false $(MAKE) docker-dev
+docker-dev-oss: ## Like `make docker-dev` but OSS single-user mode + egress enforcement ON (dogfood the secure path; builds the egress-proxy service)
+	REGISTRATION_ENABLED=false EGRESS_ENFORCEMENT=1 COMPOSE_PROFILES=egress $(MAKE) docker-dev
 
 plugin: ## Plugin policy CLI. Usage: make plugin ARGS="approve @scope/plugin-x --reason '...'" | "list" | "diff @scope/plugin-x"
 	npx tsx packages/core-server/src/plugins/cli.ts $(ARGS)

@@ -300,6 +300,9 @@ export async function buildServer(deps: ServerDeps) {
       previewUrlTemplate: config.PREVIEW_URL_TEMPLATE,
       internalServerUrl: config.INTERNAL_SERVER_URL,
       encryptionKey: config.ENCRYPTION_KEY,
+      egressEnforcement: config.EGRESS_ENFORCEMENT,
+      egressProxyNetwork: config.EGRESS_PROXY_NETWORK,
+      egressProxySecret: config.EGRESS_PROXY_SECRET ?? config.ENCRYPTION_KEY,
     },
   });
 
@@ -385,6 +388,10 @@ export async function buildServer(deps: ServerDeps) {
       maxTurns: config.MAX_TURNS,
       ollamaEnabled: config.OLLAMA_ENABLED,
       maxDocumentMb: config.MAX_DOCUMENT_MB,
+      // Whether agent egress allowlists are enforced at the network layer
+      // (feature 0005). Drives the Network panel banner: "enforced" vs the
+      // advisory note when off.
+      egressEnforcement: config.EGRESS_ENFORCEMENT,
     };
   });
 

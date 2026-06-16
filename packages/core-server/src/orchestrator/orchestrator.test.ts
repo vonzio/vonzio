@@ -96,6 +96,7 @@ function createMockManager(): ContainerManager & {
     async readFile() { return Buffer.from(""); },
     async pauseContainer() {},
     async unpauseContainer() {},
+    async ensureNetwork() {},
     async createNamedVolume() {},
     async removeNamedVolume() {},
     async listImages() { return []; },

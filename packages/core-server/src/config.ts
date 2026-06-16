@@ -69,6 +69,23 @@ const configSchema = z.object({
   DOCKER_NETWORK: z.string().optional(),
   AGENT_IMAGE: z.string().default("vonzio-agent:latest"),
 
+  // Egress enforcement (feature 0005). When on, agent containers run on an
+  // internal (no-direct-internet) docker network and reach the outside world
+  // ONLY through a shared egress proxy that permits the model endpoint + the
+  // profile/task egress allowlist; everything else is refused at the network
+  // layer. Default OFF: OSS self-hosters keep today's advisory behavior so an
+  // upgrade doesn't suddenly cut agents' internet; SaaS sets EGRESS_ENFORCEMENT=1.
+  EGRESS_ENFORCEMENT: z.string().transform((v) => {
+    const lower = v.trim().toLowerCase();
+    return !["false", "0", "no", "off", ""].includes(lower);
+  }).default("false"),
+  EGRESS_PROXY_IMAGE: z.string().default("vonzio-egress-proxy:latest"),
+  // The internal docker network agents are placed on under enforcement.
+  EGRESS_PROXY_NETWORK: z.string().default("vonzio-egress"),
+  // HMAC secret the proxy uses to verify per-agent allowlist tokens. Falls back
+  // to ENCRYPTION_KEY when unset so there's always a strong secret.
+  EGRESS_PROXY_SECRET: z.string().optional(),
+
   // Plugins
   // Comma-separated list of plugin packages to load at boot, e.g.
   // "@vonzio/plugin-telegram,@vonzio/plugin-slack@^0.1". Loader strips
