@@ -262,6 +262,14 @@ export class Orchestrator extends EventEmitter {
   async restartWorkspaceContainer(sessionId: string): Promise<void> {
     const session = this.deps.sessionRegistry.get(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
+    // Refuse while a turn is running on this session — removing the container
+    // mid-exec would kill the live turn, and racing a concurrent dispatch could
+    // tear down a container another task just reused. Caller maps this to 409.
+    for (const t of this.activeTasks.values()) {
+      if (t.sessionId === sessionId) {
+        throw Object.assign(new Error("Workspace has an in-flight task; try again when it finishes"), { code: "WORKSPACE_BUSY" });
+      }
+    }
     if (!session.container_id) return; // nothing running
     // Remove the container but DO NOT clear container_id — leaving it set makes
     // the next message take dispatchSession's dead-container RECOVERY path

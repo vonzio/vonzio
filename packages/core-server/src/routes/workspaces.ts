@@ -151,7 +151,14 @@ export const workspaceRoutes = fp(
       if (!orchestrator?.restartWorkspaceContainer) {
         return reply.code(503).send(errorResponse(ErrorCodes.INTERNAL_ERROR, "Restart unavailable"));
       }
-      await orchestrator.restartWorkspaceContainer(request.params.id);
+      try {
+        await orchestrator.restartWorkspaceContainer(request.params.id);
+      } catch (err) {
+        if (err && typeof err === "object" && (err as { code?: string }).code === "WORKSPACE_BUSY") {
+          return reply.code(409).send(errorResponse(ErrorCodes.CONFLICT, (err as Error).message));
+        }
+        throw err;
+      }
       return { status: "restarting", session_id: request.params.id };
     });
 

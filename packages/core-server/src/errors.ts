@@ -12,6 +12,7 @@ export const ErrorCodes = {
   // Resources
   NOT_FOUND: "NOT_FOUND",
   SESSION_NOT_FOUND: "SESSION_NOT_FOUND",
+  CONFLICT: "CONFLICT",
 
   // Rate limiting / capacity
   RATE_LIMITED: "RATE_LIMITED",
