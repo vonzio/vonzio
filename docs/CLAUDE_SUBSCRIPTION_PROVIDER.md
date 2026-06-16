@@ -104,56 +104,69 @@ the generic `resolved_api_key` fallback:
 }
 ```
 
-## Server-side seams (bearer instead of x-api-key)
+## Server-side seams (Bearer, NOT x-api-key)
 
-Three places call Anthropic directly and assume an `x-api-key` API key. Spike
-findings (below) indicate oat tokens are sent via **`x-api-key` plus the beta
-header** — NOT `Authorization: Bearer` (which is reportedly rejected). So each
-needs a `claude_subscription` variant that sends:
+Three places call Anthropic directly and assume an `x-api-key` API key. The
+live spike (2026-06-16, see "Spike findings") settled the open question: oat
+tokens authenticate via **`Authorization: Bearer`** — `x-api-key` is rejected
+401 `invalid x-api-key`. The `oauth-2025-04-20` beta header is **NOT required**
+(Bearer succeeded with and without it). So each seam needs a
+`claude_subscription` variant that sends:
 
 ```
-x-api-key: <oat01 token>
+Authorization: Bearer <oat01 token>
 anthropic-version: 2023-06-01
-anthropic-beta: oauth-2025-04-20      # ⚠ confirm against a live token before shipping
+# anthropic-beta: oauth-2025-04-20   # optional — works with or without; the
+#                                    # Agent SDK adds it in-container anyway
 ```
 
 A small shared helper (`anthropicAuthHeaders(provider, secret)`) returning the
-right header set keeps these three in sync.
+right header set keeps these three in sync (Bearer for `claude_subscription`,
+`x-api-key` for a normal `api03` key).
 
-1. `services/key-validator.ts` — `validateAnthropicKey`. **Validate via a
-   1-token `POST /v1/messages` ping, not `/v1/models`** (the models endpoint may
-   reject inference-scoped oat tokens). Treat 401 = bad/expired token.
+1. `services/key-validator.ts` — `validateAnthropicKey`. Validate via a
+   1-token `POST /v1/messages` ping (confirmed 200 with Bearer). Treat 401 =
+   bad/expired token.
 2. `services/model-list-service.ts` — `listForApiKey` (the `else` Anthropic
-   branch, ~line 139). **Return a hardcoded model list for this provider**
-   (sonnet/opus/haiku) rather than fetching — see uncertain item 1.
+   branch, ~line 139). **`/v1/models` works with Bearer** (returns the full
+   live catalogue) — so we can fetch the real list, no hardcoded fallback
+   needed. Just swap the auth header for this provider.
 3. `orchestrator/judge-server.ts` — the server-side goal-completion judge.
 
 ## Spike findings (2026-06-16)
 
-Researched from docs + community sources; **no live oat token was tested** (we
-won't paste a personal subscription token into the remote build env). Split by
-confidence:
+**Now verified against a live oat token** via `scripts/verify-oauth-token.sh`
+(run on a trusted local machine; token never left the user's shell). Results:
 
-**Confirmed (docs/SDK):**
+**Confirmed by live probe (the three formerly-open questions):**
+1. **Auth header = `Authorization: Bearer <token>`.** `x-api-key` is rejected
+   `401 invalid x-api-key` on every endpoint. This is the OPPOSITE of what the
+   community sources suggested — the doc's earlier x-api-key plan was wrong.
+2. **`/v1/models` works with Bearer** → returns the full live catalogue
+   (fable-5, opus, sonnet, haiku, …). No hardcoded fallback needed; we can
+   fetch the real list, just with the Bearer header.
+3. **Beta header `oauth-2025-04-20` is optional** for our hand-rolled calls —
+   `POST /v1/messages` returned 200 with Bearer both with AND without it. (The
+   in-container SDK still adds it itself; harmless to include or omit server-side.)
+
+Raw probe results (status codes):
+
+```
+/v1/messages  x-api-key + beta   -> 401 invalid x-api-key
+/v1/messages  x-api-key  no-beta -> 401 invalid x-api-key
+/v1/messages  Bearer    + beta   -> 200  (assistant reply)
+/v1/messages  Bearer     no-beta -> 200  (assistant reply)
+/v1/models    x-api-key + beta   -> 401 invalid x-api-key
+/v1/models    Bearer    + beta   -> 200  (full model catalogue)
+```
+
+**Confirmed earlier (docs/SDK):**
 - Container path needs no header work — the SDK auto-injects auth + the
   `oauth-2025-04-20` beta header when `CLAUDE_CODE_OAUTH_TOKEN` is set (v2.0.65+).
 - `claude setup-token` → token lives ~1 year, **no auto-refresh** (matches the
   Option-B "re-paste on expiry" plan). Docs:
   https://code.claude.com/docs/en/authentication ("Generate a long-lived token").
 - No special system prompt or client-id header is required by the API itself.
-
-**Needs a live oat token to confirm (do this first thing in impl):**
-1. **Auth header for our own server-side calls.** Community sources say oat
-   tokens are **rejected on `Authorization: Bearer`** and must use `x-api-key` +
-   the beta header. Self-contradictory across sources → verify directly.
-2. **`/v1/models` acceptance.** Likely rejects inference-scoped oat tokens →
-   plan is a hardcoded model list regardless; confirm whether a fetch is even an
-   option.
-3. **Exact beta header value** (`oauth-2025-04-20`) for hand-rolled calls.
-
-How to verify safely when ready: on a trusted local machine (not this env), run
-`claude setup-token`, then `curl` `/v1/messages` and `/v1/models` with both
-`x-api-key` and `Authorization: Bearer` to see which the API accepts. ~10 min.
 
 ## Cross-cutting concerns
 
@@ -177,9 +190,10 @@ How to verify safely when ready: on a trusted local machine (not this env), run
       `PROVIDER_CATALOG` entry above.
 - [ ] `packages/core-server/src/orchestrator/orchestrator.ts` — new env branch
       setting `CLAUDE_CODE_OAUTH_TOKEN`.
-- [ ] `packages/core-server/src/services/key-validator.ts` — bearer variant.
-- [ ] `packages/core-server/src/services/model-list-service.ts` — bearer
-      variant + hardcoded-model fallback if needed.
+- [ ] `packages/core-server/src/services/key-validator.ts` — Bearer variant
+      (1-token `POST /v1/messages` ping).
+- [ ] `packages/core-server/src/services/model-list-service.ts` — Bearer
+      variant; `/v1/models` works, so a normal fetch (no hardcoded fallback).
 - [ ] `packages/core-server/src/orchestrator/judge-server.ts` — bearer variant.
 - [ ] `packages/core-server/src/orchestrator/egress.*` — allow `api.anthropic.com`.
 - [ ] `packages/dashboard/src/pages/settings/sections/AnthropicKey.tsx` — render
