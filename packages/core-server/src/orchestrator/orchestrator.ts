@@ -252,6 +252,26 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Tear down a workspace's container so the NEXT message recreates a fresh one.
+   * Used to apply config that's baked at container-creation time (egress
+   * allowlist, network, env) to a running session without losing the chat — the
+   * SDK session id persists, so the conversation resumes on the new container
+   * (workspace files survive too for persistent sessions, via the volume).
+   * No-op-safe if the session has no live container.
+   */
+  async restartWorkspaceContainer(sessionId: string): Promise<void> {
+    const session = this.deps.sessionRegistry.get(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    if (session.container_id) {
+      await this.safeRemoveContainer(session.container_id);
+    }
+    // "resumable" clears container_id (memory + DB); dispatchSession then
+    // creates a fresh container (re-running applyEgress) on the next task.
+    await this.deps.sessionRegistry.setStatus(sessionId, "resumable");
+    this.log.info({ sessionId }, "Workspace container restarted (will recreate on next message)");
+  }
+
+  /**
    * Bring up the VPN sidecar for (userId, profileId, workspaceId) eagerly,
    * before any agent dispatch. Used by the composer's tunnel picker so
    * the first message doesn't pay the cold-start handshake.
