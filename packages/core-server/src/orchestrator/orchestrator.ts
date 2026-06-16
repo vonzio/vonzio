@@ -20,6 +20,7 @@ import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
 import { decideGoalNext } from "./goal-loop.js";
+import { modelHostsFromEnv, planEgress, buildProxyEnv, routeModelThroughGateway } from "./egress.js";
 import { judgeServerSide } from "./judge-server.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
@@ -112,6 +113,11 @@ export interface OrchestratorDeps {
     internalServerUrl?: string;
     /** Used to decrypt VPN tunnel configs before passing to the sidecar. */
     encryptionKey?: string;
+    /** Egress enforcement (feature 0005). When true, non-VPN agents run on an
+     *  internal network and reach the internet only through the egress proxy. */
+    egressEnforcement?: boolean;
+    egressProxyNetwork?: string;
+    egressProxySecret?: string;
   };
 }
 
@@ -169,6 +175,14 @@ export class Orchestrator extends EventEmitter {
   // wait this long before actually removing the sidecar — back-to-back
   // tasks reuse the same tunnel without re-handshaking.
   private sidecarTeardownTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Egress enforcement (feature 0005). The proxy is a long-lived compose
+  // service (profile: egress) — the orchestrator only verifies it and points
+  // agents at it; it never creates/owns the container.
+  private readonly EGRESS_PROXY_PORT = 8080;
+  private readonly EGRESS_PROXY_ALIAS = "egress-proxy";
+  // Token lifetime — generous (tasks can run long); bounds replay if a token
+  // leaks from a container env.
+  private readonly EGRESS_TOKEN_TTL_SECONDS = 24 * 60 * 60;
   private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
@@ -235,6 +249,38 @@ export class Orchestrator extends EventEmitter {
     const entry = this.sidecarsByTunnel.get(pair.tunnelId);
     if (!entry) return null;
     return { id: pair.tunnelId, name: entry.name };
+  }
+
+  /**
+   * Tear down a workspace's container so the NEXT message recreates a fresh one.
+   * Used to apply config that's baked at container-creation time (egress
+   * allowlist, network, env) to a running session without losing the chat — the
+   * SDK session id persists, so the conversation resumes on the new container
+   * (workspace files survive too for persistent sessions, via the volume).
+   * No-op-safe if the session has no live container.
+   */
+  async restartWorkspaceContainer(sessionId: string): Promise<void> {
+    const session = this.deps.sessionRegistry.get(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    // Refuse while a turn is running on this session — removing the container
+    // mid-exec would kill the live turn, and racing a concurrent dispatch could
+    // tear down a container another task just reused. Caller maps this to 409.
+    for (const t of this.activeTasks.values()) {
+      if (t.sessionId === sessionId) {
+        throw Object.assign(new Error("Workspace has an in-flight task; try again when it finishes"), { code: "WORKSPACE_BUSY" });
+      }
+    }
+    if (!session.container_id) return; // nothing running
+    // Remove the container but DO NOT clear container_id — leaving it set makes
+    // the next message take dispatchSession's dead-container RECOVERY path
+    // (reuse the persistent volume + resume the SDK session, isResume=true, so
+    // the conversation continues) and re-run applyEgress. Clearing it would
+    // route to the create-from-scratch path (needsInit=true → fresh SDK session
+    // → lost context). This mirrors a natural container crash, which already
+    // recovers via the same path. (Non-persistent sessions have no volume, so
+    // they necessarily start fresh — the SDK state lived only in the container.)
+    await this.safeRemoveContainer(session.container_id);
+    this.log.info({ sessionId, containerId: session.container_id }, "Workspace container removed for restart (recreates + resumes on next message)");
   }
 
   /**
@@ -503,6 +549,7 @@ export class Orchestrator extends EventEmitter {
       const profile = prefetchedProfile ?? await this.fetchProfile(task);
       const env = await this.buildEnvFromProfile(profile);
       const vpn = await this.ensureVpnSidecar(profile);
+      const egress = await this.applyEgress(task.egress_domains, env, !!vpn, { tokenTtlSeconds: this.EGRESS_TOKEN_TTL_SECONDS });
 
       containerId = await this.deps.containerManager.createContainer({
         image: profile.container_image,
@@ -511,7 +558,7 @@ export class Orchestrator extends EventEmitter {
         binds,
         cpus: this.deps.config.containerCpuBatch,
         memory: this.deps.config.containerMemoryBatch,
-        networkMode: vpn?.networkMode,
+        networkMode: egress?.networkMode ?? vpn?.networkMode,
         labels: {
           "vonzio-mode": "batch",
           "vonzio-task-id": task.id,
@@ -562,8 +609,11 @@ export class Orchestrator extends EventEmitter {
     const hasTunnel = profile.user_id && provider
       ? !!(await provider.resolveActiveTunnel(profile.user_id, profile.id))
       : false;
-    if (profile.container_image || profile.setup_commands?.length || hasTunnel) {
-      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel }, "Pooled incompatible, falling back to batch");
+    // Pre-warmed pool containers are profile-agnostic, so they can't carry a
+    // per-profile egress token / sit on the internal network. Under enforcement,
+    // fall back to batch (a dedicated container wired to the proxy).
+    if (profile.container_image || profile.setup_commands?.length || hasTunnel || this.deps.config.egressEnforcement) {
+      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel, egress: this.deps.config.egressEnforcement }, "Pooled incompatible, falling back to batch");
       return this.dispatchBatch(task, profile);
     }
 
@@ -952,6 +1002,10 @@ export class Orchestrator extends EventEmitter {
     }
 
     const vpn = await this.ensureVpnSidecar(profile, sessionId);
+    // Session containers are reused across a session's tasks, so enforcement
+    // uses the PROFILE default allowlist (baked into env at create time) — not
+    // per-task egress, which can't retro-apply to a long-lived container.
+    const egress = await this.applyEgress(profile.default_egress_domains, env, !!vpn);
     const containerId = await this.deps.containerManager.createContainer({
       image: profile.container_image,
       registryAuth: this.buildRegistryAuth(profile),
@@ -959,7 +1013,7 @@ export class Orchestrator extends EventEmitter {
       binds: binds.length > 0 ? binds : undefined,
       cpus: this.deps.config.containerCpuSession,
       memory: this.deps.config.containerMemorySession,
-      networkMode: vpn?.networkMode,
+      networkMode: egress?.networkMode ?? vpn?.networkMode,
       labels: {
         "vonzio-mode": "session",
         "vonzio-session-id": sessionId,
@@ -1992,6 +2046,75 @@ export class Orchestrator extends EventEmitter {
     } catch {
       // Container may already be gone
     }
+  }
+
+  /**
+   * Verify the always-on egress proxy is available and return the info needed
+   * to point an agent at it. Null when enforcement is off. The proxy is a
+   * long-lived compose service (profile: egress) — not created here — so it
+   * survives server restarts/crashes and never strands a running agent. Throws
+   * (fail-closed) when enforcement is ON but the proxy service isn't running:
+   * we must NOT silently place an agent on a network with no way out (or worse,
+   * direct internet).
+   */
+  private async ensureEgressProxy(): Promise<{ networkName: string; alias: string; port: number } | null> {
+    const cfg = this.deps.config;
+    if (!cfg.egressEnforcement) return null;
+    const network = cfg.egressProxyNetwork || "vonzio-egress";
+
+    const running = (await this.deps.containerManager.listManagedContainers())
+      .some((c) => c.labels["vonzio-mode"] === "egress-proxy" && c.status === "running");
+    if (!running) {
+      throw new Error(
+        "EGRESS_ENFORCEMENT is on but the egress-proxy service is not running. " +
+        "Start it with the 'egress' compose profile (e.g. COMPOSE_PROFILES=egress).",
+      );
+    }
+    // Defense against a pre-existing non-internal network of the same name
+    // (would be a fail-OPEN bypass). ensureNetwork throws on a posture mismatch;
+    // the network already exists (the proxy is attached to it), so this verifies
+    // rather than creates.
+    await this.deps.containerManager.ensureNetwork(network, { internal: true });
+    return { networkName: network, alias: this.EGRESS_PROXY_ALIAS, port: this.EGRESS_PROXY_PORT };
+  }
+
+  /**
+   * Apply egress enforcement to an agent about to be created: mutate `env` to
+   * route all egress through the proxy (and force the native-Anthropic model
+   * path through the in-container gateway, since the Node SDK ignores proxy
+   * env) and return the internal networkMode to attach it to. Returns null when
+   * enforcement is off, the profile opted out (`["*"]`), or a VPN already
+   * constrains egress (v1 leaves the VPN path unchanged). `egressDomains` is the
+   * resolved allowlist (per-task for batch; profile default for session).
+   */
+  private async applyEgress(
+    egressDomains: string[] | undefined,
+    env: Record<string, string>,
+    vpnActive: boolean,
+    opts?: { tokenTtlSeconds?: number },
+  ): Promise<{ networkMode: string } | null> {
+    if (!this.deps.config.egressEnforcement) return null;
+    if (vpnActive) return null; // VPN already routes/locks egress; compose in v2
+    if ((egressDomains ?? []).includes("*")) return null; // explicit opt-out
+
+    // Force the native-Anthropic model call through the proxy-aware gateway
+    // BEFORE deriving model hosts, so api.anthropic.com ends up in the allowlist.
+    routeModelThroughGateway(env);
+    const plan = planEgress(egressDomains, modelHostsFromEnv(env));
+
+    const proxy = await this.ensureEgressProxy();
+    if (!proxy) throw new Error("egress enforcement enabled but proxy unavailable");
+    Object.assign(env, buildProxyEnv({
+      domains: plan.domains,
+      secret: this.deps.config.egressProxySecret!,
+      proxyAlias: proxy.alias,
+      proxyPort: proxy.port,
+      // Per-task (batch) tokens expire to bound replay if leaked; session tokens
+      // are baked into a long-lived container's env with no refresh path, so
+      // they don't expire (a mid-session 407 would otherwise kill the session).
+      ttlSeconds: opts?.tokenTtlSeconds,
+    }));
+    return { networkMode: proxy.networkName };
   }
 
   /**

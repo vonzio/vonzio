@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Shield, Copy, Check } from "lucide-react";
+import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Shield, Copy, Check, RotateCw } from "lucide-react";
 import { Pill } from "@/brand/components.js";
-import { fetchProfileModels, type ProfileModel } from "@/api/client.js";
+import { fetchProfileModels, type ProfileModel, restartWorkspace } from "@/api/client.js";
 import { MODEL_DISPLAY_FALLBACK } from "@/lib/model-display.js";
 import { getWorkspaceHeaderSlots } from "@/registry/index.js";
 import { useEntitlements } from "@vonzio/dashboard-registry";
@@ -87,6 +87,8 @@ export function WorkspaceHeader({
   const [editValue, setEditValue] = useState(name ?? "");
   const [models, setModels] = useState<ProfileModel[]>([]);
   const [convoCopied, setConvoCopied] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [confirmRestart, setConfirmRestart] = useState(false);
 
   // Load profile models so we can render a friendly display name in the readout.
   useEffect(() => {
@@ -323,6 +325,32 @@ export function WorkspaceHeader({
           <Download className="w-3 h-3" />
           <span className="hidden sm:inline">Export</span>
         </button>
+
+        {sessionId && (
+          <button
+            type="button"
+            onClick={async () => {
+              if (!confirmRestart) {
+                setConfirmRestart(true);
+                setTimeout(() => setConfirmRestart(false), 3000);
+                return;
+              }
+              setConfirmRestart(false);
+              setRestarting(true);
+              try {
+                await restartWorkspace(sessionId);
+              } catch { /* surfaced as a failed next-message if it didn't take */ }
+              setTimeout(() => setRestarting(false), 1500);
+            }}
+            className="vz-action-btn"
+            disabled={restarting}
+            style={{ width: "auto", padding: "0 8px", gap: 5, fontSize: 12, color: confirmRestart ? "var(--vz-sodium)" : undefined }}
+            title="Restart the container — applies network/egress changes; the conversation is kept and resumes on your next message"
+          >
+            <RotateCw className={restarting ? "w-3 h-3 animate-spin" : "w-3 h-3"} />
+            <span className="hidden sm:inline">{restarting ? "Restarting…" : confirmRestart ? "Confirm?" : "Restart"}</span>
+          </button>
+        )}
 
         <button
           type="button"

@@ -1,0 +1,13 @@
+# Egress proxy (feature 0005) — the network enforcement point agents egress
+# through. Tiny: just Node + the standalone proxy script (no deps, no build).
+FROM node:22-alpine
+
+# Non-root: the proxy needs no privileges (no NET_ADMIN, no raw sockets).
+USER node
+WORKDIR /app
+COPY docker/egress-proxy.cjs /app/egress-proxy.cjs
+
+# EGRESS_PROXY_SECRET is injected at runtime by the orchestrator.
+ENV EGRESS_PROXY_PORT=8080
+EXPOSE 8080
+CMD ["node", "/app/egress-proxy.cjs"]

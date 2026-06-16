@@ -168,6 +168,13 @@ export function deleteWorkspace(id: string): Promise<{ status: string }> {
   return request(`/workspaces/${id}`, { method: "DELETE" });
 }
 
+/** Tear down the workspace's container; the next message recreates a fresh one
+ *  (applies creation-time config like the egress allowlist) without losing the
+ *  conversation. */
+export function restartWorkspace(id: string): Promise<{ status: string; session_id: string }> {
+  return request(`/workspaces/${id}/restart`, { method: "POST" });
+}
+
 export function updateWorkspace(
   id: string,
   fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; api_key_id_override?: string | null },

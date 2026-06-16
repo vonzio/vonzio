@@ -58,3 +58,13 @@ jobs:
       # Dockerfile.server declares this ARG, so it's scoped to this job.
       build_args: VONZIO_VERSION=${{ inputs.version }}
     secrets: inherit
+
+  egress-proxy:
+    # The egress enforcement point (feature 0005). Tiny, independent image the
+    # orchestrator launches dynamically when EGRESS_ENFORCEMENT is on.
+    uses: ./.github/workflows/_publish-one-image.yml
+    with:
+      image: egress-proxy
+      dockerfile: docker/Dockerfile.egress-proxy
+      version: ${{ inputs.version }}
+    secrets: inherit
