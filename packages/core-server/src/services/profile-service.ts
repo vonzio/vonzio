@@ -196,8 +196,12 @@ export class ProfileService {
     const existing = await this.db.select().from(schema.profiles).where(eq(schema.profiles.id, id));
     if (existing.length === 0) return null;
 
-    // Validate that the profile's owner can access the new key
-    if (input.api_key_id !== undefined) {
+    // Validate key access only when the key actually CHANGES. Re-validating an
+    // unchanged key broke editing any field (e.g. egress) on profiles whose key
+    // is grandfathered/backfilled (e.g. an org_system_backfill key the user
+    // doesn't directly "own") — an unrelated edit would 500. The key was valid
+    // when set; only a change needs re-checking.
+    if (input.api_key_id !== undefined && (input.api_key_id || null) !== (existing[0].api_key_id ?? null)) {
       await this.validateApiKeyAccess(input.api_key_id || null, existing[0].user_id, userRole);
     }
 
