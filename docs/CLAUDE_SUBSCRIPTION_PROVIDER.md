@@ -1,6 +1,7 @@
 # Claude subscription provider (BYO Claude Code OAuth token)
 
 Status: **Design — not yet implemented.** No code changes have been made.
+Updated 2026-06-16 with spike findings (see "Spike findings" below).
 
 ## Goal
 
@@ -62,7 +63,7 @@ text with these steps (and links to Anthropic's auth docs):
   fieldLabel: "Claude OAuth token",
   placeholder: "sk-ant-oat01-…",
   defaultKeyName: "My Claude subscription",
-  consoleUrl: "https://docs.claude.com/en/docs/claude-code/setup-token", // verify exact URL during impl
+  consoleUrl: "https://code.claude.com/docs/en/authentication", // "Generate a long-lived token" section
   keyPrefix: "sk-ant-oat01-",
   supportsBaseUrl: false,
 }
@@ -86,7 +87,9 @@ and `profiles` derives from this array, so the column accepts it automatically).
 
 The Claude Agent SDK in the agent container authenticates with a subscription
 token when `CLAUDE_CODE_OAUTH_TOKEN` is set; it then talks to the real
-`api.anthropic.com` with `Authorization: Bearer …` and the OAuth beta header.
+`api.anthropic.com`. **The SDK / Claude Code (v2.0.65+) auto-injects the
+`anthropic-beta: oauth-2025-04-20` header and the correct auth header itself** —
+so the container path needs *zero* header work from us; we only set the env var.
 We do **not** route this provider through the in-container `llm-gateway` (unlike
 openai/ollama) — it speaks native Anthropic.
 
@@ -103,35 +106,54 @@ the generic `resolved_api_key` fallback:
 
 ## Server-side seams (bearer instead of x-api-key)
 
-Three places call Anthropic directly and assume an `x-api-key` API key. Each
+Three places call Anthropic directly and assume an `x-api-key` API key. Spike
+findings (below) indicate oat tokens are sent via **`x-api-key` plus the beta
+header** — NOT `Authorization: Bearer` (which is reportedly rejected). So each
 needs a `claude_subscription` variant that sends:
 
 ```
-Authorization: Bearer <oat token>
+x-api-key: <oat01 token>
 anthropic-version: 2023-06-01
-anthropic-beta: oauth-2025-04-20      # exact beta value to confirm in spike
+anthropic-beta: oauth-2025-04-20      # ⚠ confirm against a live token before shipping
 ```
 
-(omit `x-api-key` entirely when using bearer)
+A small shared helper (`anthropicAuthHeaders(provider, secret)`) returning the
+right header set keeps these three in sync.
 
-1. `services/key-validator.ts` — `validateAnthropicKey`. Branch on the new
-   provider; hit a lightweight endpoint to confirm the token works.
+1. `services/key-validator.ts` — `validateAnthropicKey`. **Validate via a
+   1-token `POST /v1/messages` ping, not `/v1/models`** (the models endpoint may
+   reject inference-scoped oat tokens). Treat 401 = bad/expired token.
 2. `services/model-list-service.ts` — `listForApiKey` (the `else` Anthropic
-   branch, ~line 139).
+   branch, ~line 139). **Return a hardcoded model list for this provider**
+   (sonnet/opus/haiku) rather than fetching — see uncertain item 1.
 3. `orchestrator/judge-server.ts` — the server-side goal-completion judge.
 
-A small shared helper (`anthropicAuthHeaders(provider, secret)`) returning the
-right header set would keep these three in sync.
+## Spike findings (2026-06-16)
 
-## Known-uncertain items (spike before/during impl)
+Researched from docs + community sources; **no live oat token was tested** (we
+won't paste a personal subscription token into the remote build env). Split by
+confidence:
 
-1. **`/v1/models` with an oat token may 403** (inference-scoped). If so,
-   `model-list-service` returns a **hardcoded** model list for this provider
-   (sonnet/opus/haiku family) rather than fetching. Confirm with a one-off call.
-2. **Exact beta header value** (`anthropic-beta: oauth-…`) — confirm against a
-   live `setup-token` token.
-3. **Validation endpoint** — if `/v1/models` rejects oat tokens, validate with a
-   tiny `/v1/messages` ping (1 token) instead, or accept-on-prefix + lazy-verify.
+**Confirmed (docs/SDK):**
+- Container path needs no header work — the SDK auto-injects auth + the
+  `oauth-2025-04-20` beta header when `CLAUDE_CODE_OAUTH_TOKEN` is set (v2.0.65+).
+- `claude setup-token` → token lives ~1 year, **no auto-refresh** (matches the
+  Option-B "re-paste on expiry" plan). Docs:
+  https://code.claude.com/docs/en/authentication ("Generate a long-lived token").
+- No special system prompt or client-id header is required by the API itself.
+
+**Needs a live oat token to confirm (do this first thing in impl):**
+1. **Auth header for our own server-side calls.** Community sources say oat
+   tokens are **rejected on `Authorization: Bearer`** and must use `x-api-key` +
+   the beta header. Self-contradictory across sources → verify directly.
+2. **`/v1/models` acceptance.** Likely rejects inference-scoped oat tokens →
+   plan is a hardcoded model list regardless; confirm whether a fetch is even an
+   option.
+3. **Exact beta header value** (`oauth-2025-04-20`) for hand-rolled calls.
+
+How to verify safely when ready: on a trusted local machine (not this env), run
+`claude setup-token`, then `curl` `/v1/messages` and `/v1/models` with both
+`x-api-key` and `Authorization: Bearer` to see which the API accepts. ~10 min.
 
 ## Cross-cutting concerns
 
@@ -163,8 +185,11 @@ right header set would keep these three in sync.
 - [ ] `packages/dashboard/src/pages/settings/sections/AnthropicKey.tsx` — render
       the mint-token hint + paste field for the new provider.
 - [ ] `packages/dashboard/src/pages/Onboarding.tsx` /
-      `components/onboarding/AddFirstApiKey.tsx` — provider appears via catalog;
-      verify hint copy renders.
+      `components/onboarding/AddFirstApiKey.tsx` — **decision: surface this
+      provider on the onboarding selector page too** (first-run users can pick
+      "Claude subscription (Pro/Max)" directly). Provider appears via the
+      catalog; verify the mint-token hint copy renders in the wizard, and that
+      step 2 (default-model pick) works with the hardcoded model list.
 - [ ] Error mapping for 401 (expired) / 429 (subscription cap) on this provider.
 - [ ] Tests: provider resolution, env injection, validator, model-list fallback.
 
