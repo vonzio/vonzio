@@ -261,7 +261,13 @@ export function EditAgent() {
       const body: Record<string, unknown> = {
         name, slug: slug.trim() || undefined,
         api_key_id: apiKeyId || null, model: profileModel || undefined, effort: effort || undefined,
-        default_tools: tools, default_egress_domains: allowAllEgress ? ["*"] : resolvedEgressDomains(),
+        // When "Allow all egress" is on, keep the entered domains alongside "*"
+        // (which still means bypass) so unchecking later restores them instead
+        // of silently losing them across a save/reload.
+        default_tools: tools,
+        default_egress_domains: allowAllEgress
+          ? [...new Set(["*", ...resolvedEgressDomains()])]
+          : resolvedEgressDomains(),
         claude_md: claudeMd.trim() || "", mcp_servers: mcpServers,
         agent_ids: agentIds, skill_ids: skillIds, git_provider_ids: gitProviderIds,
         container_image: containerImage || undefined,
@@ -644,8 +650,8 @@ export function EditAgent() {
                     </Banner>
                   )}
                   <Checkbox checked={allowAllEgress} onChange={setAllowAllEgress}>Allow all egress</Checkbox>
-                  {!allowAllEgress && (
-                    <Field label="Allowed domains" hint="Type a domain and press Enter or comma to add it.">
+                  {(
+                    <Field label="Allowed domains" hint={allowAllEgress ? "Kept, but inactive while “Allow all egress” is on — uncheck to enforce just these." : "Type a domain and press Enter or comma to add it."}>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                         {egressDomains.map((d, i) => (
                           <span
