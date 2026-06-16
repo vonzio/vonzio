@@ -262,13 +262,17 @@ export class Orchestrator extends EventEmitter {
   async restartWorkspaceContainer(sessionId: string): Promise<void> {
     const session = this.deps.sessionRegistry.get(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
-    if (session.container_id) {
-      await this.safeRemoveContainer(session.container_id);
-    }
-    // "resumable" clears container_id (memory + DB); dispatchSession then
-    // creates a fresh container (re-running applyEgress) on the next task.
-    await this.deps.sessionRegistry.setStatus(sessionId, "resumable");
-    this.log.info({ sessionId }, "Workspace container restarted (will recreate on next message)");
+    if (!session.container_id) return; // nothing running
+    // Remove the container but DO NOT clear container_id — leaving it set makes
+    // the next message take dispatchSession's dead-container RECOVERY path
+    // (reuse the persistent volume + resume the SDK session, isResume=true, so
+    // the conversation continues) and re-run applyEgress. Clearing it would
+    // route to the create-from-scratch path (needsInit=true → fresh SDK session
+    // → lost context). This mirrors a natural container crash, which already
+    // recovers via the same path. (Non-persistent sessions have no volume, so
+    // they necessarily start fresh — the SDK state lived only in the container.)
+    await this.safeRemoveContainer(session.container_id);
+    this.log.info({ sessionId, containerId: session.container_id }, "Workspace container removed for restart (recreates + resumes on next message)");
   }
 
   /**
