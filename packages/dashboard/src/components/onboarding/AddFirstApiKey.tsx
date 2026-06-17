@@ -108,7 +108,27 @@ export function AddFirstApiKey({ onNext, onSkip }: OnboardingStepProps) {
       <Field
         label={meta.fieldLabel}
         hint={
-          meta.consoleUrl ? (
+          // For OAuth subscription tokens the *instruction* (run `claude
+          // setup-token`) is the key part — lead with meta.hint and follow with
+          // a docs link. For plain API keys keep the familiar "Get one at …".
+          meta.kind === "anthropic_oauth" ? (
+            <>
+              {meta.hint}
+              {meta.consoleUrl ? (
+                <>
+                  {" "}
+                  <a
+                    href={meta.consoleUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: "var(--vz-sodium)", display: "inline-flex", alignItems: "center", gap: 3 }}
+                  >
+                    Docs<ExternalLink size={11} />
+                  </a>
+                </>
+              ) : null}
+            </>
+          ) : meta.consoleUrl ? (
             <>
               Get one at{" "}
               <a

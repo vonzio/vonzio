@@ -27,6 +27,7 @@ import type { ProfileService } from "../services/profile-service.js";
 import type { SecretVaultService } from "../services/secret-vault-service.js";
 import { DocumentService, DocumentError } from "../services/document-service.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
+import type { ProfileProvider } from "@vonzio/shared";
 
 export interface UserResourceRoutesOptions {
   db: DrizzleDB;
@@ -328,7 +329,7 @@ export const userResourceRoutes = fp(
     });
 
     server.post<{
-      Body: { name: string; provider: "api_key" | "ollama" | "openai"; api_key?: string; base_url?: string };
+      Body: { name: string; provider: ProfileProvider; api_key?: string; base_url?: string };
     }>("/v1/anthropic-keys", async (request, reply) => {
       const { name, provider, api_key, base_url } = request.body;
       if (!name || !provider) {
@@ -380,7 +381,7 @@ export const userResourceRoutes = fp(
     // form with the key left masked). The form's base_url always wins so a
     // changed endpoint is tested even when the key itself is unchanged.
     server.post<{
-      Body: { provider?: "api_key" | "ollama" | "openai"; api_key?: string; base_url?: string | null; id?: string };
+      Body: { provider?: ProfileProvider; api_key?: string; base_url?: string | null; id?: string };
     }>("/v1/anthropic-keys/validate", async (request, reply) => {
       const { validateAnthropicKey } = await import("../services/key-validator.js");
       const { provider, api_key, base_url, id } = request.body;

@@ -1,4 +1,4 @@
-export const PROFILE_PROVIDERS = ["api_key", "ollama", "openai"] as const;
+export const PROFILE_PROVIDERS = ["api_key", "ollama", "openai", "claude_subscription"] as const;
 export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
 
 /**
@@ -11,7 +11,7 @@ export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
  */
 export interface ProviderInfo {
   /** UI discriminator used by the onboarding/settings forms. */
-  kind: "anthropic_key" | "openai" | "ollama";
+  kind: "anthropic_key" | "openai" | "ollama" | "anthropic_oauth";
   /** The stored `provider` value on the credential / profile. */
   provider: ProfileProvider;
   /** Human label shown in pickers ("Anthropic API key"). */
@@ -66,6 +66,18 @@ export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
     placeholder: "Paste Ollama Cloud key",
     defaultKeyName: "My Ollama Cloud key",
     consoleUrl: "https://ollama.com/settings/keys",
+    supportsBaseUrl: false,
+  },
+  {
+    kind: "anthropic_oauth",
+    provider: "claude_subscription",
+    label: "Claude subscription (Pro/Max)",
+    hint: "Run `claude setup-token` locally and paste the sk-ant-oat01- token. Uses your own subscription.",
+    fieldLabel: "Claude OAuth token",
+    placeholder: "sk-ant-oat01-…",
+    defaultKeyName: "My Claude subscription",
+    consoleUrl: "https://code.claude.com/docs/en/authentication",
+    keyPrefix: "sk-ant-oat01-",
     supportsBaseUrl: false,
   },
 ] as const;

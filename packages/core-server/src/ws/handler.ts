@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type WebSocket from "ws";
 import { randomUUID } from "node:crypto";
 import { ConnectionManager } from "./connection.js";
+import { anthropicAuthHeaders } from "@vonzio/shared";
 import type { TaskService } from "../services/task-service.js";
 import type { WorkspaceService } from "../services/workspace-service.js";
 import type { SessionRegistry } from "../container/session-registry.js";
@@ -22,7 +23,13 @@ import { runWithOrgId } from "../lib/active-org.js";
  * Generate a short workspace title using the Claude API.
  * Falls back to a basic heuristic if the API call fails.
  */
-async function generateTitle(prompt: string, response: string, apiKey?: string, log?: { info: Function; error: Function }): Promise<string> {
+async function generateTitle(
+  prompt: string,
+  response: string,
+  apiKey?: string,
+  opts?: { log?: { info: Function; error: Function }; provider?: string },
+): Promise<string> {
+  const { log, provider } = opts ?? {};
   // Try LLM-generated title
   if (apiKey) {
     try {
@@ -31,8 +38,7 @@ async function generateTitle(prompt: string, response: string, apiKey?: string, 
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
+          ...anthropicAuthHeaders(provider, apiKey),
         },
         body: JSON.stringify({
           model: "claude-haiku-4-5-20251001",
@@ -204,7 +210,7 @@ export function setupWsHandler(
           const resolved = await opts.profileService.getResolved(workspace.profile_id);
           const apiKey = resolved?.resolved_api_key;
 
-          const title = await generateTitle(prompt, response, apiKey, wsLog as any);
+          const title = await generateTitle(prompt, response, apiKey, { log: wsLog as any, provider: resolved?.resolved_provider });
           if (title && title !== name) {
             await opts.workspaceService.update(sessionId, { name: title });
             connectionManager.sendToSession(sessionId, {

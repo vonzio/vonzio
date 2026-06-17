@@ -1734,6 +1734,13 @@ export class Orchestrator extends EventEmitter {
       env.LLM_GATEWAY_TARGET_URL = profile.resolved_base_url
         ? normalizeOpenAIBaseUrl(profile.resolved_base_url)
         : OPENAI_BASE_URL;
+    } else if (profile.resolved_provider === "claude_subscription" && profile.resolved_api_key) {
+      // Claude Pro/Max subscription: the value is an sk-ant-oat01- OAuth token,
+      // not an API key. The Agent SDK / Claude Code uses CLAUDE_CODE_OAUTH_TOKEN
+      // as a bearer credential against the NATIVE Anthropic API (no gateway,
+      // and it injects the oauth beta header itself). Do NOT also set
+      // ANTHROPIC_API_KEY — that would override the OAuth token.
+      env.CLAUDE_CODE_OAUTH_TOKEN = profile.resolved_api_key;
     } else if (profile.resolved_api_key) {
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
     } else {
