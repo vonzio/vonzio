@@ -26,10 +26,10 @@ export async function validateAnthropicKey(
     return validateOpenAIKey(key, baseUrl);
   }
 
-  const headers: Record<string, string> = {
-    "anthropic-version": "2023-06-01",
-    "x-api-key": key,
-  };
+  // api_key → x-api-key; claude_subscription → Authorization: Bearer.
+  // /v1/models is accepted by both (verified against a live oat token).
+  const { anthropicAuthHeaders } = await import("./anthropic-auth.js");
+  const headers = anthropicAuthHeaders(type, key);
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/models", {

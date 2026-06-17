@@ -90,8 +90,27 @@ token when `CLAUDE_CODE_OAUTH_TOKEN` is set; it then talks to the real
 `api.anthropic.com`. **The SDK / Claude Code (v2.0.65+) auto-injects the
 `anthropic-beta: oauth-2025-04-20` header and the correct auth header itself** —
 so the container path needs *zero* header work from us; we only set the env var.
-We do **not** route this provider through the in-container `llm-gateway` (unlike
-openai/ollama) — it speaks native Anthropic.
+
+**With egress enforcement OFF** (OSS default) the SDK reaches `api.anthropic.com`
+directly — nothing else to do.
+
+**With egress enforcement ON** (SaaS prod) it rides the *same* native-Anthropic
+path as a normal Anthropic API key — no special-casing needed in `egress.ts`.
+Because the `claude_subscription` env branch sets only `CLAUDE_CODE_OAUTH_TOKEN`
+(leaving `ANTHROPIC_BASE_URL`/`LLM_GATEWAY_MODE` unset), `applyEgress` →
+`routeModelThroughGateway` redirects it through the in-container llm-gateway in
+`PASSTHROUGH_RAW` mode (which forwards the SDK's `Authorization: Bearer` +
+`anthropic-beta` headers verbatim), and `modelHostsFromEnv` auto-allows
+`api.anthropic.com`. The proxy-aware gateway then carries the call out through
+the egress proxy. **Net: zero egress code changes for this provider.**
+
+⚠️ **One assumption to smoke-test in a live container (like the 5 egress bugs in
+#196):** this relies on the Agent SDK honoring `ANTHROPIC_BASE_URL` (= the
+localhost gateway) *while* using `CLAUDE_CODE_OAUTH_TOKEN`. If OAuth mode pins
+`api.anthropic.com` and ignores `ANTHROPIC_BASE_URL`, the SDK would bypass the
+gateway and be blocked by the internal network — in which case enforcement +
+this provider need a different bridge. Verify with a real oat token in a
+`make docker-dev-oss` (enforcement on) workspace before enabling on SaaS prod.
 
 In `orchestrator.ts` `buildEnvFromProfile` (~line 1737), add a branch **before**
 the generic `resolved_api_key` fallback:
@@ -170,9 +189,11 @@ Raw probe results (status codes):
 
 ## Cross-cutting concerns
 
-- **Egress (#196):** the network-layer allowlist must include
-  `api.anthropic.com` for this provider. No `claude.ai`/`console.anthropic.com`
-  needed (token is minted locally by the user, not exchanged by us).
+- **Egress (#196):** `api.anthropic.com` is auto-allowed via the existing
+  `routeModelThroughGateway` → `modelHostsFromEnv` path (see "Inference path") —
+  no `egress.ts` change. No `claude.ai`/`console.anthropic.com` needed (token is
+  minted locally by the user, not exchanged by us). Subject to the SDK
+  `ANTHROPIC_BASE_URL`-honoring smoke-test flagged above.
 - **Subscription rate limits ≠ API limits.** Pro/Max has rolling session/usage
   caps and the platform fans out parallel agents. Map Anthropic 429s on this
   provider to a clear "You've hit your Claude subscription limit — try again
@@ -195,7 +216,10 @@ Raw probe results (status codes):
 - [ ] `packages/core-server/src/services/model-list-service.ts` — Bearer
       variant; `/v1/models` works, so a normal fetch (no hardcoded fallback).
 - [ ] `packages/core-server/src/orchestrator/judge-server.ts` — bearer variant.
-- [ ] `packages/core-server/src/orchestrator/egress.*` — allow `api.anthropic.com`.
+- [x] `packages/core-server/src/orchestrator/egress.*` — **no change needed**;
+      `api.anthropic.com` auto-allowed via the existing native-Anthropic
+      gateway-routing path (verify the SDK honors `ANTHROPIC_BASE_URL` in OAuth
+      mode during the live smoke test).
 - [ ] `packages/dashboard/src/pages/settings/sections/AnthropicKey.tsx` — render
       the mint-token hint + paste field for the new provider.
 - [ ] `packages/dashboard/src/pages/Onboarding.tsx` /

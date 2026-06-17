@@ -17,7 +17,7 @@ import {
   Badge, Modal, EmptyState, DataTable,
   type DataColumn, type SelectOption,
 } from "../../../brand/components.js";
-import { PROVIDER_CATALOG, providerInfoByProvider } from "@vonzio/shared";
+import { PROVIDER_CATALOG, providerInfoByProvider, type ProfileProvider } from "@vonzio/shared";
 import { formatDate } from "../../../lib/utils.js";
 import { authClient } from "../../../lib/auth-client.js";
 import { useUser } from "../../../contexts/UserContext.js";
@@ -37,7 +37,7 @@ export function AnthropicKeySection() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<AnthropicKeyInfo | null>(null);
   const [keyName, setKeyName] = useState("");
-  const [provider, setProvider] = useState<"api_key" | "ollama" | "openai">("api_key");
+  const [provider, setProvider] = useState<ProfileProvider>("api_key");
   const [apiKey, setApiKey] = useState("");
   // OpenAI-compatible endpoint override; only sent/shown for the openai
   // provider, and tucked behind an "Advanced" disclosure so the common case

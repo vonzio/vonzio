@@ -138,12 +138,11 @@ export class ModelListService {
         }));
       } else {
         if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
+        // api_key → x-api-key; claude_subscription → Bearer (oat token).
+        const { anthropicAuthHeaders } = await import("./anthropic-auth.js");
         const res = await fetch("https://api.anthropic.com/v1/models", {
           method: "GET",
-          headers: {
-            "x-api-key": apiKey.api_key,
-            "anthropic-version": "2023-06-01",
-          },
+          headers: anthropicAuthHeaders(apiKey.provider, apiKey.api_key),
           signal: AbortSignal.timeout(ANTHROPIC_FETCH_TIMEOUT_MS),
         });
         if (!res.ok) {
