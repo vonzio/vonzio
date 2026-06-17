@@ -20,6 +20,7 @@ import fp from "fastify-plugin";
 import { eq, and } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Workspace } from "@vonzio/shared";
+import { anthropicAuthHeaders } from "@vonzio/shared";
 import type {
   PluginIntegrationLookup,
   PluginTaskSubmitter,
@@ -917,11 +918,7 @@ function setupSlackRelay(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // claude_subscription oat tokens auth via Bearer, not x-api-key.
-          ...(resolved?.resolved_provider === "claude_subscription"
-            ? { "Authorization": `Bearer ${apiKey}` }
-            : { "x-api-key": apiKey }),
-          "anthropic-version": "2023-06-01",
+          ...anthropicAuthHeaders(resolved?.resolved_provider, apiKey),
         },
         body: JSON.stringify({
           model: "claude-haiku-4-5-20251001",

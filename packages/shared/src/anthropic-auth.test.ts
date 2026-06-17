@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { anthropicAuthHeaders } from "./anthropic-auth.js";
+import { anthropicAuthHeaders, CLAUDE_SUBSCRIPTION_PROVIDER } from "./anthropic-auth.js";
 
 describe("anthropicAuthHeaders", () => {
   it("uses x-api-key for a normal API key", () => {
@@ -10,7 +10,7 @@ describe("anthropicAuthHeaders", () => {
   });
 
   it("uses Authorization: Bearer for a claude_subscription oat token", () => {
-    const h = anthropicAuthHeaders("claude_subscription", "sk-ant-oat01-xyz");
+    const h = anthropicAuthHeaders(CLAUDE_SUBSCRIPTION_PROVIDER, "sk-ant-oat01-xyz");
     expect(h["Authorization"]).toBe("Bearer sk-ant-oat01-xyz");
     expect(h["x-api-key"]).toBeUndefined();
     expect(h["anthropic-version"]).toBe("2023-06-01");

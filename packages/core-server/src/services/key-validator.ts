@@ -1,12 +1,19 @@
 /**
  * Validates Anthropic / Ollama API keys by hitting a lightweight endpoint.
  */
-import { anthropicAuthHeaders } from "./anthropic-auth.js";
+import { anthropicAuthHeaders, CLAUDE_SUBSCRIPTION_PROVIDER } from "@vonzio/shared";
 
 export interface KeyValidationResult {
   valid: boolean;
   error?: string;
 }
+
+/** Provider-specific failure copy for Claude subscription oat tokens, shared
+ *  with model-list-service so the two surfaces give identical guidance. */
+export const SUBSCRIPTION_TOKEN_INVALID =
+  "Token expired or invalid — re-run `claude setup-token` and update it in Settings";
+export const SUBSCRIPTION_LIMIT_REACHED =
+  "Claude subscription limit reached — try again later";
 
 /**
  * Validate an Anthropic API key by calling /v1/models.
@@ -46,16 +53,14 @@ export async function validateAnthropicKey(
     // Subscription oat tokens expire (~1yr, no refresh) and hit the Pro/Max
     // session caps — give those failures provider-specific guidance instead of
     // the generic API-key copy.
-    const isSubscription = type === "claude_subscription";
+    const isSubscription = type === CLAUDE_SUBSCRIPTION_PROVIDER;
 
     // Check known status codes before parsing body
     if (res.status === 401) {
       await res.body?.cancel();
       return {
         valid: false,
-        error: isSubscription
-          ? "Token expired or invalid — re-run `claude setup-token` and paste the new token"
-          : "Invalid API key",
+        error: isSubscription ? SUBSCRIPTION_TOKEN_INVALID : "Invalid API key",
       };
     }
     if (res.status === 403) {
@@ -66,9 +71,7 @@ export async function validateAnthropicKey(
       await res.body?.cancel();
       return {
         valid: false,
-        error: isSubscription
-          ? "Claude subscription limit reached — try again later"
-          : "Rate limit reached — try again later",
+        error: isSubscription ? SUBSCRIPTION_LIMIT_REACHED : "Rate limit reached — try again later",
       };
     }
 

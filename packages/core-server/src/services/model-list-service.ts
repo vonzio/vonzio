@@ -21,7 +21,8 @@ import type { ProfileService } from "./profile-service.js";
 import type { ApiKeyService } from "./api-key-service.js";
 import { fetchOllamaModels } from "./ollama-service.js";
 import { fetchOpenAIModels } from "./openai-service.js";
-import { anthropicAuthHeaders } from "./anthropic-auth.js";
+import { anthropicAuthHeaders, CLAUDE_SUBSCRIPTION_PROVIDER } from "@vonzio/shared";
+import { SUBSCRIPTION_TOKEN_INVALID, SUBSCRIPTION_LIMIT_REACHED } from "./key-validator.js";
 
 export interface ProfileModel {
   id: string;
@@ -150,14 +151,12 @@ export class ModelListService {
           // Keep the HTTP status 502 (a 401 here would read as a *session*
           // logout to the SPA); only sharpen the message. Subscription tokens
           // expire / hit Pro-Max caps, so give those provider-specific copy.
-          const isSubscription = apiKey.provider === "claude_subscription";
+          const isSubscription = apiKey.provider === CLAUDE_SUBSCRIPTION_PROVIDER;
           let error = `Anthropic API returned ${res.status}`;
           if (res.status === 401 && isSubscription) {
-            error = "Token expired or invalid — re-run `claude setup-token` and update it in Settings";
+            error = SUBSCRIPTION_TOKEN_INVALID;
           } else if (res.status === 429) {
-            error = isSubscription
-              ? "Claude subscription limit reached — try again later"
-              : "Anthropic rate limit reached (429)";
+            error = isSubscription ? SUBSCRIPTION_LIMIT_REACHED : "Anthropic rate limit reached (429)";
           }
           return { ok: false, status: 502, error };
         }

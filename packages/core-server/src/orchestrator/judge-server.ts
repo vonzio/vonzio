@@ -1,5 +1,5 @@
 import type { GoalVerdict } from "./agent-comms.js";
-import { anthropicAuthHeaders } from "../services/anthropic-auth.js";
+import { anthropicAuthHeaders } from "@vonzio/shared";
 
 /** Hard cap on the fallback judge's HTTP call. A verdict is a small, fast
  * request; 60s is generous and still bounds a dead/hung provider. */

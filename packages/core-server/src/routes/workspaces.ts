@@ -6,7 +6,7 @@ import type { ApiKeyService } from "../services/api-key-service.js";
 import type { EventLog } from "../events/event-log.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
-import { anthropicAuthHeaders } from "../services/anthropic-auth.js";
+import { anthropicAuthHeaders } from "@vonzio/shared";
 import { isOwnerOrAdmin } from "../auth/user-auth.js";
 import { WORKSPACE_STATUSES, type Workspace, type WorkspaceStatus } from "@vonzio/shared";
 
