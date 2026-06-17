@@ -104,13 +104,11 @@ Because the `claude_subscription` env branch sets only `CLAUDE_CODE_OAUTH_TOKEN`
 `api.anthropic.com`. The proxy-aware gateway then carries the call out through
 the egress proxy. **Net: zero egress code changes for this provider.**
 
-⚠️ **One assumption to smoke-test in a live container (like the 5 egress bugs in
-#196):** this relies on the Agent SDK honoring `ANTHROPIC_BASE_URL` (= the
-localhost gateway) *while* using `CLAUDE_CODE_OAUTH_TOKEN`. If OAuth mode pins
-`api.anthropic.com` and ignores `ANTHROPIC_BASE_URL`, the SDK would bypass the
-gateway and be blocked by the internal network — in which case enforcement +
-this provider need a different bridge. Verify with a real oat token in a
-`make docker-dev-oss` (enforcement on) workspace before enabling on SaaS prod.
+✅ **Verified live 2026-06-16** (`make docker-dev-oss`, `egressEnforcement: true`,
+real oat token): the Agent SDK honors `ANTHROPIC_BASE_URL` (= the localhost
+gateway) *while* using `CLAUDE_CODE_OAUTH_TOKEN` — model list fetched and a
+workspace ran successfully end-to-end through the egress proxy. The
+formerly-open assumption holds; no special bridge needed for enforcement.
 
 In `orchestrator.ts` `buildEnvFromProfile` (~line 1737), add a branch **before**
 the generic `resolved_api_key` fallback:
@@ -218,8 +216,7 @@ Raw probe results (status codes):
 - [ ] `packages/core-server/src/orchestrator/judge-server.ts` — bearer variant.
 - [x] `packages/core-server/src/orchestrator/egress.*` — **no change needed**;
       `api.anthropic.com` auto-allowed via the existing native-Anthropic
-      gateway-routing path (verify the SDK honors `ANTHROPIC_BASE_URL` in OAuth
-      mode during the live smoke test).
+      gateway-routing path. ✅ verified live under enforcement 2026-06-16.
 - [ ] `packages/dashboard/src/pages/settings/sections/AnthropicKey.tsx` — render
       the mint-token hint + paste field for the new provider.
 - [ ] `packages/dashboard/src/pages/Onboarding.tsx` /
@@ -236,3 +233,15 @@ Raw probe results (status codes):
 - Option A hosted OAuth/PKCE flow with refresh tokens (one-click connect).
 - Switching to Anthropic's official subscription-auth mechanism once released —
   expected to be a drop-in at the acquisition layer only.
+- **In-product `claude setup-token` flow (UX win, later).** Instead of the user
+  running `claude setup-token` in their own terminal and copy-pasting, drive it
+  from the Vonzio UI: the server (or a helper) runs `claude setup-token`, which
+  opens the browser for the user to authorize, the user pastes the short code
+  back into the UI, and we capture the resulting `sk-ant-oat01-` token and
+  terminate the process — storing it exactly as the manual paste does today.
+  Removes the "install Claude Code locally + use a terminal" prerequisite, which
+  is the biggest friction in Option B. Note: it's still fundamentally B (we hold
+  an oat token); it just automates the minting. Caveats to design through:
+  running an interactive login on the server, brokering the browser hand-off for
+  a remote/SaaS user (the auth URL must open on the *user's* machine, not the
+  server's), and not leaking the token through process output/logs.
