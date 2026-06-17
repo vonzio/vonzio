@@ -43,14 +43,33 @@ export async function validateAnthropicKey(
       return { valid: true };
     }
 
+    // Subscription oat tokens expire (~1yr, no refresh) and hit the Pro/Max
+    // session caps — give those failures provider-specific guidance instead of
+    // the generic API-key copy.
+    const isSubscription = type === "claude_subscription";
+
     // Check known status codes before parsing body
     if (res.status === 401) {
       await res.body?.cancel();
-      return { valid: false, error: "Invalid API key" };
+      return {
+        valid: false,
+        error: isSubscription
+          ? "Token expired or invalid — re-run `claude setup-token` and paste the new token"
+          : "Invalid API key",
+      };
     }
     if (res.status === 403) {
       await res.body?.cancel();
       return { valid: false, error: "Key is disabled or lacks permissions" };
+    }
+    if (res.status === 429) {
+      await res.body?.cancel();
+      return {
+        valid: false,
+        error: isSubscription
+          ? "Claude subscription limit reached — try again later"
+          : "Rate limit reached — try again later",
+      };
     }
 
     // Parse body only for unexpected status codes

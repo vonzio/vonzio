@@ -225,8 +225,12 @@ Raw probe results (status codes):
       "Claude subscription (Pro/Max)" directly). Provider appears via the
       catalog; verify the mint-token hint copy renders in the wizard, and that
       step 2 (default-model pick) works with the hardcoded model list.
-- [ ] Error mapping for 401 (expired) / 429 (subscription cap) on this provider.
-- [ ] Tests: provider resolution, env injection, validator, model-list fallback.
+- [x] Error mapping for 401 (expired → re-run `setup-token`) / 429
+      (subscription cap) on this provider — in key-validator + model-list-service
+      (status kept 502 so the SPA doesn't read a 401 as a session logout).
+- [x] Tests: anthropicAuthHeaders (Bearer vs x-api-key), validator Bearer +
+      401/429 mapping, model-list Bearer + 401 mapping. (Env injection in
+      orchestrator verified live; private method not unit-scaffolded.)
 
 ## Out of scope (future)
 

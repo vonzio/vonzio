@@ -147,7 +147,19 @@ export class ModelListService {
         });
         if (!res.ok) {
           await res.body?.cancel(); // release the connection back to the pool
-          return { ok: false, status: 502, error: `Anthropic API returned ${res.status}` };
+          // Keep the HTTP status 502 (a 401 here would read as a *session*
+          // logout to the SPA); only sharpen the message. Subscription tokens
+          // expire / hit Pro-Max caps, so give those provider-specific copy.
+          const isSubscription = apiKey.provider === "claude_subscription";
+          let error = `Anthropic API returned ${res.status}`;
+          if (res.status === 401 && isSubscription) {
+            error = "Token expired or invalid — re-run `claude setup-token` and update it in Settings";
+          } else if (res.status === 429) {
+            error = isSubscription
+              ? "Claude subscription limit reached — try again later"
+              : "Anthropic rate limit reached (429)";
+          }
+          return { ok: false, status: 502, error };
         }
         const data = (await res.json()) as { data?: Array<{ id: string; display_name?: string }> };
         models = (data.data ?? []).map((m) => ({
