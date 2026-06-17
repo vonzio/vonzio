@@ -21,6 +21,7 @@ import type { ProfileService } from "./profile-service.js";
 import type { ApiKeyService } from "./api-key-service.js";
 import { fetchOllamaModels } from "./ollama-service.js";
 import { fetchOpenAIModels } from "./openai-service.js";
+import { anthropicAuthHeaders } from "./anthropic-auth.js";
 
 export interface ProfileModel {
   id: string;
@@ -139,13 +140,13 @@ export class ModelListService {
       } else {
         if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
         // api_key → x-api-key; claude_subscription → Bearer (oat token).
-        const { anthropicAuthHeaders } = await import("./anthropic-auth.js");
         const res = await fetch("https://api.anthropic.com/v1/models", {
           method: "GET",
           headers: anthropicAuthHeaders(apiKey.provider, apiKey.api_key),
           signal: AbortSignal.timeout(ANTHROPIC_FETCH_TIMEOUT_MS),
         });
         if (!res.ok) {
+          await res.body?.cancel(); // release the connection back to the pool
           return { ok: false, status: 502, error: `Anthropic API returned ${res.status}` };
         }
         const data = (await res.json()) as { data?: Array<{ id: string; display_name?: string }> };

@@ -1,6 +1,7 @@
 /**
  * Validates Anthropic / Ollama API keys by hitting a lightweight endpoint.
  */
+import { anthropicAuthHeaders } from "./anthropic-auth.js";
 
 export interface KeyValidationResult {
   valid: boolean;
@@ -28,7 +29,6 @@ export async function validateAnthropicKey(
 
   // api_key → x-api-key; claude_subscription → Authorization: Bearer.
   // /v1/models is accepted by both (verified against a live oat token).
-  const { anthropicAuthHeaders } = await import("./anthropic-auth.js");
   const headers = anthropicAuthHeaders(type, key);
 
   try {

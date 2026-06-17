@@ -6,6 +6,7 @@ import type { ApiKeyService } from "../services/api-key-service.js";
 import type { EventLog } from "../events/event-log.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
+import { anthropicAuthHeaders } from "../services/anthropic-auth.js";
 import { isOwnerOrAdmin } from "../auth/user-auth.js";
 import { WORKSPACE_STATUSES, type Workspace, type WorkspaceStatus } from "@vonzio/shared";
 
@@ -272,8 +273,7 @@ export const workspaceRoutes = fp(
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "x-api-key": apiKey,
-              "anthropic-version": "2023-06-01",
+              ...anthropicAuthHeaders(resolved?.resolved_provider, apiKey),
             },
             body: JSON.stringify({
               model: "claude-haiku-4-5-20251001",

@@ -2201,7 +2201,10 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": apiKey,
+          // claude_subscription oat tokens auth via Bearer, not x-api-key.
+          ...(resolved?.resolved_provider === "claude_subscription"
+            ? { "Authorization": `Bearer ${apiKey}` }
+            : { "x-api-key": apiKey }),
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
