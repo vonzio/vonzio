@@ -1,4 +1,5 @@
 import type { GoalVerdict } from "./agent-comms.js";
+import { anthropicAuthHeaders } from "@vonzio/shared";
 
 /** Hard cap on the fallback judge's HTTP call. A verdict is a small, fast
  * request; 60s is generous and still bounds a dead/hung provider. */
@@ -27,7 +28,7 @@ export interface ServerJudgePayload {
 
 export interface ServerJudgeCreds {
   apiKey?: string;
-  /** ResolvedProfile.resolved_provider: "api_key" (Anthropic) | "openai" | "ollama" */
+  /** ResolvedProfile.resolved_provider: "api_key" (Anthropic) | "claude_subscription" (Anthropic via OAuth) | "openai" | "ollama" */
   provider?: string;
   baseUrl?: string;
   model: string;
@@ -116,10 +117,10 @@ async function callAnthropic(prompt: string, creds: ServerJudgeCreds): Promise<s
     // freeze the goal loop indefinitely — the per-task watchdog only aborts the
     // in-container agent exec, not a stuck fetch here.
     signal: AbortSignal.timeout(JUDGE_HTTP_TIMEOUT_MS),
+    // api_key → x-api-key; claude_subscription → Authorization: Bearer (oat token).
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": creds.apiKey!,
-      "anthropic-version": "2023-06-01",
+      ...anthropicAuthHeaders(creds.provider, creds.apiKey!),
     },
     body: JSON.stringify({
       model: creds.model,

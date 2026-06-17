@@ -21,6 +21,8 @@ import type { ProfileService } from "./profile-service.js";
 import type { ApiKeyService } from "./api-key-service.js";
 import { fetchOllamaModels } from "./ollama-service.js";
 import { fetchOpenAIModels } from "./openai-service.js";
+import { anthropicAuthHeaders, CLAUDE_SUBSCRIPTION_PROVIDER } from "@vonzio/shared";
+import { SUBSCRIPTION_TOKEN_INVALID, SUBSCRIPTION_LIMIT_REACHED } from "./key-validator.js";
 
 export interface ProfileModel {
   id: string;
@@ -138,16 +140,25 @@ export class ModelListService {
         }));
       } else {
         if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
+        // api_key → x-api-key; claude_subscription → Bearer (oat token).
         const res = await fetch("https://api.anthropic.com/v1/models", {
           method: "GET",
-          headers: {
-            "x-api-key": apiKey.api_key,
-            "anthropic-version": "2023-06-01",
-          },
+          headers: anthropicAuthHeaders(apiKey.provider, apiKey.api_key),
           signal: AbortSignal.timeout(ANTHROPIC_FETCH_TIMEOUT_MS),
         });
         if (!res.ok) {
-          return { ok: false, status: 502, error: `Anthropic API returned ${res.status}` };
+          await res.body?.cancel(); // release the connection back to the pool
+          // Keep the HTTP status 502 (a 401 here would read as a *session*
+          // logout to the SPA); only sharpen the message. Subscription tokens
+          // expire / hit Pro-Max caps, so give those provider-specific copy.
+          const isSubscription = apiKey.provider === CLAUDE_SUBSCRIPTION_PROVIDER;
+          let error = `Anthropic API returned ${res.status}`;
+          if (res.status === 401 && isSubscription) {
+            error = SUBSCRIPTION_TOKEN_INVALID;
+          } else if (res.status === 429) {
+            error = isSubscription ? SUBSCRIPTION_LIMIT_REACHED : "Anthropic rate limit reached (429)";
+          }
+          return { ok: false, status: 502, error };
         }
         const data = (await res.json()) as { data?: Array<{ id: string; display_name?: string }> };
         models = (data.data ?? []).map((m) => ({

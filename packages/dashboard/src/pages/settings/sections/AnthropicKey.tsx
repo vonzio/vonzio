@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Trash2, KeyRound, CheckCircle, Plus } from "lucide-react";
+import { Trash2, KeyRound, CheckCircle, Plus, ExternalLink } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
   createAnthropicKey,
@@ -17,7 +17,7 @@ import {
   Badge, Modal, EmptyState, DataTable,
   type DataColumn, type SelectOption,
 } from "../../../brand/components.js";
-import { PROVIDER_CATALOG, providerInfoByProvider } from "@vonzio/shared";
+import { PROVIDER_CATALOG, providerInfoByProvider, type ProfileProvider, type ProviderInfo } from "@vonzio/shared";
 import { formatDate } from "../../../lib/utils.js";
 import { authClient } from "../../../lib/auth-client.js";
 import { useUser } from "../../../contexts/UserContext.js";
@@ -37,7 +37,7 @@ export function AnthropicKeySection() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<AnthropicKeyInfo | null>(null);
   const [keyName, setKeyName] = useState("");
-  const [provider, setProvider] = useState<"api_key" | "ollama" | "openai">("api_key");
+  const [provider, setProvider] = useState<ProfileProvider>("api_key");
   const [apiKey, setApiKey] = useState("");
   // OpenAI-compatible endpoint override; only sent/shown for the openai
   // provider, and tucked behind an "Advanced" disclosure so the common case
@@ -225,6 +225,27 @@ export function AnthropicKeySection() {
     label: p.label,
   }));
   const createMeta = providerInfoByProvider(provider);
+  // How-to-get-a-key hint, catalog-driven: the provider's one-line instruction
+  // (e.g. "Run `claude setup-token` …" for a subscription token) plus a docs
+  // link. Shown under the credential field so the user isn't left guessing.
+  const credHint = (m: ProviderInfo) => (
+    <>
+      {m.hint}
+      {m.consoleUrl ? (
+        <>
+          {" "}
+          <a
+            href={m.consoleUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--vz-sodium)", display: "inline-flex", alignItems: "center", gap: 3 }}
+          >
+            Docs<ExternalLink size={11} />
+          </a>
+        </>
+      ) : null}
+    </>
+  );
 
   return (
     <>
@@ -268,7 +289,7 @@ export function AnthropicKeySection() {
           <Field label="Provider">
             <Select options={providerOpts} value={provider} onChange={(v) => setProvider(v as typeof provider)} />
           </Field>
-          <Field label={createMeta.fieldLabel}>
+          <Field label={createMeta.fieldLabel} hint={credHint(createMeta)}>
             <Input
               type="password"
               value={apiKey}
@@ -339,7 +360,15 @@ export function AnthropicKeySection() {
               {providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider).label}
             </span>
           </div>
-          <Field label={providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider).fieldLabel} hint="Leave blank to keep the current value.">
+          <Field
+            label={providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider).fieldLabel}
+            hint={
+              <>
+                Leave blank to keep the current value.{" "}
+                {credHint(providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider))}
+              </>
+            }
+          >
             <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="••••••••" />
           </Field>
           {editingKey?.provider === "openai" && (showAdvanced ? (

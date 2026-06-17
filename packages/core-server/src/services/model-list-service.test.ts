@@ -165,6 +165,44 @@ describe("ModelListService", () => {
     svc.stop();
   });
 
+  it("fetches Anthropic models with a Bearer header for claude_subscription", async () => {
+    const fetchSpy = vi.fn(async () => new Response(
+      JSON.stringify({ data: [{ id: "claude-opus-4-8", display_name: "Opus 4.8" }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchSpy);
+    const { profileService, apiKeyService } = makeServices(
+      PROFILE_WITH_ANTHROPIC,
+      { provider: "claude_subscription", api_key: "sk-ant-oat01-tok" },
+    );
+    const svc = new ModelListService(profileService, apiKeyService);
+    const result = await svc.listForProfile("prof_1");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.models[0].provider).toBe("anthropic");
+    // Authenticated via Bearer, NOT x-api-key.
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer sk-ant-oat01-tok");
+    expect(headers["x-api-key"]).toBeUndefined();
+    svc.stop();
+  });
+
+  it("maps a 401 for claude_subscription to a re-run-setup-token message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 401 })));
+    const { profileService, apiKeyService } = makeServices(
+      PROFILE_WITH_ANTHROPIC,
+      { provider: "claude_subscription", api_key: "sk-ant-oat01-expired" },
+    );
+    const svc = new ModelListService(profileService, apiKeyService);
+    const result = await svc.listForProfile("prof_1");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(502);
+      expect(result.error).toMatch(/setup-token/);
+    }
+    svc.stop();
+  });
+
   it("caches results keyed by api_key_id (second call doesn't refetch)", async () => {
     const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: "x", display_name: "X" }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchSpy);
