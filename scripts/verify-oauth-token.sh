@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Verify how an `sk-ant-oat01-` subscription token authenticates against the
-# native Anthropic API. Answers the three open spike questions in
-# docs/CLAUDE_SUBSCRIPTION_PROVIDER.md:
+# Verify how an `sk-ant-oat01-` subscription (claude_subscription provider)
+# token authenticates against the native Anthropic API. Re-run if Anthropic
+# changes the auth contract. Answers three questions:
 #   1. x-api-key vs Authorization: Bearer for our own server-side calls
-#   2. does /v1/models accept an inference-scoped oat token?
-#   3. is the beta header (oauth-2025-04-20) required / accepted?
+#      (verified: Bearer — x-api-key 401s for oat tokens)
+#   2. does /v1/models accept an inference-scoped oat token? (verified: yes, Bearer)
+#   3. is the beta header (oauth-2025-04-20) required / accepted? (verified: optional)
 #
 # Usage:
 #   claude setup-token                       # log in, copy the sk-ant-oat01-… token
