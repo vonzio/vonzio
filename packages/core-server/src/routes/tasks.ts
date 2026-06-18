@@ -56,13 +56,11 @@ export const taskRoutes = fp(
       }
 
       try {
-        const profiles = await opts.profileService.list(request.user.id);
-        let allowedProfileIds = profiles.map((p) => p.id);
-        // Keep submission within the active org's tenant boundary (SaaS).
-        if (opts.visibleProfileIdsForOrg) {
-          const visible = await opts.visibleProfileIdsForOrg(request.user.id, getActiveOrgId(), allowedProfileIds);
-          if (visible) allowedProfileIds = allowedProfileIds.filter((id) => visible.has(id));
-        }
+        // Same scoping as read/cancel: respects an API token's allow-list AND
+        // the active-org filter. undefined = admin in OSS → may use any of
+        // their own profiles (fall back to the full list).
+        const allowedProfileIds = (await getUserProfileIds(request))
+          ?? (await opts.profileService.list(request.user.id)).map((p) => p.id);
         const result = await taskService.submit(parsed.data, allowedProfileIds);
         // Link the task to the caller's active org if a SaaS layer
         // has wired the hook. Awaits before sending the response so
@@ -87,12 +85,13 @@ export const taskRoutes = fp(
       // the tenant boundary, so even admin is scoped to their own profiles —
       // otherwise an admin acting in org A could read/cancel org B's tasks.
       if (user.role === "admin" && !request.orgContext?.org_id) return undefined;
-      if (user.allowedProfileIds?.length) return user.allowedProfileIds; // API token
-      const profiles = await opts.profileService.list(user.id);
-      let ids = profiles.map((p) => p.id);
-      // SaaS: keep visibility within the active org. Without this a user who
-      // belongs to multiple orgs could read/cancel tasks for their profiles in
-      // another org's context.
+      // API token → its baked allow-list; otherwise the user's profiles.
+      let ids = user.allowedProfileIds?.length
+        ? user.allowedProfileIds
+        : (await opts.profileService.list(user.id)).map((p) => p.id);
+      // SaaS: keep visibility within the active org — applied to BOTH the
+      // token and session paths, so a multi-org user (or a token used under
+      // another org context) can't reach tasks across orgs.
       if (opts.visibleProfileIdsForOrg) {
         const visible = await opts.visibleProfileIdsForOrg(user.id, getActiveOrgId(), ids);
         if (visible) ids = ids.filter((id) => visible.has(id));

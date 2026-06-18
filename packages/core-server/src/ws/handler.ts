@@ -17,7 +17,7 @@ import { rewriteAgentImages } from "../services/agent-output-rewriter.js";
 import type { EventLog } from "../events/event-log.js";
 import { ErrorCodes } from "../errors.js";
 import { submitTaskSchema } from "../routes/validation.js";
-import { runWithOrgId } from "../lib/active-org.js";
+import { runWithOrgId, getActiveOrgId } from "../lib/active-org.js";
 
 /**
  * Generate a short workspace title using the Claude API.
@@ -93,6 +93,14 @@ export interface WsHandlerOptions {
    * undefined.
    */
   recordTaskOrg?: (taskId: string, orgId: string) => Promise<void>;
+  /** SaaS hook — subset of candidate profile ids visible in the active org
+   *  (null = no filter / OSS). Keeps WS task visibility + submission within
+   *  the connection's tenant boundary, mirroring the REST /v1/tasks route. */
+  visibleProfileIdsForOrg?: (
+    userId: string,
+    activeOrgId: string | null,
+    candidates: string[],
+  ) => Promise<Set<string> | null>;
 }
 
 const ORCHESTRATOR_EVENTS = [
@@ -325,7 +333,15 @@ export function setupWsHandler(
 
   async function getUserProfileIds(userId: string): Promise<string[]> {
     const profiles = await opts.profileService.list(userId);
-    return profiles.map((p) => p.id);
+    let ids = profiles.map((p) => p.id);
+    // Runs inside runWithOrgId(connectionOrgId), so getActiveOrgId() returns
+    // the connection's pinned org. Filter to org-visible profiles (SaaS) so a
+    // multi-org user can't see/submit/cancel tasks across orgs over the WS.
+    if (opts.visibleProfileIdsForOrg) {
+      const visible = await opts.visibleProfileIdsForOrg(userId, getActiveOrgId(), ids);
+      if (visible) ids = ids.filter((id) => visible.has(id));
+    }
+    return ids;
   }
 
   async function handleMessage(
@@ -392,6 +408,19 @@ export function setupWsHandler(
       }
 
       case "cancel": {
+        // Ownership check: without this any connected user could cancel any
+        // task by id (cross-tenant DoS). Scope to the caller's org-visible
+        // profiles — same boundary as task list/get/delete.
+        const task = await taskService.get(msg.task_id);
+        const allowed = await getUserProfileIds(user.id);
+        if (!task || !allowed.includes(task.profile_id)) {
+          connectionManager.sendTo(connectionId, {
+            type: "error",
+            code: ErrorCodes.NOT_FOUND,
+            message: `Task ${msg.task_id} not found.`,
+          });
+          break;
+        }
         await taskService.cancel(msg.task_id);
         break;
       }

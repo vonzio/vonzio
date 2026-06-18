@@ -699,6 +699,10 @@ export async function buildServer(deps: ServerDeps) {
         coreDeps.recordTaskOrg
           ? coreDeps.recordTaskOrg(taskId, orgId)
           : Promise.resolve(),
+      visibleProfileIdsForOrg: (userId, activeOrgId, candidates) =>
+        coreDeps.visibleProfileIdsForOrg
+          ? coreDeps.visibleProfileIdsForOrg(userId, activeOrgId, candidates)
+          : Promise.resolve(null),
     });
   });
 
