@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Copy, Check } from "lucide-react";
 import { Card, Field, Input, Select, Banner, Button } from "../../../brand/components.js";
 import { useApi } from "../../../hooks/useApi.js";
+import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard.js";
 import { fetchProfiles, type ProfileSummary } from "../../../api/client.js";
 
 /**
@@ -11,12 +12,7 @@ import { fetchProfiles, type ProfileSummary } from "../../../api/client.js";
  * a picker we take a pasted token and render the snippet live.
  */
 function CopyField({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    void Promise.resolve(navigator.clipboard?.writeText(value))
-      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })
-      .catch(() => {});
-  };
+  const [copied, copy] = useCopyToClipboard();
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <code
@@ -32,7 +28,7 @@ function CopyField({ value }: { value: string }) {
       >
         {value}
       </code>
-      <Button variant="ghost" size="sm" icon={copied ? <Check size={14} /> : <Copy size={14} />} onClick={copy}>
+      <Button variant="ghost" size="sm" icon={copied ? <Check size={14} /> : <Copy size={14} />} onClick={() => copy(value)}>
         {copied ? "Copied" : "Copy"}
       </Button>
     </div>
@@ -52,7 +48,9 @@ export function EmbedSection() {
 
   const profileOptions = [
     { value: "", label: "Default profile" },
-    ...(profiles ?? []).map((p) => ({ value: p.slug, label: p.name })),
+    // value is the profile ID: session.start resolves profile_id by ID and the
+    // token's allowedProfileIds scope check compares IDs — a slug would 403.
+    ...(profiles ?? []).map((p) => ({ value: p.id, label: p.name })),
   ];
 
   return (

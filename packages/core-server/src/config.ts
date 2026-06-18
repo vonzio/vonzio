@@ -55,7 +55,24 @@ const configSchema = z.object({
   WIDGET_ALLOWED_ORIGINS: z
     .string()
     .default("")
-    .transform((v) => v.split(",").map((s) => s.trim()).filter(Boolean)),
+    .transform((v) =>
+      // Keep only well-formed origins, normalized to scheme://host[:port]. A
+      // malformed entry (no scheme, a path, stray text) injected into the CSP
+      // `frame-ancestors` directive would break the whole header (the browser
+      // drops it), silently disabling the gate — so drop bad entries here.
+      Array.from(
+        new Set(
+          v
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .map((s) => {
+              try { return new URL(s).origin; } catch { return null; }
+            })
+            .filter((s): s is string => s !== null),
+        ),
+      ),
+    ),
 
   // Preview proxy
   PREVIEW_MODE: z.enum(["path", "hostname"]).default("path"),

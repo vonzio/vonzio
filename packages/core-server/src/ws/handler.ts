@@ -19,6 +19,8 @@ import type { EventLog } from "../events/event-log.js";
 import { ErrorCodes } from "../errors.js";
 import { submitTaskSchema } from "../routes/validation.js";
 import { runWithOrgId, getActiveOrgId } from "../lib/active-org.js";
+import { SlidingWindowRateLimiter } from "../rate-limit/sliding-window.js";
+import type { RateLimitResult } from "@vonzio/shared";
 
 /**
  * Generate a short workspace title using the Claude API.
@@ -125,6 +127,24 @@ export function setupWsHandler(
 ): () => void {
   const { connectionManager, taskService, orchestrator, eventLog, imageRewriterService, log: baseLog } = opts;
   const wsLog = baseLog?.child?.({ component: "ws" });
+
+  // Per-token request-rate limit on the WS task-submission path. API-token
+  // callers (the embeddable chat's `rc_` key lives in public page HTML) are
+  // throttled to their token's rate_limit_rpm — without this a lifted public
+  // token could drive unlimited agent runs (cost/DoS). Keyed by token owner;
+  // one limiter per distinct rpm (most tokens share the default). Session-cookie
+  // users are not throttled here (they're authenticated dashboard users).
+  const tokenRateLimiters = new Map<number, SlidingWindowRateLimiter>();
+  function checkTokenRate(user: { id: string; role: string; rateLimitRpm?: number }): RateLimitResult {
+    if (user.role !== "api_token") return { allowed: true };
+    const rpm = user.rateLimitRpm && user.rateLimitRpm > 0 ? user.rateLimitRpm : 60;
+    let limiter = tokenRateLimiters.get(rpm);
+    if (!limiter) {
+      limiter = new SlidingWindowRateLimiter(60_000, rpm);
+      tokenRateLimiters.set(rpm, limiter);
+    }
+    return limiter.tryConsume(user.id);
+  }
 
   // Relay orchestrator events to WS clients + persist to event log
   const relayToSubscribers = (taskId: string, sessionId: string | undefined, msg: Record<string, unknown>) => {
@@ -334,14 +354,19 @@ export function setupWsHandler(
     opts.sessionRegistry.updateActivity(sessionId);
   }
 
-  async function getUserProfileIds(userId: string): Promise<string[]> {
-    const profiles = await opts.profileService.list(userId);
-    let ids = profiles.map((p) => p.id);
+  async function getUserProfileIds(user: { id: string; allowedProfileIds?: string[] }): Promise<string[]> {
+    // SECURITY: honor an API token's profile allow-list (allowedProfileIds),
+    // exactly like the REST /v1/tasks path. Without this, a token scoped to one
+    // profile could run ANY of the owner's profiles over the WS — the channel
+    // the embeddable chat uses. Token absent → the user's own profiles.
+    let ids = user.allowedProfileIds?.length
+      ? user.allowedProfileIds
+      : (await opts.profileService.list(user.id)).map((p) => p.id);
     // Runs inside runWithOrgId(connectionOrgId), so getActiveOrgId() returns
     // the connection's pinned org. Filter to org-visible profiles (SaaS) so a
     // multi-org user can't see/submit/cancel tasks across orgs over the WS.
     if (opts.visibleProfileIdsForOrg) {
-      const visible = await opts.visibleProfileIdsForOrg(userId, getActiveOrgId(), ids);
+      const visible = await opts.visibleProfileIdsForOrg(user.id, getActiveOrgId(), ids);
       if (visible) ids = ids.filter((id) => visible.has(id));
     }
     return ids;
@@ -355,6 +380,11 @@ export function setupWsHandler(
   ): Promise<void> {
     switch (msg.type) {
       case "submit": {
+        const submitRate = checkTokenRate(user);
+        if (!submitRate.allowed) {
+          connectionManager.sendTo(connectionId, { type: "error", code: "RATE_LIMITED", message: `Rate limit exceeded — retry in ${submitRate.retryAfter ?? 60}s` });
+          return;
+        }
         // Validate the payload the same way REST does
         const parsed = submitTaskSchema.safeParse(msg.payload);
         if (!parsed.success) {
@@ -366,7 +396,7 @@ export function setupWsHandler(
           return;
         }
 
-        const profileIds = await getUserProfileIds(user.id);
+        const profileIds = await getUserProfileIds(user);
 
         // If the user is submitting to an existing session_id that's not
         // in the in-memory Map, it's almost certainly expired. The
@@ -415,7 +445,7 @@ export function setupWsHandler(
         // task by id (cross-tenant DoS). Scope to the caller's org-visible
         // profiles — same boundary as task list/get/delete.
         const task = await taskService.get(msg.task_id);
-        const allowed = await getUserProfileIds(user.id);
+        const allowed = await getUserProfileIds(user);
         if (!task || !allowed.includes(task.profile_id)) {
           connectionManager.sendTo(connectionId, {
             type: "error",
@@ -429,11 +459,16 @@ export function setupWsHandler(
       }
 
       case "session.start": {
+        const startRate = checkTokenRate(user);
+        if (!startRate.allowed) {
+          connectionManager.sendTo(connectionId, { type: "error", code: "RATE_LIMITED", message: `Rate limit exceeded — retry in ${startRate.retryAfter ?? 60}s` });
+          return;
+        }
         const newSessionId = randomUUID();
         // Default to user's first profile if none specified (e.g. chat widget without ?profile=)
         let profileId = msg.profile_id;
         if (!profileId) {
-          const profileIds = await getUserProfileIds(user.id);
+          const profileIds = await getUserProfileIds(user);
           profileId = profileIds[0];
           if (!profileId) {
             connectionManager.sendTo(connectionId, {
@@ -606,6 +641,11 @@ export function setupWsHandler(
       }
 
       case "session.turn": {
+        const turnRate = checkTokenRate(user);
+        if (!turnRate.allowed) {
+          connectionManager.sendTo(connectionId, { type: "error", code: "RATE_LIMITED", message: `Rate limit exceeded — retry in ${turnRate.retryAfter ?? 60}s` });
+          return;
+        }
         const session = opts.sessionRegistry.get(msg.session_id);
         if (!session || session.user_id !== user.id) {
           connectionManager.sendTo(connectionId, {
@@ -649,7 +689,7 @@ export function setupWsHandler(
             goal_mode: (msg as Record<string, unknown>).goal_mode as boolean | undefined,
             acceptance_criteria: (msg as Record<string, unknown>).acceptance_criteria as string[] | undefined,
           },
-          await getUserProfileIds(user.id),
+          await getUserProfileIds(user),
         );
         connectionManager.subscribeTask(connectionId, result.task_id);
         break;

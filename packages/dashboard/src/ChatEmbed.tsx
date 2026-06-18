@@ -1,11 +1,12 @@
 /**
  * ChatEmbed — Embeddable chat page for external callers.
- * Accessed at /chat?key=rc_...&profile=prof_...
+ * Accessed at /chat?key=rc_...&profile=prof_... (key = scoped `rc_` API token;
+ * profile = the profile ID, resolved server-side by id).
  * Used both as a standalone page and inside the widget's iframe.
  */
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Send, RotateCcw, Loader2, Paperclip, X, FileText, Image, Download } from "lucide-react";
-import { type ChatMessage, nextId, ToolBlock, MarkdownContent, QuestionPicker, parseAskUserInput } from "./components/ChatCore.js";
+import { Send, RotateCcw, Loader2, Paperclip, X, FileText, Download } from "lucide-react";
+import { type ChatMessage, nextId, QuestionPicker, parseAskUserInput } from "./components/ChatCore.js";
 import { MessageList } from "./components/MessageList.js";
 
 // ─── URL params ──────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ export function ChatEmbed() {
   const [connected, setConnected] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [containerId, setContainerId] = useState<string | null>(null);
-  const [showTools, setShowTools] = useState(true);
+  const showTools = true; // tool blocks always shown in the embed
   const [sessionExpired, setSessionExpired] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -170,6 +171,9 @@ export function ChatEmbed() {
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
+      // Only accept commands from the direct embedding parent (the widget
+      // panel), not arbitrary windows that hold a handle to this iframe.
+      if (event.source !== window.parent) return;
       if (event.data?.type === "vonzio:newChat") {
         newChatRef.current();
       } else if (event.data?.type === "vonzio:downloadTranscript") {
