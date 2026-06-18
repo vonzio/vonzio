@@ -16,11 +16,33 @@ export const submitTaskSchema = z.object({
   workspace: z
     .object({
       type: z.enum(["git", "files"]),
-      git_url: z.string().optional(),
-      git_ref: z.string().optional(),
+      // Only real http(s) remotes — git honours ext::/file:// transports that
+      // would run commands or read files on the host at provision time.
+      git_url: z
+        .string()
+        .regex(/^https?:\/\//i, "git_url must be an http(s) URL")
+        .optional(),
+      // No leading '-' / whitespace so it can't be parsed as a git option.
+      git_ref: z
+        .string()
+        .regex(/^[^-\s][^\s]*$/, "git_ref contains invalid characters")
+        .optional(),
       git_pat: z.string().optional(),
       files: z
-        .array(z.object({ path: z.string(), content: z.string() }))
+        .array(
+          z.object({
+            // Relative, contained paths only — no absolute paths or `..`
+            // segments (the provisioner writes these on the host).
+            path: z
+              .string()
+              .min(1)
+              .refine(
+                (p) => !p.startsWith("/") && !p.split(/[\\/]/).includes(".."),
+                "path must be relative and must not contain '..'",
+              ),
+            content: z.string(),
+          }),
+        )
         .optional(),
     })
     .optional(),

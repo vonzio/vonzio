@@ -435,4 +435,41 @@ describe("WorkspaceProvisioner", () => {
     const { access } = await import("node:fs/promises");
     await expect(access(dir)).rejects.toThrow();
   });
+
+  it("SECURITY: refuses to write files outside the workspace (path traversal)", async () => {
+    await expect(
+      provisioner.provision({
+        type: "files",
+        files: [{ path: "../../../../tmp/vonzio-escape-test", content: "pwned" }],
+      }),
+    ).rejects.toThrow(/outside the workspace/);
+
+    // Absolute paths are escapes too.
+    await expect(
+      provisioner.provision({
+        type: "files",
+        files: [{ path: "/tmp/vonzio-escape-abs", content: "pwned" }],
+      }),
+    ).rejects.toThrow(/outside the workspace/);
+  });
+
+  it("SECURITY: refuses non-http(s) git transports (ext::/file://)", async () => {
+    await expect(
+      provisioner.provision({ type: "git", git_url: "ext::sh -c 'touch /tmp/vonzio-rce'" }),
+    ).rejects.toThrow(/http\(s\)/);
+
+    await expect(
+      provisioner.provision({ type: "git", git_url: "file:///etc/passwd" }),
+    ).rejects.toThrow(/http\(s\)/);
+  });
+
+  it("SECURITY: refuses a git_ref that could be parsed as an option", async () => {
+    await expect(
+      provisioner.provision({
+        type: "git",
+        git_url: "https://example.com/repo.git",
+        git_ref: "--upload-pack=touch /tmp/vonzio-rce",
+      }),
+    ).rejects.toThrow(/git_ref/);
+  });
 });
