@@ -5,6 +5,7 @@ import { ProfileService } from "../services/profile-service.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 import type { TaskMode, TaskStatus } from "@vonzio/shared";
 import { submitTaskSchema, sendValidationError } from "./validation.js";
+import { getActiveOrgId } from "../lib/active-org.js";
 
 export interface TaskRoutesOptions {
   taskService: TaskService;
@@ -17,6 +18,16 @@ export interface TaskRoutesOptions {
    * silently lose its org affinity.
    */
   recordTaskOrg?: (taskId: string, orgId: string) => Promise<void>;
+  /**
+   * SaaS hook (same as profiles): returns the subset of the candidate profile
+   * ids visible in the active org, or null when no org filter applies (OSS).
+   * Used to keep task visibility within the active org's tenant boundary.
+   */
+  visibleProfileIdsForOrg?: (
+    userId: string,
+    activeOrgId: string | null,
+    candidates: string[],
+  ) => Promise<Set<string> | null>;
 }
 
 export const taskRoutes = fp(
@@ -46,10 +57,13 @@ export const taskRoutes = fp(
 
       try {
         const profiles = await opts.profileService.list(request.user.id);
-        const result = await taskService.submit(
-          parsed.data,
-          profiles.map((p) => p.id),
-        );
+        let allowedProfileIds = profiles.map((p) => p.id);
+        // Keep submission within the active org's tenant boundary (SaaS).
+        if (opts.visibleProfileIdsForOrg) {
+          const visible = await opts.visibleProfileIdsForOrg(request.user.id, getActiveOrgId(), allowedProfileIds);
+          if (visible) allowedProfileIds = allowedProfileIds.filter((id) => visible.has(id));
+        }
+        const result = await taskService.submit(parsed.data, allowedProfileIds);
         // Link the task to the caller's active org if a SaaS layer
         // has wired the hook. Awaits before sending the response so
         // the orchestrator's resolveOrgIdForTask call (which can
@@ -75,7 +89,15 @@ export const taskRoutes = fp(
       if (user.role === "admin" && !request.orgContext?.org_id) return undefined;
       if (user.allowedProfileIds?.length) return user.allowedProfileIds; // API token
       const profiles = await opts.profileService.list(user.id);
-      return profiles.map((p) => p.id);
+      let ids = profiles.map((p) => p.id);
+      // SaaS: keep visibility within the active org. Without this a user who
+      // belongs to multiple orgs could read/cancel tasks for their profiles in
+      // another org's context.
+      if (opts.visibleProfileIdsForOrg) {
+        const visible = await opts.visibleProfileIdsForOrg(user.id, getActiveOrgId(), ids);
+        if (visible) ids = ids.filter((id) => visible.has(id));
+      }
+      return ids;
     }
 
     server.get<{

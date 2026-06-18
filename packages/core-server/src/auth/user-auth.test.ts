@@ -74,12 +74,13 @@ describe("adminOnlyHook — only the real admin role passes", () => {
 });
 
 describe("isOwnerOrAdmin", () => {
+  const u = (id: string, role: string) => ({ id, role, email: "", name: "" });
   it("treats null resource owner as shared", () => {
-    expect(isOwnerOrAdmin({ id: "u1", role: "user" }, null)).toBe(true);
+    expect(isOwnerOrAdmin(u("u1", "user"), null)).toBe(true);
   });
   it("matches owner and admin, rejects others", () => {
-    expect(isOwnerOrAdmin({ id: "u1", role: "user" }, "u1")).toBe(true);
-    expect(isOwnerOrAdmin({ id: "a1", role: "admin" }, "u1")).toBe(true);
-    expect(isOwnerOrAdmin({ id: "u2", role: "user" }, "u1")).toBe(false);
+    expect(isOwnerOrAdmin(u("u1", "user"), "u1")).toBe(true);
+    expect(isOwnerOrAdmin(u("a1", "admin"), "u1")).toBe(true);
+    expect(isOwnerOrAdmin(u("u2", "user"), "u1")).toBe(false);
   });
 });

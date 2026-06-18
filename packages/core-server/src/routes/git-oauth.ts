@@ -12,7 +12,9 @@ type ProviderType = "github" | "gitlab" | "bitbucket";
  * Only allow same-site relative paths: a single leading '/', not '//', no scheme.
  */
 function safeReturnPath(p?: string): string {
-  if (!p || !p.startsWith("/") || p.startsWith("//") || p.includes("://")) {
+  // Reject backslashes too: browsers normalize `/\evil.com` to `//evil.com`
+  // (protocol-relative), which would slip past a `//`-only check.
+  if (!p || !p.startsWith("/") || p.startsWith("//") || p.includes("://") || p.includes("\\")) {
     return "/";
   }
   return p;

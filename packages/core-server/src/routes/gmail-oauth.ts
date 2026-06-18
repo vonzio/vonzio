@@ -17,7 +17,8 @@ const GMAIL_SCOPES = [
  * Only allow same-site relative paths: a single leading '/', not '//', no scheme.
  */
 function safeReturnPath(p?: string): string {
-  if (!p || !p.startsWith("/") || p.startsWith("//") || p.includes("://")) {
+  // Reject backslashes too: browsers normalize `/\evil.com` to `//evil.com`.
+  if (!p || !p.startsWith("/") || p.startsWith("//") || p.includes("://") || p.includes("\\")) {
     return "/";
   }
   return p;

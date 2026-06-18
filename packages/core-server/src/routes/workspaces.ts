@@ -125,14 +125,7 @@ export const workspaceRoutes = fp(
       },
     }, async (request, reply) => {
       const session = workspaceService.get(request.params.id);
-      const orgCtxId = request.orgContext?.org_id;
-      const isAdmin = request.user!.role === "admin";
-      let allowed: boolean;
-      if (!session) allowed = false;
-      else if (isAdmin) allowed = true;
-      else if (orgCtxId) allowed = (session.org_id ?? null) === orgCtxId;
-      else allowed = session.user_id === request.user!.id;
-      if (!session || !allowed) {
+      if (!session || !authorizeTenantAccess(request, session)) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Session not found"));
       }
       if (!orchestrator?.restartWorkspaceContainer) {

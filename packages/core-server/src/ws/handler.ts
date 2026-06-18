@@ -357,7 +357,10 @@ export function setupWsHandler(
         const submittedSessionId = parsed.data.session_id;
         if (submittedSessionId) {
           const resurrected = await opts.sessionRegistry.resurrect(submittedSessionId, user.id);
-          if (!resurrected) {
+          // Tenant boundary: in SaaS the resurrected session must belong to
+          // the connection's active org. Without this a user in multiple orgs
+          // could resume/submit to their own session from another org context.
+          if (!resurrected || (connectionOrgId && (resurrected.org_id ?? null) !== connectionOrgId)) {
             connectionManager.sendTo(connectionId, {
               type: "error",
               code: ErrorCodes.NOT_FOUND,
@@ -442,7 +445,9 @@ export function setupWsHandler(
         // resume path runs.
         await opts.sessionRegistry.resurrect(msg.session_id, user.id);
         const session = opts.sessionRegistry.get(msg.session_id);
-        if (session && session.user_id !== user.id) {
+        // Reject if not owned, or (SaaS) not in the connection's active org.
+        if (session && (session.user_id !== user.id
+          || (connectionOrgId && (session.org_id ?? null) !== connectionOrgId))) {
           connectionManager.sendTo(connectionId, {
             type: "error",
             session_id: msg.session_id,

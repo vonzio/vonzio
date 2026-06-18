@@ -599,6 +599,10 @@ export async function buildServer(deps: ServerDeps) {
         coreDeps.recordTaskOrg
           ? coreDeps.recordTaskOrg(taskId, orgId)
           : Promise.resolve(),
+      visibleProfileIdsForOrg: (userId, activeOrgId, candidates) =>
+        coreDeps.visibleProfileIdsForOrg
+          ? coreDeps.visibleProfileIdsForOrg(userId, activeOrgId, candidates)
+          : Promise.resolve(null),
     });
     v1.register(workspaceRoutes, { workspaceService, profileService, apiKeyService, eventLog, orchestrator });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
