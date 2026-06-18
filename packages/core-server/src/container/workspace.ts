@@ -50,12 +50,14 @@ export class WorkspaceProvisioner {
   }
 
   private async cloneRepo(dir: string, config: WorkspaceConfig): Promise<void> {
-    let url = config.git_url!;
-    assertSafeGitUrl(url);
+    const cleanUrl = config.git_url!;
+    assertSafeGitUrl(cleanUrl);
     if (config.git_ref) assertSafeGitRef(config.git_ref);
+
+    let url = cleanUrl;
     if (config.git_pat) {
       // Inject PAT into the URL for authentication
-      url = url.replace("https://", `https://${config.git_pat}@`);
+      url = cleanUrl.replace("https://", `https://${config.git_pat}@`);
     }
 
     const args = ["clone", "--depth", "1"];
@@ -69,6 +71,16 @@ export class WorkspaceProvisioner {
       timeout: 120_000,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     });
+
+    // `git clone` persists the (PAT-bearing) remote URL into
+    // <dir>/.git/config, which the agent can read. Scrub it back to the
+    // token-free URL so the credential never leaks into the workspace.
+    if (config.git_pat) {
+      await execFileAsync("git", ["-C", dir, "remote", "set-url", "origin", "--", cleanUrl], {
+        timeout: 30_000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+    }
   }
 
   private async writeFiles(

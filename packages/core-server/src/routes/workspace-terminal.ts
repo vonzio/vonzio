@@ -3,7 +3,7 @@ import type WebSocket from "ws";
 import fp from "fastify-plugin";
 import type { SessionRegistry } from "../container/session-registry.js";
 import type { ContainerManager, TerminalSession } from "@vonzio/shared";
-import { isOwnerOrAdmin } from "../auth/user-auth.js";
+import { authorizeTenantAccess } from "../auth/user-auth.js";
 
 export interface WorkspaceTerminalRoutesOptions {
   sessionRegistry: SessionRegistry;
@@ -59,7 +59,7 @@ export const workspaceTerminalRoutes = fp(
         .replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) || "default";
       const key = `${id}::${termId}`;
       const workspace = sessionRegistry.get(id);
-      if (!user || !workspace || !workspace.container_id || !isOwnerOrAdmin(user, workspace.user_id)) {
+      if (!user || !workspace || !workspace.container_id || !authorizeTenantAccess(request, workspace)) {
         socket.close(4001, "Unauthorized");
         return;
       }

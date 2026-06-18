@@ -117,10 +117,14 @@ export function createPreviewAuthChecker(
       // Verify container matches
       if (tokenContainer !== fullContainerId) return false;
 
-      // Verify ownership
+      // Verify ownership. NOTE: no `userId === "admin"` escape hatch — the
+      // token is HMAC-signed and only ever minted for the real owner, so a
+      // magic-string admin bypass would only ever be a footgun (a user whose
+      // id is literally "admin", or a future mint path) granting cross-tenant
+      // preview access. Ownership must be exact.
       const workspace = sessionRegistry.getByContainer(fullContainerId);
       if (!workspace) return false;
-      if (workspace.user_id !== userId && userId !== "admin") return false;
+      if (workspace.user_id !== userId) return false;
 
       // Verify signature
       const payload = `${tokenContainer}:${userId}:${expiresStr}`;

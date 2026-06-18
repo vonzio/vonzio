@@ -11,6 +11,8 @@ import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
+import type { FastifyRequest } from "fastify";
+import { authorizeTenantAccess } from "../auth/user-auth.js";
 
 /** Check resource ownership: resource must exist and belong to user (or user is admin). Returns false if unauthorized. */
 function canAccess(user: { id: string; role: string }, resourceUserId: string | null | undefined): boolean {
@@ -195,16 +197,19 @@ export const userResourceRoutes = fp(
     // ─── Documents (per-workspace knowledge) ────────────────
     // Scoped to a single workspace (session). Mounted at /knowledge alongside
     // the agent-level docs, but only for that conversation.
-    const ownedWorkspace = async (sessionId: string, user: { id: string; role: string }) => {
-      const rows = await db.select({ user_id: schema.workspaces.user_id, profile_id: schema.workspaces.profile_id })
+    const ownedWorkspace = async (sessionId: string, request: FastifyRequest) => {
+      const rows = await db.select({ user_id: schema.workspaces.user_id, profile_id: schema.workspaces.profile_id, org_id: schema.workspaces.org_id })
         .from(schema.workspaces).where(eq(schema.workspaces.session_id, sessionId));
       const ws = rows[0];
       if (!ws) return null;
-      return canAccess(user, ws.user_id) ? ws : null;
+      // Tenant boundary: SaaS requires org-match (no role bypass), OSS
+      // owner-or-admin. Previously user_id-only, letting a user reach a
+      // workspace's docs from another org's context.
+      return authorizeTenantAccess(request, ws) ? ws : null;
     };
 
     server.get<{ Params: { id: string } }>("/v1/workspaces/:id/documents", async (request, reply) => {
-      const ws = await ownedWorkspace(request.params.id, request.user!);
+      const ws = await ownedWorkspace(request.params.id, request);
       if (!ws) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       return documentService.listForSession(request.params.id);
     });
@@ -213,7 +218,7 @@ export const userResourceRoutes = fp(
       Params: { id: string };
       Body: { name: string; media_type: string; content_b64: string };
     }>("/v1/workspaces/:id/documents", { bodyLimit: Math.ceil(documentService.maxDocumentBytes * 1.5) + 4 * 1024 * 1024 }, async (request, reply) => {
-      const ws = await ownedWorkspace(request.params.id, request.user!);
+      const ws = await ownedWorkspace(request.params.id, request);
       if (!ws) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       const { name, media_type, content_b64 } = request.body ?? {};
       if (!name || !media_type || !content_b64) {
@@ -234,7 +239,7 @@ export const userResourceRoutes = fp(
     });
 
     server.delete<{ Params: { id: string; docId: string } }>("/v1/workspaces/:id/documents/:docId", async (request, reply) => {
-      const ws = await ownedWorkspace(request.params.id, request.user!);
+      const ws = await ownedWorkspace(request.params.id, request);
       if (!ws) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       const owner = await documentService.getOwner(request.params.docId);
       if (!owner || owner.session_id !== request.params.id) {
@@ -245,7 +250,7 @@ export const userResourceRoutes = fp(
     });
 
     server.get<{ Params: { id: string; docId: string } }>("/v1/workspaces/:id/documents/:docId/raw", async (request, reply) => {
-      const ws = await ownedWorkspace(request.params.id, request.user!);
+      const ws = await ownedWorkspace(request.params.id, request);
       if (!ws) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       const owner = await documentService.getOwner(request.params.docId);
       if (!owner || owner.session_id !== request.params.id) {

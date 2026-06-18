@@ -2,9 +2,11 @@ import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
 import { nanoid } from "nanoid";
 import type { PlaybookService } from "../services/playbook-service.js";
+import type { ProfileService } from "../services/profile-service.js";
 import type { ChainRunner } from "../orchestrator/chain-runner.js";
 import type { PlaybookScheduler } from "../services/playbook-scheduler.js";
 import { errorResponse, ErrorCodes } from "../errors.js";
+import { SlidingWindowRateLimiter } from "../rate-limit/sliding-window.js";
 import type { NotifyOn, SuccessCriterion } from "@vonzio/shared";
 import { CronExpressionParser } from "cron-parser";
 
@@ -14,13 +16,22 @@ function validateCron(schedule: string): boolean {
 
 export interface PlaybookRoutesOptions {
   playbookService: PlaybookService;
+  profileService: ProfileService;
   chainRunner: ChainRunner;
   playbookScheduler: PlaybookScheduler;
 }
 
 export const playbookRoutes = fp(
   async (server: FastifyInstance, opts: PlaybookRoutesOptions) => {
-    const { playbookService, chainRunner, playbookScheduler } = opts;
+    const { playbookService, profileService, chainRunner, playbookScheduler } = opts;
+
+    // True only when `profileId` belongs to (is visible to) `userId`.
+    // Mirrors the ownership guard in routes/integrations.ts so a caller
+    // can't attach someone else's profile to a playbook.
+    const profileOwnedByCaller = async (userId: string, profileId: string): Promise<boolean> => {
+      const owned = await profileService.list(userId);
+      return owned.some((p) => p.id === profileId);
+    };
 
     // ── Playbooks CRUD ──
 
@@ -60,6 +71,11 @@ export const playbookRoutes = fp(
           }
           if (triggerType === "cron" && !validateCron(schedule)) {
             return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Invalid cron expression"));
+          }
+          // Reject cross-user grants: a caller may only schedule against
+          // a profile they own.
+          if (!(await profileOwnedByCaller(request.user!.id, profile_id))) {
+            return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, `Profile not found: ${profile_id}`));
           }
           const webhookToken = triggerType === "webhook" ? nanoid(32) : undefined;
           const playbook = await playbookService.create(request.user!.id, {
@@ -104,9 +120,18 @@ export const playbookRoutes = fp(
       async (request, reply) => {
         try {
           const body = request.body as Record<string, unknown>;
+          // The webhook token is server-generated only — never let a
+          // client set or downgrade it via PATCH. Strip it before the
+          // body reaches the service (which mints one server-side when a
+          // playbook switches to the webhook trigger).
+          delete body.webhook_token;
           const patchTriggerType = (body.trigger_type as string | undefined) ?? undefined;
           if (body.schedule && (!patchTriggerType || patchTriggerType === "cron") && !validateCron(body.schedule as string)) {
             return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Invalid cron expression"));
+          }
+          // If the patch reassigns the profile, enforce caller ownership.
+          if (typeof body.profile_id === "string" && !(await profileOwnedByCaller(request.user!.id, body.profile_id))) {
+            return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, `Profile not found: ${body.profile_id}`));
           }
           const updated = await playbookService.update(
             request.params.id,
@@ -318,9 +343,23 @@ export const playbookWebhookRoute = fp(
   async (server: FastifyInstance, opts: PlaybookWebhookOptions) => {
     const { playbookService, chainRunner } = opts;
 
+    // This route lives OUTSIDE the /v1 auth scope and is reachable by
+    // anyone holding (or guessing) a token, so it needs its own
+    // throttle. ~30 requests/minute per key, keyed by token + client IP
+    // so a single token or a single IP can't flood the chain runner.
+    const webhookRateLimiter = new SlidingWindowRateLimiter(60_000, 30);
+
     server.post<{ Params: { token: string } }>(
       "/v1/webhook/playbook/:token",
       async (request, reply) => {
+        const rateKey = `${request.params.token}:${request.ip ?? "unknown"}`;
+        const limit = webhookRateLimiter.tryConsume(rateKey);
+        if (!limit.allowed) {
+          if (limit.retryAfter !== undefined) {
+            reply.header("Retry-After", String(limit.retryAfter));
+          }
+          return reply.code(429).send({ error: "Too many requests" });
+        }
         const playbook = await playbookService.getByWebhookToken(request.params.token);
         if (!playbook) {
           return reply.code(404).send({ error: "Not found" });

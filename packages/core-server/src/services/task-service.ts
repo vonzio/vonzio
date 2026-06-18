@@ -174,6 +174,14 @@ export class TaskService {
     const limit = filters.limit ?? 20;
     const offset = (page - 1) * limit;
 
+    // Contract: profileIds === undefined → no scoping (admin "see all").
+    // profileIds === [] → scoped to NOTHING (deny), NOT "no filter". Without
+    // this, an empty visible-profile set (e.g. a user with no profiles in the
+    // active org) would fall through to an unfiltered query and leak every
+    // task. get/delete already deny on []; list must too.
+    if (filters.profileIds && filters.profileIds.length === 0) {
+      return { tasks: [], total: 0 };
+    }
     const conditions = [];
     if (filters.profileIds?.length) {
       conditions.push(inArray(schema.tasks.profile_id, filters.profileIds));
