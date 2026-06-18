@@ -16,6 +16,7 @@
     "packages/plugins/*",
     "packages/core-server",
     "packages/dashboard",
+    "packages/widget",
     "agent-runner"
   ],
   "scripts": {

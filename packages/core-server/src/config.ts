@@ -47,6 +47,33 @@ const configSchema = z.object({
   // Event log (session replay)
   EVENT_LOG_DIR: z.string().default("./data/events"),
 
+  // Embeddable chat widget. CSV of external origins allowed to embed the
+  // `/chat` surface (sets CSP `frame-ancestors`). Empty (default) = same-origin
+  // only ('self'): the widget works on the vonzio origin's own pages out of the
+  // box; embedding on a DIFFERENT site requires listing that site's origin
+  // here, e.g. WIDGET_ALLOWED_ORIGINS=https://acme.com,https://docs.acme.com.
+  WIDGET_ALLOWED_ORIGINS: z
+    .string()
+    .default("")
+    .transform((v) =>
+      // Keep only well-formed origins, normalized to scheme://host[:port]. A
+      // malformed entry (no scheme, a path, stray text) injected into the CSP
+      // `frame-ancestors` directive would break the whole header (the browser
+      // drops it), silently disabling the gate — so drop bad entries here.
+      Array.from(
+        new Set(
+          v
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .map((s) => {
+              try { return new URL(s).origin; } catch { return null; }
+            })
+            .filter((s): s is string => s !== null),
+        ),
+      ),
+    ),
+
   // Preview proxy
   PREVIEW_MODE: z.enum(["path", "hostname"]).default("path"),
   PREVIEW_DOMAIN: z.string().default("vonzio.localhost"),
