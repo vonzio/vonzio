@@ -533,7 +533,7 @@ function SessionModal({ session, onClose }: { session: WorkspaceSummary; onClose
         <span><Pill tone={statusTone[session.status]}>{session.status}</Pill></span>
         <Meta>Container</Meta>
         <span>{shortId(session.container_id)}</span>
-        <Meta>Profile</Meta>
+        <Meta>Agent</Meta>
         <span>{session.profile_id}</span>
         <Meta>Created</Meta>
         <span>{new Date(session.created_at).toLocaleString()}</span>
@@ -693,7 +693,7 @@ function TaskModal({ task, onClose }: { task: TaskSummary; onClose: () => void }
         <span><Pill tone={statusTone[task.status]}>{task.status}</Pill></span>
         <Meta>Mode</Meta>
         <span>{task.mode}</span>
-        <Meta>Profile</Meta>
+        <Meta>Agent</Meta>
         <span>{task.profile_id}</span>
         <Meta>Session</Meta>
         <span>{task.session_id ?? "—"}</span>

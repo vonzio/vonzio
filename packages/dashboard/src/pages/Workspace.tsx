@@ -816,7 +816,7 @@ export function Workspace() {
                         <p className="text-sm text-muted-foreground">
                           {keyMissing
                             ? "You'll need a provider key before you can chat — it takes a few seconds."
-                            : ((profiles?.length ?? 0) > 1 ? "Select a profile and start a conversation" : "Start a conversation")}
+                            : ((profiles?.length ?? 0) > 1 ? "Select an agent and start a conversation" : "Start a conversation")}
                         </p>
                       </div>
                       {keyMissing && (
