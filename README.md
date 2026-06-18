@@ -92,43 +92,54 @@ Full self-host guide — env reference, upgrade path, troubleshooting:
 
 ## How it works
 
-Three processes on your host, one fresh Docker container per conversation.
+On your machine: **core-server** (which also serves the dashboard + widget),
+**Postgres**, a **docker-socket-proxy**, an **egress proxy**, and **one fresh
+agent container per conversation**.
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                          Your machine                            │
-│                                                                  │
-│   ┌───────────────┐   HTTP / WS    ┌────────────────────────┐    │
-│   │   Dashboard    │ ─────────────▶│      core-server       │    │
-│   │  (React SPA)   │◀──── stream ──│       (Fastify)        │    │
-│   └───────────────┘                │                        │    │
-│                                    │  • Better Auth         │    │
-│   ┌───────────────┐                │  • Drizzle / Postgres  │    │
-│   │  Chat widget   │ ──────────────▶│  • Orchestrator        │    │
-│   │  (drop-in JS)  │                │  • Container pool      │    │
-│   └───────────────┘                │  • MCP runtime         │    │
-│                                    └──────────┬─────────────┘    │
-│                                               │ docker exec       │
-│                                               ▼                   │
-│                              ┌────────────────────────────────┐  │
-│                              │       Agent container          │  │
-│                              │  (one per conversation)        │  │
-│                              │                                │  │
-│                              │  agent-runner ─▶ LLM provider │  │
-│                              │  workspace/ (bind-mounted)     │  │
-│                              │  MCP servers (stdio / http)    │  │
-│                              └────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph BROWSER["Browser"]
+    DASH["Dashboard SPA"]
+    EMBED["Embedded chat<br/>(widget → /chat)"]
+  end
+
+  subgraph HOST["Your machine"]
+    CS["<b>core-server</b> · Fastify<br/>Better Auth · Drizzle<br/>Orchestrator · Container pool · MCP runtime<br/><i>also serves the dashboard + widget</i>"]
+    PG[("Postgres")]
+    DSP["docker-socket-proxy"]
+    EG["egress-proxy<br/><i>SNI/Host allowlist<br/>(when enforcement is on)</i>"]
+    subgraph AGENT["Agent container · one per conversation"]
+      RUN["agent-runner"]
+      WS["/workspace<br/>bind-mount or named volume"]
+      MCP["MCP servers<br/>stdio / http"]
+    end
+  end
+
+  LLM["LLM provider /<br/>allowlisted internet"]
+
+  DASH <-->|"HTTP / WS · stream"| CS
+  EMBED <-->|"HTTP / WS · stream"| CS
+  CS <--> PG
+  CS -->|"Docker API"| DSP
+  DSP -->|"exec · stdin/stdout JSON"| RUN
+  RUN --- WS
+  RUN --- MCP
+  RUN -->|"model + egress"| EG
+  EG --> LLM
 ```
 
 **The path of a message.**
 
 1. The dashboard or your widget embed opens a WebSocket to `core-server` and posts a message.
 2. The orchestrator resolves the user's **profile** — model, system prompt, tools, MCP
-   servers, container image — then asks the pool for a container. The pool hands one back
-   warm or provisions a fresh one with a bind-mounted `workspace/` directory.
-3. Inside the container, `agent-runner` calls your configured **LLM provider**, streams
-   tokens back over the WebSocket, and runs tools / MCP calls in-process.
+   servers, container image — then asks the pool for a container (warm, or a fresh one).
+   core-server talks to Docker through a **socket-proxy**, never the raw daemon socket. The
+   `/workspace` mount is a bind-mounted host dir for one-shot tasks, or a **named volume**
+   for persistent sessions (so files survive container recycling).
+3. core-server **execs** into the container, streaming the request as stdin JSON;
+   `agent-runner` calls your configured **LLM provider** — through the **egress proxy** when
+   enforcement is on (which permits the model endpoint + the profile's allowlist and blocks
+   everything else) — and streams tokens/tool calls back on stdout, relayed to the client WS.
 4. core-server logs every event (token, tool call, file write) and persists the session so
    the next message resumes in the same container with the same memory.
 
@@ -136,8 +147,9 @@ Three processes on your host, one fresh Docker container per conversation.
 
 - **Profile** — the agent recipe: model + system prompt + tool allowlist + MCP servers +
   container image + budget caps. Members can have many; admins can mark some shared.
-- **Workspace** — the per-conversation directory the agent reads and writes. Survives across
-  messages; lives at `data/workspaces/<session_id>/` on the host.
+- **Workspace** — the per-conversation `/workspace` the agent reads and writes. Survives
+  across messages: a bind-mounted host dir (`data/workspaces/<session_id>/`) for one-shot
+  tasks, a named Docker volume for persistent sessions.
 - **Container pool** — warm containers are reused across conversations of the same profile;
   cold ones are torn down after a configurable idle window.
 - **MCP runtime** — first-class stdio + HTTP MCP servers, scoped per profile.
