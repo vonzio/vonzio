@@ -94,17 +94,21 @@ Full self-host guide — env reference, upgrade path, troubleshooting:
 
 On your machine: **core-server** (which also serves the dashboard + widget),
 **Postgres**, a **docker-socket-proxy**, an **egress proxy**, and **one fresh
-agent container per conversation**.
+agent container per conversation**. The *same* agent is reachable from the
+dashboard, an embedded widget, **Slack, or Telegram** — and notifies you back
+over Slack, Telegram, email, or a webhook.
 
 ```mermaid
 flowchart TB
-  subgraph BROWSER["Browser"]
+  subgraph SURFACES["Surfaces — all drive the same agent"]
     DASH["Dashboard SPA"]
     EMBED["Embedded chat<br/>(widget → /chat)"]
+    SLACK["Slack"]
+    TG["Telegram"]
   end
 
   subgraph HOST["Your machine"]
-    CS["<b>core-server</b> · Fastify<br/>Better Auth · Drizzle<br/>Orchestrator · Container pool · MCP runtime<br/><i>also serves the dashboard + widget</i>"]
+    CS["<b>core-server</b> · Fastify<br/>Better Auth · Drizzle · Orchestrator<br/>Container pool · MCP runtime · plugins<br/><i>also serves the dashboard + widget</i>"]
     PG[("Postgres")]
     DSP["docker-socket-proxy"]
     EG["egress-proxy<br/><i>SNI/Host allowlist<br/>(when enforcement is on)</i>"]
@@ -116,9 +120,12 @@ flowchart TB
   end
 
   LLM["LLM provider /<br/>allowlisted internet"]
+  NOTIFY["Notifications<br/>Slack · Telegram · Email · webhook"]
 
   DASH <-->|"HTTP / WS · stream"| CS
   EMBED <-->|"HTTP / WS · stream"| CS
+  SLACK -->|"webhook"| CS
+  TG -->|"webhook"| CS
   CS <--> PG
   CS -->|"Docker API"| DSP
   DSP -->|"exec · stdin/stdout JSON"| RUN
@@ -126,6 +133,7 @@ flowchart TB
   RUN --- MCP
   RUN -->|"model + egress"| EG
   EG --> LLM
+  CS -.->|"playbook / run results"| NOTIFY
 ```
 
 **The path of a message.**
