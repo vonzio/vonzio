@@ -154,9 +154,19 @@ export class PlaybookService {
     }
     if (input.notify_on !== undefined) updates.notify_on = input.notify_on;
     if (input.notification_channels !== undefined) updates.notification_channels = input.notification_channels;
-    if (input.trigger_type !== undefined) updates.trigger_type = input.trigger_type;
+    if (input.trigger_type !== undefined) {
+      updates.trigger_type = input.trigger_type;
+      // The webhook token is server-generated only — clients may never
+      // set or downgrade it (see the route, which strips it from the
+      // patch body). Mint one server-side when a playbook is switched to
+      // the webhook trigger and doesn't already have a token.
+      if (input.trigger_type === "webhook" && !existing.webhook_token) {
+        updates.webhook_token = nanoid(32);
+      }
+    }
     if (input.interval_seconds !== undefined) updates.interval_seconds = input.interval_seconds;
-    if (input.webhook_token !== undefined) updates.webhook_token = input.webhook_token;
+    // NOTE: input.webhook_token is intentionally ignored — the token is
+    // never client-settable. It's minted above on webhook-trigger switch.
     if (input.success_criteria !== undefined) updates.success_criteria = input.success_criteria;
 
     await this.db.update(schema.playbooks).set(updates).where(eq(schema.playbooks.id, id));

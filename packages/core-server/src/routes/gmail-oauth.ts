@@ -11,6 +11,18 @@ const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
 ].join(" ");
 
+/**
+ * `returnPath` comes from (decrypted) OAuth state and is fed to reply.redirect,
+ * which honours absolute/protocol-relative URLs — an open-redirect vector.
+ * Only allow same-site relative paths: a single leading '/', not '//', no scheme.
+ */
+function safeReturnPath(p?: string): string {
+  if (!p || !p.startsWith("/") || p.startsWith("//") || p.includes("://")) {
+    return "/";
+  }
+  return p;
+}
+
 export function resolveGoogleCredentials(config: Config) {
   const clientId = config.GMAIL_CLIENT_ID || config.AUTH_GOOGLE_CLIENT_ID;
   const clientSecret = config.GMAIL_CLIENT_SECRET || config.AUTH_GOOGLE_CLIENT_SECRET;
@@ -96,7 +108,7 @@ export const gmailOAuthCallbackRoute = fp(
           return reply.redirect("/settings?oauth=error&message=invalid_state#integrations");
         }
 
-        const returnPath = stateData.returnPath ?? "/settings";
+        const returnPath = safeReturnPath(stateData.returnPath);
 
         // Check expiry (5 minutes)
         if (Date.now() - stateData.ts > 5 * 60 * 1000) {

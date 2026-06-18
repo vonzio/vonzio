@@ -21,6 +21,32 @@ export function isOwnerOrAdmin(user: AuthUser, resourceUserId: string | null): b
 }
 
 /**
+ * Authorize access to a tenant-scoped resource (workspace, task, profile,
+ * document, credential, …).
+ *
+ * SECURITY — the tenant boundary:
+ *  - SaaS (request.orgContext.org_id is set): the active org IS the boundary.
+ *    The resource's org_id must match. The `admin` role does NOT bypass this —
+ *    a logged-in admin acting inside an org context is acting as that tenant;
+ *    platform-level access happens out-of-band (no org context). Without this,
+ *    every id-addressable route that only ran `isOwnerOrAdmin` let a user in
+ *    org B reach org A's data (and any admin reach every org).
+ *  - OSS (no orgContext): owner-or-admin, unchanged.
+ *
+ * Resources with a null org_id under an active org context are treated as not
+ * belonging to the tenant (deny) — fail closed.
+ */
+export function authorizeTenantAccess(
+  request: FastifyRequest,
+  resource: { user_id?: string | null; org_id?: string | null },
+): boolean {
+  if (!request.user) return false;
+  const orgCtxId = request.orgContext?.org_id;
+  if (orgCtxId) return (resource.org_id ?? null) === orgCtxId;
+  return isOwnerOrAdmin(request.user, resource.user_id ?? null);
+}
+
+/**
  * OrgContext is populated by the cp-server (SaaS) OrgContext middleware
  * when it runs. In OSS deployments cp-server isn't loaded so the field
  * stays `undefined` — services treat that as "no org filtering" and fall
@@ -108,9 +134,19 @@ export function userAuthHook(auth: Auth, tokenValidator: TokenValidator) {
 /**
  * Admin-only hook. Must run after userAuthHook.
  * Returns 403 if user is not an admin.
+ *
+ * SECURITY: only the real `admin` role passes. `userAuthHook` assigns the
+ * synthetic `api_token` role to EVERY validated API token regardless of the
+ * owner's actual role, so admitting `api_token` here let any authenticated
+ * user mint a token (POST /v1/api-tokens is user-scoped) and reach every
+ * /admin/* route — a full privilege escalation across all tenants. API tokens
+ * are for programmatic task submission, not admin operations; admin endpoints
+ * are reached via the dashboard session cookie. If a machine admin caller is
+ * ever needed, resolve the token owner's real DB role first — do not trust the
+ * synthetic role.
  */
 export async function adminOnlyHook(request: FastifyRequest, reply: FastifyReply) {
-  if (!request.user || (request.user.role !== "admin" && request.user.role !== "api_token")) {
+  if (!request.user || request.user.role !== "admin") {
     return reply.code(403).send({ error: "Forbidden", code: "FORBIDDEN" });
   }
 }

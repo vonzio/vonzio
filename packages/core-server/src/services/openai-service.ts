@@ -14,6 +14,8 @@
  * container as the gateway's upstream.
  */
 
+import { safeFetchCore } from "../lib/safe-webhook-fetch.js";
+
 export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL ?? "https://api.openai.com";
 
 export interface OpenAIModel {
@@ -40,14 +42,27 @@ export function normalizeOpenAIBaseUrl(url?: string | null): string {
 
 export async function fetchOpenAIModels(apiKey: string, baseUrl?: string | null): Promise<OpenAIModel[]> {
   const root = normalizeOpenAIBaseUrl(baseUrl);
-  const res = await fetch(`${root}/v1/models`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) {
+  // `root` derives from a fully user-supplied base_url, so this is an SSRF sink
+  // (cloud-metadata cred theft / internal port scan via 169.254.169.254,
+  // 127.0.0.1:PORT, RFC1918, etc.). Route through the SSRF-safe fetch helper:
+  // it rejects non-http(s) schemes, resolves the host and blocks private/
+  // loopback/link-local/reserved IPs BEFORE connecting, and pins the connection
+  // to the validated IP (DNS-rebind defense). Legitimate public endpoints
+  // (api.openai.com, openrouter, etc.) are unaffected.
+  const res = await safeFetchCore(
+    `${root}/v1/models`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    },
+    { timeoutMs: 10_000 },
+  );
+  if (res.status < 200 || res.status >= 300) {
     throw new Error(`OpenAI API returned ${res.status}`);
   }
-  const data = (await res.json()) as { data?: Array<{ id: string }> };
+  const data = JSON.parse(new TextDecoder("utf-8").decode(res.bytes)) as {
+    data?: Array<{ id: string }>;
+  };
   return (data.data ?? []).map((m) => ({ id: m.id, name: m.id }));
 }
 

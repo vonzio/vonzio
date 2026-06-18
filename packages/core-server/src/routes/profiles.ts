@@ -38,6 +38,19 @@ export const profileRoutes = fp(
   async (server: FastifyInstance, opts: ProfileRoutesOptions) => {
     const { profileService, apiKeyService, modelListService } = opts;
 
+    /**
+     * SaaS tenant gate for by-id profile routes. The list route already
+     * filters via `visibleProfileIdsForOrg`; the `:id` routes previously
+     * relied on `isOwnerOrAdmin` alone, so a user/admin in org A could
+     * GET/PATCH/DELETE a profile in org B. Returns false when the profile
+     * isn't visible in the active org. OSS (no hook) → always true.
+     */
+    async function visibleInActiveOrg(userId: string, profileId: string): Promise<boolean> {
+      if (!opts.visibleProfileIdsForOrg) return true;
+      const visible = await opts.visibleProfileIdsForOrg(userId, getActiveOrgId(), [profileId]);
+      return !visible || visible.has(profileId);
+    }
+
     server.post("/v1/profiles", {
       schema: {
         summary: "Create a profile",
@@ -126,7 +139,8 @@ export const profileRoutes = fp(
       },
       async (request, reply) => {
         const profile = await profileService.get(request.params.id);
-        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)) {
+        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)
+          || !(await visibleInActiveOrg(request.user!.id, request.params.id))) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
         }
         return profile;
@@ -157,7 +171,8 @@ export const profileRoutes = fp(
           return sendValidationError(reply, parsed.error);
         }
         const profile = await profileService.get(request.params.id);
-        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)) {
+        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)
+          || !(await visibleInActiveOrg(request.user!.id, request.params.id))) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
         }
         // Team-shared agents are owner-managed. The materialized row
@@ -200,7 +215,8 @@ export const profileRoutes = fp(
       },
       async (request, reply) => {
         const profile = await profileService.get(request.params.id);
-        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)) {
+        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)
+          || !(await visibleInActiveOrg(request.user!.id, request.params.id))) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
         }
         // Same gate as PATCH — team agents go through the org route.
@@ -240,7 +256,8 @@ export const profileRoutes = fp(
       },
       async (request, reply) => {
         const profile = await profileService.get(request.params.id);
-        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)) {
+        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)
+          || !(await visibleInActiveOrg(request.user!.id, request.params.id))) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
         }
         const result = await modelListService.listForProfile(profile.id);

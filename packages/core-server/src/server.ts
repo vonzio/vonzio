@@ -660,7 +660,7 @@ export async function buildServer(deps: ServerDeps) {
     v1.register(gmailOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(integrationRoutes, { integrationService, notificationService, profileService });
     v1.register(memoryRoutes, { memoryService });
-    v1.register(playbookRoutes, { playbookService, chainRunner, playbookScheduler });
+    v1.register(playbookRoutes, { playbookService, profileService, chainRunner, playbookScheduler });
     v1.register(poolRoutes, { pool: containerPool, sessionRegistry, containerManager });
 
     // Ollama Cloud is key-based and usable regardless of OLLAMA_ENABLED (which

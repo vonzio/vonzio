@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import { request as httpRequest } from "node:http";
-import { basename, extname } from "node:path";
+import { basename, extname, posix as posixPath } from "node:path";
 import type { ContainerManager } from "@vonzio/shared";
 import type { SessionRegistry } from "../container/session-registry.js";
 import type { Auth } from "../auth/better-auth.js";
@@ -46,6 +46,28 @@ const MIME_TYPES: Record<string, string> = {
   ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
   ".pdf": "application/pdf", ".zip": "application/zip",
 };
+
+// The only directory the file-download endpoint is allowed to serve. The
+// preview file endpoint (including the unauthenticated public_preview path)
+// must never read arbitrary container paths like /etc/passwd or on-disk
+// secrets — only workspace files.
+const PREVIEW_FILE_ROOT = "/workspace";
+
+/**
+ * Confine a requested file path to PREVIEW_FILE_ROOT. Normalizes away `.`/`..`
+ * segments and rejects anything that resolves outside the workspace root.
+ * Returns the safe absolute path, or null if the path escapes confinement.
+ */
+function confineToWorkspace(filePath: string): string | null {
+  // Treat the request path as relative to /workspace. Leading slashes are
+  // stripped so an absolute-looking input can't jump the root.
+  const rel = filePath.replace(/^\/+/, "");
+  const resolved = posixPath.normalize(posixPath.join(PREVIEW_FILE_ROOT, rel));
+  if (resolved !== PREVIEW_FILE_ROOT && !resolved.startsWith(`${PREVIEW_FILE_ROOT}/`)) {
+    return null;
+  }
+  return resolved;
+}
 
 export interface PreviewRoutesOptions {
   containerManager: ContainerManager;
@@ -177,10 +199,19 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
 
     if (!(await checkAuth(request, reply, fullId))) return;
 
+    // Confine the served path to /workspace for BOTH the authenticated owner
+    // and the unauthenticated public_preview visitor — reject `..` traversal
+    // and absolute paths that escape the workspace root. Without this, a
+    // public preview lets anyone download arbitrary container files.
+    const safePath = confineToWorkspace(filePath);
+    if (!safePath) {
+      return reply.code(403).send(errorResponse(ErrorCodes.FORBIDDEN, "File path outside workspace"));
+    }
+
     try {
-      const content = await containerManager.readFile(fullId, filePath);
-      const name = basename(filePath);
-      const ext = extname(filePath).toLowerCase();
+      const content = await containerManager.readFile(fullId, safePath);
+      const name = basename(safePath);
+      const ext = extname(safePath).toLowerCase();
       const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
 
       reply

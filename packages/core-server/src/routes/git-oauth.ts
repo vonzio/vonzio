@@ -6,6 +6,18 @@ import { encrypt, decrypt } from "../auth/crypto.js";
 
 type ProviderType = "github" | "gitlab" | "bitbucket";
 
+/**
+ * `returnPath` comes from (decrypted) OAuth state and is fed to reply.redirect,
+ * which honours absolute/protocol-relative URLs — an open-redirect vector.
+ * Only allow same-site relative paths: a single leading '/', not '//', no scheme.
+ */
+function safeReturnPath(p?: string): string {
+  if (!p || !p.startsWith("/") || p.startsWith("//") || p.includes("://")) {
+    return "/";
+  }
+  return p;
+}
+
 interface OAuthProviderConfig {
   clientId: string;
   clientSecret: string;
@@ -140,7 +152,7 @@ export const gitOAuthCallbackRoute = fp(
           return reply.redirect("/settings?oauth=error&message=invalid_state#git");
         }
 
-        const returnPath = stateData.returnPath ?? "/settings";
+        const returnPath = safeReturnPath(stateData.returnPath);
 
         // Check expiry (5 minutes)
         if (Date.now() - stateData.ts > 5 * 60 * 1000) {

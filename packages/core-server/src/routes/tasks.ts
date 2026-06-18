@@ -69,7 +69,10 @@ export const taskRoutes = fp(
 
     async function getUserProfileIds(request: import("fastify").FastifyRequest): Promise<string[] | undefined> {
       const user = request.user!;
-      if (user.role === "admin") return undefined; // admin sees all
+      // Admin sees all ONLY in OSS (no org context). In SaaS the active org is
+      // the tenant boundary, so even admin is scoped to their own profiles —
+      // otherwise an admin acting in org A could read/cancel org B's tasks.
+      if (user.role === "admin" && !request.orgContext?.org_id) return undefined;
       if (user.allowedProfileIds?.length) return user.allowedProfileIds; // API token
       const profiles = await opts.profileService.list(user.id);
       return profiles.map((p) => p.id);
