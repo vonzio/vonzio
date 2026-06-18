@@ -200,7 +200,7 @@ export function EditAgent() {
       .then((r) => {
         if (r.status === 404) {
           if (!cancelled) setNotFound(true);
-          throw new Error("Profile not found");
+          throw new Error("Agent not found");
         }
         return r.json();
       })
@@ -451,12 +451,12 @@ export function EditAgent() {
   }
 
   const pageTitle = editingId
-    ? `Edit · ${name || "profile"}`
+    ? `Edit · ${name || "agent"}`
     : duplicatedFrom
       ? `Clone of ${duplicatedFrom}`
       : seededFrom
         ? `New · ${seededFrom}`
-        : "New profile";
+        : "New agent";
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto", padding: "24px 32px 64px" }}>
@@ -667,7 +667,7 @@ export function EditAgent() {
                     <Checkbox checked={memoryEnabled} onChange={setMemoryEnabled}>Agent memory</Checkbox>
                   </div>
                   {availableImages && availableImages.length > 0 && (
-                    <Field label="Container image" hint="Most profiles run on the default. Pick another to customize.">
+                    <Field label="Container image" hint="Most agents run on the default. Pick another to customize.">
                       <Select
                         options={[
                           { value: "", label: "Default (vonzio-agent:latest)" },

@@ -231,7 +231,7 @@ export function WorkspaceHeader({
         <span
           className="hidden md:inline-flex"
           aria-label="Active model"
-          title={overridden ? `Override: ${resolvedModelLabel}` : "Profile default model"}
+          title={overridden ? `Override: ${resolvedModelLabel}` : "Agent default model"}
           style={{
             fontFamily: "var(--vz-font-mono)",
             fontSize: 11,

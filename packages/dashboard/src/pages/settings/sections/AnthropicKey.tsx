@@ -443,7 +443,7 @@ export function AnthropicKeySection() {
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
         title="Delete API key?"
-        description="Profiles using this key will stop working until you swap them to another key."
+        description="Agents using this key will stop working until you swap them to another key."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
