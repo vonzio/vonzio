@@ -126,7 +126,7 @@ export function registerDefaults(): void {
   registerRoute({ id: "admin", path: "/admin", element: <Admin />, layout: "shell", entitlement: "admin_multitenant", order: 70 });
 
   registerSettingsSection({ id: "account", label: "Account", lede: "Profile, password, and connected social accounts.", component: AccountSection, order: 10 });
-  registerSettingsSection({ id: "apikeys", label: "Keys", lede: "Anthropic API credentials used by your agent profiles. Bring your own.", component: AnthropicKeySection, order: 20 });
+  registerSettingsSection({ id: "apikeys", label: "Keys", lede: "Anthropic API credentials used by your agents. Bring your own.", component: AnthropicKeySection, order: 20 });
   registerSettingsSection({ id: "secrets", label: "Secrets", lede: "Encrypted environment variables injected into agent containers at runtime.", component: SecretSection, order: 30 });
   registerSettingsSection({
     id: "integrations",

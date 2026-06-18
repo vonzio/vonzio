@@ -254,7 +254,7 @@ export function GitSection() {
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
         title="Delete git provider?"
-        description="Profiles using this provider will lose write access on their next run."
+        description="Agents using this provider will lose write access on their next run."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>

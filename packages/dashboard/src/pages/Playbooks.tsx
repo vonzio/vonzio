@@ -535,12 +535,12 @@ export function Playbooks() {
               <Field label="Name">
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Nightly Dep Check" />
               </Field>
-              <Field label="Agent profile">
+              <Field label="Agent">
                 <Select
                   options={(profiles ?? []).map((p) => ({ value: p.id, label: p.name }))}
                   value={profileId}
                   onChange={setProfileId}
-                  placeholder="Select profile…"
+                  placeholder="Select agent…"
                 />
               </Field>
             </Row>
@@ -619,7 +619,7 @@ export function Playbooks() {
                 />
               </Field>
             </Row>
-            <Field label="Allowed tools" hint="Comma-separated. Leave empty for profile defaults.">
+            <Field label="Allowed tools" hint="Comma-separated. Leave empty for agent defaults.">
               <Input value={allowedTools} onChange={(e) => setAllowedTools(e.target.value)} />
             </Field>
 
