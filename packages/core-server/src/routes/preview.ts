@@ -186,6 +186,10 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
       reply
         .header("Content-Type", contentType)
         .header("Content-Disposition", `attachment; filename="${name}"`)
+        // Workspace files change in place (an agent can overwrite the same path),
+        // so never serve a cached copy — otherwise the file preview shows a stale
+        // image after an edit until the URL changes. See FilePreviewModal.
+        .header("Cache-Control", "no-store")
         .header("Content-Length", content.length);
       return reply.send(content);
     } catch {
