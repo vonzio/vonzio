@@ -88,7 +88,7 @@ export function ApiTokenSection() {
     { key: "name", label: "Name", render: (k) => <span style={{ fontWeight: 500, color: "var(--vz-ink)" }}>{k.name}</span> },
     {
       key: "profiles",
-      label: "Profiles",
+      label: "Agents",
       render: (k) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {k.allowed_profile_ids.length ? k.allowed_profile_ids.map((pid) => (
@@ -224,7 +224,7 @@ export function ApiTokenSection() {
               <Input type="number" value={rpm} onChange={(e) => setRpm(e.target.value)} />
             </Field>
           </div>
-          <Field label="Allowed profiles" hint="The token can only run agents under one of these profiles.">
+          <Field label="Allowed agents" hint="The token can only run under one of these agents.">
             {profiles?.length ? (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {profiles.map((c) => (
@@ -240,7 +240,7 @@ export function ApiTokenSection() {
                 ))}
               </div>
             ) : (
-              <span style={{ fontSize: 12, color: "var(--vz-muted-2)" }}>No profiles available — create one first.</span>
+              <span style={{ fontSize: 12, color: "var(--vz-muted-2)" }}>No agents available — create one first.</span>
             )}
           </Field>
         </div>

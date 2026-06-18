@@ -99,7 +99,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
       const profilesRes = await fetch("/v1/profiles", { credentials: "include" });
       const profiles = (await profilesRes.json()) as Array<{ id: string; user_id: string | null }>;
       const own = profiles.find((p) => p.user_id);
-      if (!own) throw new Error("Default profile was not created — please retry.");
+      if (!own) throw new Error("Default agent was not created — please retry.");
       setProfileId(own.id);
       setStep("model");
       setSubmitting(false);

@@ -24,7 +24,7 @@ import {
 import { useUser } from "../contexts/UserContext.js";
 
 const tabDefs = [
-  { value: "profiles", label: "Profiles" },
+  { value: "profiles", label: "Agents" },
   { value: "tools", label: "Tools" },
   { value: "skills", label: "Skills" },
   { value: "agents", label: "Subagents" },
@@ -50,7 +50,7 @@ export function MyAgents() {
   }, []);
 
   const ledeMap: Record<string, string> = {
-    profiles: "A profile bundles the model, tools, skills, subagents, and rules that define how an agent runs.",
+    profiles: "An agent bundles the model, tools, skills, subagents, and rules that define how it runs.",
     tools: "JavaScript tools the agent can invoke directly.",
     skills: "Skills the agent can pull in when relevant — markdown playbooks for specialised workflows.",
     agents: "Specialised subagents the main agent can delegate tasks to.",
@@ -60,7 +60,7 @@ export function MyAgents() {
     <>
       <PageHeader
         eyebrow="Library"
-        title="Profiles"
+        title="Agents"
         lede={ledeMap[activeTab]}
       />
       <PageBody>
@@ -117,7 +117,7 @@ function ProfileSection() {
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div style={{ fontFamily: "var(--vz-font-mono)", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--vz-muted-2)" }}>
-          {ownProfiles.length > 0 ? `Your profiles · ${ownProfiles.length}` : ""}
+          {ownProfiles.length > 0 ? `Your agents · ${ownProfiles.length}` : ""}
         </div>
         {!isFirstProfile && (
           <div style={{ display: "flex", gap: 8 }}>
@@ -125,7 +125,7 @@ function ProfileSection() {
               Templates
             </Button>
             <Button size="sm" icon={<Plus size={14} />} onClick={() => navigate("/agents/new")}>
-              New profile
+              New agent
             </Button>
           </div>
         )}
@@ -138,8 +138,8 @@ function ProfileSection() {
       ) : isFirstProfile ? (
         <EmptyState
           icon={<Bot size={22} />}
-          title="No profiles yet"
-          description="A profile bundles your API key, tools, skills, and subagents. Create one or clone a shared profile to get started."
+          title="No agents yet"
+          description="An agent bundles your API key, tools, skills, and subagents. Create one or clone a shared agent to get started."
           action={
             <div style={{ display: "flex", gap: 8 }}>
               <Button
@@ -161,7 +161,7 @@ function ProfileSection() {
                 </Button>
               )}
               <Button size="sm" icon={<Plus size={14} />} onClick={() => navigate("/agents/new")}>
-                New profile
+                New agent
               </Button>
             </div>
           }
@@ -218,8 +218,8 @@ function ProfileSection() {
       <Modal
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
-        title="Delete profile?"
-        description="This profile will be removed. Sessions running with this profile finish on their old config; future runs need a different profile."
+        title="Delete agent?"
+        description="This agent will be removed. Sessions running with it finish on their old config; future runs need a different agent."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
@@ -400,7 +400,7 @@ function ToolSection() {
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
         title="Delete tool?"
-        description="Profiles using this tool will lose access to it on their next run."
+        description="Agents using this tool will lose access to it on their next run."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
@@ -584,7 +584,7 @@ function SkillSection() {
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
         title="Delete skill?"
-        description="Profiles using this skill will lose access to it on their next run."
+        description="Agents using this skill will lose access to it on their next run."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
@@ -744,7 +744,7 @@ function SubagentSection() {
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
         title="Delete subagent?"
-        description="Profiles using this subagent will lose access to it on their next run."
+        description="Agents using this subagent will lose access to it on their next run."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
