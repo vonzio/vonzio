@@ -821,6 +821,9 @@ export function createPlaybook(body: {
   description?: string;
   chain_config?: Partial<PlaybookChainConfig>;
   enabled?: boolean;
+  trigger_type?: string;
+  interval_seconds?: number;
+  notify_on?: string;
 }): Promise<Playbook> {
   return request("/playbooks", { method: "POST", body: JSON.stringify(body) });
 }

@@ -420,8 +420,12 @@ export function extractTaskSummary(result: TaskResult): string {
     if (typeof so.summary === "string" && so.summary) return so.summary.slice(0, 4000);
   }
 
-  // 2. Use agent text if available
-  if (result.text) {
+  // 2. Use agent text if available. The Agent SDK emits a placeholder like
+  //    `(Empty response: {'content': [{'type': 'thinking', ...}]})` when the
+  //    final assistant message had no text block (e.g. it was thinking-only).
+  //    That sentinel is not a summary — skip it so we fall through to the
+  //    StructuredOutput / "didn't summarize" paths below.
+  if (result.text && !result.text.trimStart().startsWith("(Empty response:")) {
     // If text looks like raw structured output JSON, try to extract useful content
     try {
       const parsed = JSON.parse(result.text);

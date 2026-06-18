@@ -45,10 +45,11 @@ import { OllamaModelPicker } from "../components/OllamaModelPicker.js";
 import { ProfileModelSelect } from "../components/ProfileModelSelect.js";
 import { McpServerEditor, type McpServerConfig } from "../components/McpServerEditor.js";
 import { ChecklistRows } from "../components/ChecklistRows.js";
+import { AgentTriggers } from "../components/AgentTriggers.js";
 
 // Tab identifiers — single source of truth so the hash gate, the Tabs
 // component, and the JSX render guards can't drift.
-const TAB_VALUES = ["overview", "tools", "extensions", "network"] as const;
+const TAB_VALUES = ["overview", "tools", "extensions", "triggers", "network"] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
 const slugifyName = (value: string): string => slugify(value, 48);
@@ -418,6 +419,7 @@ export function EditAgent() {
     { value: "overview", label: "Overview" },
     { value: "tools", label: "Tools & MCP" },
     { value: "extensions", label: "Knowledge & subagents" },
+    { value: "triggers", label: "Triggers" },
     { value: "network", label: "Advanced" },
   ];
 
@@ -652,6 +654,20 @@ export function EditAgent() {
                   emptyText="No skills yet — create one with the button above."
                 />
               </Panel>
+            </div>
+          )}
+
+          {activeTab === "triggers" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
+              {editingId ? (
+                <AgentTriggers agentId={editingId} />
+              ) : (
+                <Panel title="Triggers">
+                  <p style={{ margin: 0, fontSize: 12.5, color: "var(--vz-muted)" }}>
+                    Save this agent first, then add triggers to run it on a schedule, an interval, a webhook, or on demand.
+                  </p>
+                </Panel>
+              )}
             </div>
           )}
 

@@ -81,6 +81,30 @@ describe("extractTaskSummary", () => {
     expect(out).toContain("didn't write a summary");
   });
 
+  it("REGRESSION: skips the SDK '(Empty response: …)' sentinel in result.text", () => {
+    // The agent's final turn was thinking-only, so the SDK set result.text to
+    // its placeholder. It must not become the user-facing summary; fall through
+    // to the StructuredOutput payload the agent emitted on an earlier turn.
+    const r = mockResult({
+      turns: 3,
+      text: "(Empty response: {'content': [{'type': 'thinking', 'thinking': \"done\"}]})",
+      tool_calls: [
+        { tool: "StructuredOutput", input: { status: "DONE", summary: "Greeted the user." }, output: "", timestamp: "2026-06-18T00:00:00Z" },
+      ],
+    });
+    expect(extractTaskSummary(r)).toBe("Greeted the user.");
+  });
+
+  it("REGRESSION: empty-response sentinel with no other signal yields the 'no summary' sentinel", () => {
+    const r = mockResult({
+      turns: 2,
+      text: "(Empty response: {'content': [{'type': 'thinking', 'thinking': \"x\"}]})",
+    });
+    const out = extractTaskSummary(r);
+    expect(out).not.toContain("Empty response");
+    expect(out).toContain("didn't write a summary");
+  });
+
   it("ignores empty structured_output.summary", () => {
     const r = mockResult({
       structured_output: { status: "DONE", summary: "" },

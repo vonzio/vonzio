@@ -1455,6 +1455,13 @@ export class Orchestrator extends EventEmitter {
 
     // Track current tool_use to pair with tool_result
     let currentToolName: string | undefined;
+    // The agent may call StructuredOutput (its DONE/summary signal) on a turn
+    // *before* the final message — e.g. it signals DONE, then takes one more
+    // turn that's thinking-only. The SDK's `result.structured_output` only
+    // reflects the final message, so that signal would be lost and the chain
+    // runner would loop to the budget cap. Remember the last StructuredOutput
+    // payload and fall back to it below.
+    let lastStructuredOutput: unknown;
 
     for await (const msg of this.agentComms.dispatch(containerId, payload, env)) {
       this.relayMessage(task.id, relaySessionId, msg);
@@ -1479,6 +1486,13 @@ export class Orchestrator extends EventEmitter {
 
       if (msg.type === "tool_use") {
         currentToolName = msg.tool;
+        // The StructuredOutput tool may not emit a tool_result, and its input
+        // streams over multiple tool_use events (empty first, then full) — keep
+        // the last non-empty payload so the DONE/summary signal survives even
+        // when it's emitted on a turn before the final (e.g. thinking-only) one.
+        if (msg.tool === "StructuredOutput" && msg.input && Object.keys(msg.input).length > 0) {
+          lastStructuredOutput = msg.input;
+        }
       }
 
       if (msg.type === "tool_result") {
@@ -1493,7 +1507,7 @@ export class Orchestrator extends EventEmitter {
       if (msg.type === "result" && msg.result) {
         result = {
           text: msg.result.text,
-          structured_output: msg.result.structured_output,
+          structured_output: msg.result.structured_output ?? lastStructuredOutput,
           tool_calls: toolCalls,
           session_id: resolvedSessionId ?? msg.session_id ?? "",
           input_tokens: msg.result.input_tokens,
