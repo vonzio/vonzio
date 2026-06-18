@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
-import { serveDashboardIndex } from "./dashboard-csp.js";
+import { serveDashboardIndex, widgetFrameAncestors } from "./dashboard-csp.js";
 import { assertDashboardParity } from "./plugins/parity-check.js";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
@@ -886,7 +886,10 @@ export async function buildServer(deps: ServerDeps) {
       if (!indexTemplate) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Not found"));
       }
-      return serveDashboardIndex(reply, indexTemplate);
+      // frame-ancestors: 'self' + any operator-listed widget origins, so the
+      // embeddable chat can be iframed on the vonzio origin (and approved
+      // external sites) but nowhere else.
+      return serveDashboardIndex(reply, indexTemplate, widgetFrameAncestors(config.WIDGET_ALLOWED_ORIGINS));
     });
   }
 

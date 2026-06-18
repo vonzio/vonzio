@@ -23,6 +23,7 @@ import { AnthropicKeySection } from "../pages/settings/sections/AnthropicKey.js"
 import { SecretSection } from "../pages/settings/sections/Secret.js";
 import { IntegrationsAndGitSection } from "../pages/settings/sections/IntegrationsAndGit.js";
 import { ApiTokenSection } from "../pages/settings/sections/ApiToken.js";
+import { EmbedSection } from "../pages/settings/sections/Embed.js";
 import { AddFirstApiKey, hasNoApiKeysPredicate } from "../components/onboarding/AddFirstApiKey.js";
 import {
   registerNavItem,
@@ -136,6 +137,7 @@ export function registerDefaults(): void {
     order: 40,
   });
   registerSettingsSection({ id: "apitokens", label: "API tokens", lede: "API tokens for programmatic access — CLI or external integrations.", component: ApiTokenSection, order: 60 });
+  registerSettingsSection({ id: "embed", label: "Embed", lede: "Embed your agent on any page — the chat widget and a direct chat link.", component: EmbedSection, order: 65 });
 
   registerOnboardingStep({
     id: "first-api-key",
