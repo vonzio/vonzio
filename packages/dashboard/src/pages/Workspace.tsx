@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target } from "lucide-react";
+import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
@@ -10,7 +10,6 @@ import { fetchProfiles, generateWorkspaceTitle, type ProfileSummary } from "../a
 import { WorkspaceSidebar } from "../components/WorkspaceSidebar.js";
 import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
-import { AgentPicker } from "../components/AgentPicker.js";
 import { getComposerSlots } from "../registry/index.js";
 import { useEntitlements } from "@vonzio/dashboard-registry";
 import { RightPanel, type TabId } from "../components/RightPanel.js";
@@ -18,6 +17,7 @@ import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet.js";
 import { UserMenu } from "../components/UserMenu.js";
 import { MessageList } from "../components/MessageList.js";
 import { QuestionPicker } from "../components/ChatCore.js";
+import { HOME_DRAFT_KEY, HOME_AGENT_KEY } from "./Home.js";
 import { reopenOnboarding } from "../components/OnboardingHost.js";
 import { Button } from "../brand/components.js";
 import { authClient } from "../lib/auth-client.js";
@@ -313,10 +313,10 @@ export function Workspace() {
     if (workspacesLoading) return;
     if (activeWorkspace) return;
     // A just-created session navigates to /w/<id> BEFORE the workspace list
-    // refetches, so it isn't in the list yet — don't bounce it back to /
+    // refetches, so it isn't in the list yet — don't bounce it back to /w
     // (which stripped the session id from the URL on every new workspace).
     if (routeId === activeWorkspaceId) return;
-    navigate("/", { replace: true });
+    navigate("/w", { replace: true });
   }, [routeId, workspacesLoading, activeWorkspace, activeWorkspaceId, navigate]);
   // Resolve activeProfile in this order: real workspace owner → user's
   // empty-state pick from AgentPicker → first profile. The middle case
@@ -337,6 +337,21 @@ export function Workspace() {
     .map((s) => s.trim())
     .filter(Boolean);
   const defaultProfileId = profiles?.[0]?.id ?? "";
+
+  // Pick up a draft / chosen agent handed off from the Home launcher (it stashes
+  // these then navigates to /w). Apply once on a fresh new-chat mount, then clear.
+  useEffect(() => {
+    if (routeId) return; // only for new chat (/w)
+    try {
+      const draft = localStorage.getItem(HOME_DRAFT_KEY);
+      if (draft) { setInput(draft); localStorage.removeItem(HOME_DRAFT_KEY); }
+      const agent = localStorage.getItem(HOME_AGENT_KEY);
+      if (agent) { setSelectedProfileId(agent); localStorage.removeItem(HOME_AGENT_KEY); }
+      if (draft || agent) setTimeout(() => inputRef.current?.focus(), 100);
+    } catch { /* ignore storage errors */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeId]);
+
   const hasApiKey = activeProfile?.api_key_id ? true : false;
   // Only treat "no key" as actionable once profiles have actually loaded —
   // `profiles` is undefined mid-fetch, which would otherwise flash the
@@ -582,7 +597,7 @@ export function Workspace() {
     setSelectedProfileId(defaultProfileId);
     setPendingModelOverride(null);
     setPendingKeyOverride(null);
-    navigate("/", { replace: true });
+    navigate("/w", { replace: true });
     // Auto-focus the input after render
     setTimeout(() => inputRef.current?.focus(), 100);
   }
@@ -810,19 +825,62 @@ export function Workspace() {
                           Add API key
                         </Button>
                       )}
-                      {!keyMissing && (profiles?.length ?? 0) > 1 && (
-                        <AgentPicker
-                          profiles={profiles!}
-                          value={selectedProfileId || defaultProfileId || null}
-                          onChange={(id) => {
-                            setSelectedProfileId(id);
-                            // A model override only makes sense relative to a
-                            // profile's API key/provider — switching profile
-                            // discards any in-flight model pick.
-                            setPendingModelOverride(null);
-                            setPendingKeyOverride(null);
-                          }}
-                        />
+                      {/* Launcher: pick an agent to start with (cards), or start
+                          from a template. The composer below stays the fast path
+                          — clicking a card just selects + focuses it, it doesn't
+                          force a click before you can type. */}
+                      {!keyMissing && (
+                        <div className="w-full" style={{ maxWidth: 620, display: "flex", flexDirection: "column", gap: 14 }}>
+                          {(profiles?.length ?? 0) > 0 && (
+                            <div>
+                              <div style={{ fontFamily: "var(--vz-font-mono)", fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--vz-muted-2)", marginBottom: 8, textAlign: "center" }}>
+                                Start with an agent
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+                                {profiles!.map((p) => {
+                                  const selected = (selectedProfileId || defaultProfileId) === p.id;
+                                  return (
+                                    <button
+                                      key={p.id}
+                                      type="button"
+                                      onClick={() => {
+                                        // Mirror AgentPicker: switching profile
+                                        // discards any in-flight model/key pick.
+                                        setSelectedProfileId(p.id);
+                                        setPendingModelOverride(null);
+                                        setPendingKeyOverride(null);
+                                        inputRef.current?.focus();
+                                      }}
+                                      style={{
+                                        display: "flex", alignItems: "center", gap: 8, padding: "9px 11px",
+                                        borderRadius: "var(--vz-radius-md)", cursor: "pointer", textAlign: "left",
+                                        fontSize: 13, fontFamily: "inherit",
+                                        background: selected ? "var(--vz-sodium-08)" : "var(--vz-card)",
+                                        border: `1px solid ${selected ? "var(--vz-sodium-25)" : "var(--vz-border)"}`,
+                                        color: "var(--vz-ink)",
+                                      }}
+                                    >
+                                      <Bot size={15} style={{ color: selected ? "var(--vz-sodium)" : "var(--vz-muted)", flexShrink: 0 }} />
+                                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => navigate("/agents/gallery")}
+                            style={{
+                              alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 5,
+                              background: "none", border: 0, cursor: "pointer", padding: 0,
+                              fontFamily: "inherit", fontSize: 12.5, color: "var(--vz-muted)",
+                            }}
+                          >
+                            <Sparkles size={13} />
+                            Start from a template
+                          </button>
+                        </div>
                       )}
                       {/* Suggestion chips moved out of the hero — they now
                           live in a horizontal strip directly above the
