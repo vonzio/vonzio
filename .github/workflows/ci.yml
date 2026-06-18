@@ -1,9 +1,10 @@
 name: ci
 
-# Validate every PR + every push to main.
+# Validate every PR. No separate push:[main] run: merges are squash-only, so the
+# post-merge main tree is byte-identical to the PR that just passed — re-running
+# the full suite (incl. ~10min image build+scan ×2) on the merge was pure
+# duplication. Releases are validated independently on v* tags (release.yml).
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
