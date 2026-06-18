@@ -48,6 +48,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     build-essential cmake pkg-config \
     python3 python3-pip python3-venv \
+    # Image/asset tooling for the "Image studio" agent template: ImageMagick
+    # (convert/mogrify/identify) + ffmpeg (video / animated GIF) + Pillow (PIL)
+    # + DejaVu fonts for text overlays. Baked in (the agent runs unprivileged
+    # with no apt at runtime) so the template works with zero setup and needs
+    # no pypi egress under egress enforcement.
+    imagemagick ffmpeg python3-pil fonts-dejavu-core \
     chromium \
     # Common database clients — avoids the per-session install dance for
     # agents that read/write user databases (Supabase/Postgres, MySQL,

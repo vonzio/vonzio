@@ -37,7 +37,9 @@ export function FilePreviewModal({ file, containerId, basePath = "/workspace/", 
   const isRenderable = RENDERABLE_EXTENSIONS.has(ext);
   const isText = TEXT_EXTENSIONS.has(ext) || isRenderable;
   const filePath = `${basePath}${file.name}`;
-  const downloadUrl = `/preview/${containerId}/files${filePath}`;
+  // Cache-buster keyed on size so an overwritten file (same path) re-fetches
+  // instead of showing the browser's cached copy. The proxy ignores the query.
+  const downloadUrl = `/preview/${containerId}/files${filePath}?v=${file.size}`;
 
   useEffect(() => {
     if (!isText) return;

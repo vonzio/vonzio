@@ -3,13 +3,16 @@ import {
   Bot,
   Brain,
   CalendarClock,
+  Home as HomeIcon,
   MessageSquare,
   Settings as SettingsIcon,
   Shield,
 } from "lucide-react";
 import { Workspace } from "../pages/Workspace.js";
+import { Home } from "../pages/Home.js";
 import { MyAgents } from "../pages/MyAgents.js";
 import { EditAgent } from "../pages/EditAgent.js";
+import { AgentGallery } from "../pages/AgentGallery.js";
 import { Playbooks } from "../pages/Playbooks.js";
 import Memories from "../pages/Memories.js";
 import { Settings } from "../pages/Settings.js";
@@ -33,12 +36,21 @@ import {
 // and lets defaults survive a registry-module reload.
 export function registerDefaults(): void {
   registerNavItem({
+    id: "home",
+    section: "primary",
+    label: "Home",
+    to: "/",
+    icon: HomeIcon,
+    match: (p) => p === "/",
+    order: 5,
+  });
+  registerNavItem({
     id: "workspace",
     section: "primary",
     label: "Workspace",
-    to: "/",
+    to: "/w",
     icon: MessageSquare,
-    match: (p) => p === "/" || p.startsWith("/w/"),
+    match: (p) => p === "/w" || p.startsWith("/w/"),
     order: 10,
   });
   registerNavItem({
@@ -100,10 +112,12 @@ export function registerDefaults(): void {
     order: 10,
   });
 
-  registerRoute({ id: "workspace-root", path: "/", element: <Workspace />, layout: "shell", order: 10 });
+  registerRoute({ id: "home", path: "/", element: <Home />, layout: "shell", order: 5 });
+  registerRoute({ id: "workspace-new", path: "/w", element: <Workspace />, layout: "shell", order: 10 });
   registerRoute({ id: "workspace-id", path: "/w/:id", element: <Workspace />, layout: "shell", order: 11 });
   registerRoute({ id: "agents-list", path: "/agents", element: <MyAgents />, layout: "shell", order: 20 });
-  registerRoute({ id: "agents-new", path: "/agents/new", element: <EditAgent />, layout: "shell", order: 21 });
+  registerRoute({ id: "agents-gallery", path: "/agents/gallery", element: <AgentGallery />, layout: "shell", order: 21 });
+  registerRoute({ id: "agents-new", path: "/agents/new", element: <EditAgent />, layout: "shell", order: 22 });
   registerRoute({ id: "agents-edit", path: "/agents/:id/edit", element: <EditAgent />, layout: "shell", order: 22 });
   registerRoute({ id: "playbooks", path: "/playbooks", element: <Playbooks />, layout: "shell", order: 30 });
   registerRoute({ id: "memories", path: "/memories", element: <Memories />, layout: "shell", order: 40 });

@@ -12,6 +12,9 @@ export interface WorkspaceFilesRoutesOptions {
   containerManager: ContainerManager;
 }
 
+/** POSIX-safe single-quote escaping for values interpolated into `sh -c`. */
+const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
 export const workspaceFilesRoutes = fp(
   async (server: FastifyInstance, opts: WorkspaceFilesRoutesOptions) => {
     const { sessionRegistry, containerManager } = opts;
@@ -62,7 +65,23 @@ export const workspaceFilesRoutes = fp(
       const uploaded: { name: string; size: number }[] = [];
       const parts = request.parts();
 
+      // Target directory inside the container. The client sends the folder the
+      // user is currently viewing as a `dest` field (ordered before the files).
+      // Sanitize hard: confine to /workspace/ and strip any traversal.
+      let destDir = "/workspace/output";
+
       for await (const part of parts) {
+        if (part.type === "field" && part.fieldname === "dest") {
+          const cleaned = String(part.value ?? "")
+            .replace(/\\/g, "/")
+            .replace(/\.\./g, "")
+            .replace(/\/+/g, "/")
+            .replace(/\/$/, "");
+          destDir = cleaned === "/workspace" || cleaned.startsWith("/workspace/")
+            ? (cleaned || "/workspace")
+            : "/workspace/output";
+          continue;
+        }
         if (part.type !== "file" || !part.filename) continue;
 
         // Sanitize filename — allow forward slashes for directory structure
@@ -85,16 +104,16 @@ export const workspaceFilesRoutes = fp(
         const buffer = Buffer.concat(chunks);
         const base64 = buffer.toString("base64");
 
-        // Create parent directory if needed, then write file
+        // Create the target directory (base dest + any subdir in the filename),
+        // then write the file there.
         const dirPart = safeName.includes("/") ? safeName.slice(0, safeName.lastIndexOf("/")) : "";
-        if (dirPart) {
-          const mkdirCmd = ["mkdir", "-p", `/workspace/output/${dirPart}`];
-          for await (const _ of containerManager.execInContainer(workspace.container_id, mkdirCmd)) {
-            // drain
-          }
+        const targetDir = dirPart ? `${destDir}/${dirPart}` : destDir;
+        const mkdirCmd = ["mkdir", "-p", targetDir];
+        for await (const _ of containerManager.execInContainer(workspace.container_id, mkdirCmd)) {
+          // drain
         }
 
-        const cmd = ["sh", "-c", `base64 -d > '/workspace/output/${safeName}'`];
+        const cmd = ["sh", "-c", `base64 -d > ${shellQuote(`${destDir}/${safeName}`)}`];
         for await (const _ of containerManager.execInContainer(workspace.container_id, cmd, base64)) {
           // drain
         }
@@ -145,7 +164,6 @@ export const workspaceFilesRoutes = fp(
       const mime = format === "zip" ? "application/zip" : "application/x-tar";
       const tmpFile = `/tmp/vonzio-archive-${randomUUID()}.${ext}`;
 
-      const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
       const buildCmd = format === "zip"
         ? ["sh", "-c", `cd /workspace && zip -rq ${shellQuote(tmpFile)} ${relPaths.map(shellQuote).join(" ")}`]
         : ["tar", "-cf", tmpFile, "-C", "/workspace", ...relPaths];

@@ -228,8 +228,11 @@ export function workspaceArchiveUrl(workspaceId: string, paths: string[], name?:
   return `/v1/workspaces/${workspaceId}/archive?${qs}${named}`;
 }
 
-export async function uploadFiles(workspaceId: string, files: File[]): Promise<{ uploaded: { name: string; size: number }[] }> {
+export async function uploadFiles(workspaceId: string, files: File[], dest?: string): Promise<{ uploaded: { name: string; size: number }[] }> {
   const formData = new FormData();
+  // Append the destination FIRST so the streaming multipart parser sees it
+  // before the file parts (field order is preserved). Omitted → server default.
+  if (dest) formData.append("dest", dest);
   for (const file of files) {
     formData.append("file", file);
   }
@@ -284,6 +287,11 @@ export function fetchProfiles(): Promise<ProfileSummary[]> {
 
 export function createProfile(body: Record<string, unknown>): Promise<ProfileSummary> {
   return request("/profiles", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function fetchAgentTemplates(): Promise<import("@vonzio/shared").AgentTemplate[]> {
+  const res = await request<{ templates: import("@vonzio/shared").AgentTemplate[] }>("/agent-templates");
+  return res.templates ?? [];
 }
 
 export function updateProfile(id: string, body: Record<string, unknown>): Promise<ProfileSummary> {

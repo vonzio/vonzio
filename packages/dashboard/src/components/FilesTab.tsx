@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { RefreshCw, File as FileIcon, Folder, Download, Trash2, Upload, Plus, ChevronRight, Check } from "lucide-react";
+import { RefreshCw, File as FileIcon, Folder, Download, Trash2, Upload, ChevronRight, Check } from "lucide-react";
 import { fetchWorkspaceFiles, uploadFiles, deleteFile, workspaceArchiveUrl, type FileEntry } from "../api/client.js";
 import { FilePreviewModal } from "./FilePreviewModal.js";
 
@@ -109,7 +109,7 @@ export function FilesTab({ workspaceId, containerId }: Props) {
     if (arr.length === 0) return;
     setUploading(true);
     try {
-      await uploadFiles(workspaceId, arr);
+      await uploadFiles(workspaceId, arr, currentPath);
       await load();
     } catch (err) {
       console.error("Upload failed:", err);
@@ -215,7 +215,10 @@ export function FilesTab({ workspaceId, containerId }: Props) {
     <div
       className="flex-1 flex flex-col relative"
       onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
+      // Only clear when the cursor actually leaves the panel — moving over child
+      // rows fires dragleave with relatedTarget still inside, which otherwise
+      // made the overlay flicker so it seemed to react only over the file rows.
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false); }}
       onDrop={handleDrop}
     >
       {/* Header */}
@@ -237,10 +240,11 @@ export function FilesTab({ workspaceId, containerId }: Props) {
           <button
             onClick={() => fileInputRef.current?.click()}
             className="vz-action-btn"
-            style={{ width: 22, height: 22 }}
-            title="Upload files"
+            style={{ width: "auto", height: 22, padding: "0 8px", gap: 5, fontSize: 11 }}
+            title="Upload files (or drag & drop anywhere)"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Upload className="w-3.5 h-3.5" />
+            <span>Upload</span>
           </button>
           <button
             onClick={downloadCurrentFolder}
