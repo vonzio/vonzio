@@ -5,6 +5,16 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ## [Unreleased]
 
+### Added
+
+- **Embeddable chat is back in OSS.** The `@vonzio/widget` drop-in script, the
+  `/chat` embed page, and a Settings → **Embed** snippet generator now ship in
+  the open-source core (they had briefly moved to the SaaS build). Embedding a
+  self-hosted, bring-your-own-model agent in any page with one `<script>` tag is
+  a core capability, not a paywalled one. Auth reuses scoped, rate-limited,
+  revocable API tokens; a new `WIDGET_ALLOWED_ORIGINS` env gates which origins
+  may embed the chat (CSP `frame-ancestors`; default same-origin only).
+
 ### Changed
 
 - **Teller is no longer a built-in integration.** Bank data via the

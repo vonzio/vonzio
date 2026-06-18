@@ -10,6 +10,9 @@ export interface AuthUser {
   name: string;
   role: string;
   allowedProfileIds?: string[];
+  /** API-token callers only: the token's per-minute request cap, enforced on
+   *  the WS task-submission path (the embeddable chat's channel). */
+  rateLimitRpm?: number;
 }
 
 /** Check if the user owns the resource, is an admin, or the resource is shared (null user_id). */
@@ -77,12 +80,7 @@ export function userAuthHook(auth: Auth, tokenValidator: TokenValidator) {
     // 1. Try Better Auth session cookie
     try {
       const headers = fromNodeHeaders(request.headers);
-      const hasCookie = !!(request.headers.cookie);
       const session = await auth.api.getSession({ headers });
-
-      if (!session?.user && request.url?.includes("/stream")) {
-        console.log(`[WS AUTH] url=${request.url} hasCookie=${hasCookie} cookie=${(request.headers.cookie ?? "").slice(0, 50)} session=${!!session?.user}`);
-      }
 
       if (session?.user) {
         request.user = {
@@ -118,6 +116,7 @@ export function userAuthHook(auth: Auth, tokenValidator: TokenValidator) {
             name: validated.tokenName,
             role: "api_token",
             allowedProfileIds: validated.allowedProfileIds,
+            rateLimitRpm: validated.rateLimitRpm,
           };
           return;
         }
