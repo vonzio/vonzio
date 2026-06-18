@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ConnectionManager } from "./connection.js";
 import { anthropicAuthHeaders } from "@vonzio/shared";
 import type { TaskService } from "../services/task-service.js";
+import { ForbiddenError } from "../services/task-service.js";
 import type { WorkspaceService } from "../services/workspace-service.js";
 import type { SessionRegistry } from "../container/session-registry.js";
 import type { Orchestrator, Logger } from "../orchestrator/orchestrator.js";
@@ -304,9 +305,11 @@ export function setupWsHandler(
           handleMessage(connectionId, user, connectionOrgId, msg),
         );
       } catch (err) {
+        // A disallowed profile (e.g. org-filtered out) surfaces as
+        // ForbiddenError — report it as FORBIDDEN, not a 500, matching REST.
         connectionManager.sendTo(connectionId, {
           type: "error",
-          code: ErrorCodes.INTERNAL_ERROR,
+          code: err instanceof ForbiddenError ? ErrorCodes.FORBIDDEN : ErrorCodes.INTERNAL_ERROR,
           message: err instanceof Error ? err.message : "Unknown error",
         });
       }
