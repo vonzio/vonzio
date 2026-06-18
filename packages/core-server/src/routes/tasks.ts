@@ -5,6 +5,7 @@ import { ProfileService } from "../services/profile-service.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 import type { TaskMode, TaskStatus } from "@vonzio/shared";
 import { submitTaskSchema, sendValidationError } from "./validation.js";
+import { getActiveOrgId } from "../lib/active-org.js";
 
 export interface TaskRoutesOptions {
   taskService: TaskService;
@@ -17,6 +18,16 @@ export interface TaskRoutesOptions {
    * silently lose its org affinity.
    */
   recordTaskOrg?: (taskId: string, orgId: string) => Promise<void>;
+  /**
+   * SaaS hook (same as profiles): returns the subset of the candidate profile
+   * ids visible in the active org, or null when no org filter applies (OSS).
+   * Used to keep task visibility within the active org's tenant boundary.
+   */
+  visibleProfileIdsForOrg?: (
+    userId: string,
+    activeOrgId: string | null,
+    candidates: string[],
+  ) => Promise<Set<string> | null>;
 }
 
 export const taskRoutes = fp(
@@ -45,11 +56,12 @@ export const taskRoutes = fp(
       }
 
       try {
-        const profiles = await opts.profileService.list(request.user.id);
-        const result = await taskService.submit(
-          parsed.data,
-          profiles.map((p) => p.id),
-        );
+        // Same scoping as read/cancel: respects an API token's allow-list AND
+        // the active-org filter. undefined = admin in OSS → may use any of
+        // their own profiles (fall back to the full list).
+        const allowedProfileIds = (await getUserProfileIds(request))
+          ?? (await opts.profileService.list(request.user.id)).map((p) => p.id);
+        const result = await taskService.submit(parsed.data, allowedProfileIds);
         // Link the task to the caller's active org if a SaaS layer
         // has wired the hook. Awaits before sending the response so
         // the orchestrator's resolveOrgIdForTask call (which can
@@ -69,10 +81,22 @@ export const taskRoutes = fp(
 
     async function getUserProfileIds(request: import("fastify").FastifyRequest): Promise<string[] | undefined> {
       const user = request.user!;
-      if (user.role === "admin") return undefined; // admin sees all
-      if (user.allowedProfileIds?.length) return user.allowedProfileIds; // API token
-      const profiles = await opts.profileService.list(user.id);
-      return profiles.map((p) => p.id);
+      // Admin sees all ONLY in OSS (no org context). In SaaS the active org is
+      // the tenant boundary, so even admin is scoped to their own profiles —
+      // otherwise an admin acting in org A could read/cancel org B's tasks.
+      if (user.role === "admin" && !request.orgContext?.org_id) return undefined;
+      // API token → its baked allow-list; otherwise the user's profiles.
+      let ids = user.allowedProfileIds?.length
+        ? user.allowedProfileIds
+        : (await opts.profileService.list(user.id)).map((p) => p.id);
+      // SaaS: keep visibility within the active org — applied to BOTH the
+      // token and session paths, so a multi-org user (or a token used under
+      // another org context) can't reach tasks across orgs.
+      if (opts.visibleProfileIdsForOrg) {
+        const visible = await opts.visibleProfileIdsForOrg(user.id, getActiveOrgId(), ids);
+        if (visible) ids = ids.filter((id) => visible.has(id));
+      }
+      return ids;
     }
 
     server.get<{

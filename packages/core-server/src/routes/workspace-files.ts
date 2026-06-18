@@ -5,7 +5,7 @@ import multipart from "@fastify/multipart";
 import type { SessionRegistry } from "../container/session-registry.js";
 import type { ContainerManager } from "@vonzio/shared";
 import { ErrorCodes, errorResponse } from "../errors.js";
-import { isOwnerOrAdmin } from "../auth/user-auth.js";
+import { authorizeTenantAccess } from "../auth/user-auth.js";
 
 export interface WorkspaceFilesRoutesOptions {
   sessionRegistry: SessionRegistry;
@@ -26,11 +26,17 @@ export const workspaceFilesRoutes = fp(
       Querystring: { path?: string };
     }>("/v1/workspaces/:id/files", async (request, reply) => {
       const workspace = sessionRegistry.get(request.params.id);
-      if (!workspace || !workspace.container_id || !isOwnerOrAdmin(request.user!, workspace.user_id)) {
+      if (!workspace || !workspace.container_id || !authorizeTenantAccess(request, workspace)) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       }
 
-      const path = request.query.path ?? "/workspace/output/";
+      // Confine listing to /workspace — otherwise `find` could enumerate any
+      // directory in the container (e.g. `/`, `/etc`) for the owner.
+      const reqPath = request.query.path ?? "/workspace/output/";
+      if (reqPath.includes("..") || !(reqPath === "/workspace" || reqPath.startsWith("/workspace/"))) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "path must be within /workspace"));
+      }
+      const path = reqPath;
       const cmd = ["find", path, "-maxdepth", "1", "-not", "-path", path, "-printf", "%f\t%s\t%y\n"];
 
       const lines: string[] = [];
@@ -58,7 +64,7 @@ export const workspaceFilesRoutes = fp(
 
     server.post<{ Params: { id: string } }>("/v1/workspaces/:id/upload", async (request, reply) => {
       const workspace = sessionRegistry.get(request.params.id);
-      if (!workspace || !workspace.container_id || !isOwnerOrAdmin(request.user!, workspace.user_id)) {
+      if (!workspace || !workspace.container_id || !authorizeTenantAccess(request, workspace)) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found or no container"));
       }
 
@@ -131,7 +137,7 @@ export const workspaceFilesRoutes = fp(
       Querystring: { paths?: string | string[]; name?: string; format?: string };
     }>("/v1/workspaces/:id/archive", async (request, reply) => {
       const workspace = sessionRegistry.get(request.params.id);
-      if (!workspace || !workspace.container_id || !isOwnerOrAdmin(request.user!, workspace.user_id)) {
+      if (!workspace || !workspace.container_id || !authorizeTenantAccess(request, workspace)) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       }
 
@@ -199,7 +205,7 @@ export const workspaceFilesRoutes = fp(
       Querystring: { path: string };
     }>("/v1/workspaces/:id/files", async (request, reply) => {
       const workspace = sessionRegistry.get(request.params.id);
-      if (!workspace || !workspace.container_id || !isOwnerOrAdmin(request.user!, workspace.user_id)) {
+      if (!workspace || !workspace.container_id || !authorizeTenantAccess(request, workspace)) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found or no container"));
       }
 

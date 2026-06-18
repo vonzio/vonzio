@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ConnectionManager } from "./connection.js";
 import { anthropicAuthHeaders } from "@vonzio/shared";
 import type { TaskService } from "../services/task-service.js";
+import { ForbiddenError } from "../services/task-service.js";
 import type { WorkspaceService } from "../services/workspace-service.js";
 import type { SessionRegistry } from "../container/session-registry.js";
 import type { Orchestrator, Logger } from "../orchestrator/orchestrator.js";
@@ -17,7 +18,7 @@ import { rewriteAgentImages } from "../services/agent-output-rewriter.js";
 import type { EventLog } from "../events/event-log.js";
 import { ErrorCodes } from "../errors.js";
 import { submitTaskSchema } from "../routes/validation.js";
-import { runWithOrgId } from "../lib/active-org.js";
+import { runWithOrgId, getActiveOrgId } from "../lib/active-org.js";
 
 /**
  * Generate a short workspace title using the Claude API.
@@ -93,6 +94,14 @@ export interface WsHandlerOptions {
    * undefined.
    */
   recordTaskOrg?: (taskId: string, orgId: string) => Promise<void>;
+  /** SaaS hook — subset of candidate profile ids visible in the active org
+   *  (null = no filter / OSS). Keeps WS task visibility + submission within
+   *  the connection's tenant boundary, mirroring the REST /v1/tasks route. */
+  visibleProfileIdsForOrg?: (
+    userId: string,
+    activeOrgId: string | null,
+    candidates: string[],
+  ) => Promise<Set<string> | null>;
 }
 
 const ORCHESTRATOR_EVENTS = [
@@ -296,9 +305,11 @@ export function setupWsHandler(
           handleMessage(connectionId, user, connectionOrgId, msg),
         );
       } catch (err) {
+        // A disallowed profile (e.g. org-filtered out) surfaces as
+        // ForbiddenError — report it as FORBIDDEN, not a 500, matching REST.
         connectionManager.sendTo(connectionId, {
           type: "error",
-          code: ErrorCodes.INTERNAL_ERROR,
+          code: err instanceof ForbiddenError ? ErrorCodes.FORBIDDEN : ErrorCodes.INTERNAL_ERROR,
           message: err instanceof Error ? err.message : "Unknown error",
         });
       }
@@ -325,7 +336,15 @@ export function setupWsHandler(
 
   async function getUserProfileIds(userId: string): Promise<string[]> {
     const profiles = await opts.profileService.list(userId);
-    return profiles.map((p) => p.id);
+    let ids = profiles.map((p) => p.id);
+    // Runs inside runWithOrgId(connectionOrgId), so getActiveOrgId() returns
+    // the connection's pinned org. Filter to org-visible profiles (SaaS) so a
+    // multi-org user can't see/submit/cancel tasks across orgs over the WS.
+    if (opts.visibleProfileIdsForOrg) {
+      const visible = await opts.visibleProfileIdsForOrg(userId, getActiveOrgId(), ids);
+      if (visible) ids = ids.filter((id) => visible.has(id));
+    }
+    return ids;
   }
 
   async function handleMessage(
@@ -357,7 +376,10 @@ export function setupWsHandler(
         const submittedSessionId = parsed.data.session_id;
         if (submittedSessionId) {
           const resurrected = await opts.sessionRegistry.resurrect(submittedSessionId, user.id);
-          if (!resurrected) {
+          // Tenant boundary: in SaaS the resurrected session must belong to
+          // the connection's active org. Without this a user in multiple orgs
+          // could resume/submit to their own session from another org context.
+          if (!resurrected || (connectionOrgId && (resurrected.org_id ?? null) !== connectionOrgId)) {
             connectionManager.sendTo(connectionId, {
               type: "error",
               code: ErrorCodes.NOT_FOUND,
@@ -389,6 +411,19 @@ export function setupWsHandler(
       }
 
       case "cancel": {
+        // Ownership check: without this any connected user could cancel any
+        // task by id (cross-tenant DoS). Scope to the caller's org-visible
+        // profiles — same boundary as task list/get/delete.
+        const task = await taskService.get(msg.task_id);
+        const allowed = await getUserProfileIds(user.id);
+        if (!task || !allowed.includes(task.profile_id)) {
+          connectionManager.sendTo(connectionId, {
+            type: "error",
+            code: ErrorCodes.NOT_FOUND,
+            message: `Task ${msg.task_id} not found.`,
+          });
+          break;
+        }
         await taskService.cancel(msg.task_id);
         break;
       }
@@ -442,7 +477,9 @@ export function setupWsHandler(
         // resume path runs.
         await opts.sessionRegistry.resurrect(msg.session_id, user.id);
         const session = opts.sessionRegistry.get(msg.session_id);
-        if (session && session.user_id !== user.id) {
+        // Reject if not owned, or (SaaS) not in the connection's active org.
+        if (session && (session.user_id !== user.id
+          || (connectionOrgId && (session.org_id ?? null) !== connectionOrgId))) {
           connectionManager.sendTo(connectionId, {
             type: "error",
             session_id: msg.session_id,

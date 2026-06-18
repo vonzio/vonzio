@@ -568,7 +568,13 @@ async function handleToolCall(
       if (!taskId) return toolResult("Missing required parameter: task_id", true);
 
       const task = await taskService.get(taskId);
-      if (!task) return toolResult("Task not found", true);
+      // Ownership boundary: taskService.get() looks up by id with no scoping,
+      // so enforce here. Tasks carry no user_id/org_id column — ownership is
+      // the profile that submitted them (task_submit/task_list both scope by
+      // [profileId]). Reject anything outside the calling session's profile
+      // with the same opaque "not found" so a foreign task_id can't be probed
+      // across users or tenants.
+      if (!task || task.profile_id !== profileId) return toolResult("Task not found", true);
 
       const lines = [
         `Task ID: ${task.id}`,
