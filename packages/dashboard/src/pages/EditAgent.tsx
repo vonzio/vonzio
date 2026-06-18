@@ -33,7 +33,8 @@ import {
   fetchUserSkills, fetchUserAgents, createUserAgent, createUserSkill,
   fetchUserGitProviders, type GitProviderInfo,
   fetchUserAnthropicKeys, type UserAnthropicKey,
-  fetchWorkspaces,
+  fetchWorkspaces, fetchAgentTemplates,
+  fetchProfiles, type ProfileSummary,
 } from "../api/client.js";
 import { fetchDockerImages, type DockerImageInfo } from "../api/admin.js";
 import { useApi } from "../hooks/useApi.js";
@@ -61,6 +62,7 @@ export function EditAgent() {
   const { id: routeId } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const duplicateFromId = searchParams.get("from");
+  const templateId = searchParams.get("template");
   const navigate = useNavigate();
 
   const editingId = routeId ?? null;
@@ -71,9 +73,11 @@ export function EditAgent() {
   const { data: availableGitProviders } = useApi<GitProviderInfo[]>(() => fetchUserGitProviders());
   const { data: availableImages } = useApi<DockerImageInfo[]>(() => fetchDockerImages().catch(() => []));
   const { data: availableApiKeys } = useApi<UserAnthropicKey[]>(() => fetchUserAnthropicKeys());
+  const { data: existingProfiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
 
   const [error, setError] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(!!editingId || !!duplicateFromId);
+  const [seededFrom, setSeededFrom] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -157,6 +161,34 @@ export function EditAgent() {
   useEffect(() => {
     const sourceId = editingId ?? duplicateFromId;
     if (!sourceId) {
+      // No DB source — but we may be seeding a new agent from a gallery template
+      // (`/agents/new?template=<id>`), served from config/agent-templates/*.md.
+      if (templateId) {
+        let cancelled = false;
+        setLoadingProfile(true);
+        fetchAgentTemplates()
+          .then((list) => {
+            if (cancelled) return;
+            const t = list.find((x) => x.id === templateId);
+            if (!t) return;
+            setName(t.name);
+            setSlug(t.slug ?? "");
+            if (t.claude_md) setClaudeMd(t.claude_md);
+            if (t.model) setProfileModel(t.model);
+            if (t.effort) setEffort(t.effort);
+            if (t.default_tools) setTools(t.default_tools);
+            if (t.default_egress_domains) {
+              const allowAll = t.default_egress_domains.includes("*");
+              setAllowAllEgress(allowAll);
+              setEgressDomains(t.default_egress_domains.filter((d) => d !== "*"));
+            }
+            if (t.setup_commands) setSetupCommands(t.setup_commands.join("\n"));
+            setSeededFrom(t.name);
+          })
+          .catch(() => { /* leave the form blank on failure */ })
+          .finally(() => { if (!cancelled) setLoadingProfile(false); });
+        return () => { cancelled = true; };
+      }
       setLoadingProfile(false);
       return;
     }
@@ -224,7 +256,35 @@ export function EditAgent() {
     return () => {
       cancelled = true;
     };
-  }, [editingId, duplicateFromId, serverMaxTurns]);
+  }, [editingId, duplicateFromId, templateId, serverMaxTurns]);
+
+  // Default the API key for a NEW agent (blank or template-seeded) so the user
+  // isn't forced to pick one. There's no `is_default` key field, so the heuristic
+  // is: most-recently-used key, falling back to the only/first key. Never
+  // overrides an explicit choice or a key carried over by duplicate-from.
+  useEffect(() => {
+    if (!isNewMode || apiKeyId) return;
+    const keys = availableApiKeys ?? [];
+    if (keys.length === 0) return;
+    const def = [...keys].sort(
+      (a, b) => (b.last_used_at ?? "").localeCompare(a.last_used_at ?? ""),
+    )[0];
+    if (def) setApiKeyId(def.id);
+  }, [isNewMode, apiKeyId, availableApiKeys]);
+
+  // Default the model for a NEW agent heuristically (templates deliberately don't
+  // bake a model — it's provider-coupled). Adopt the model from an existing agent
+  // that uses the SAME key (same provider → guaranteed-valid), most-recent wins.
+  // Never overrides an explicit choice or a model from duplicate-from.
+  useEffect(() => {
+    if (!isNewMode || profileModel || !apiKeyId) return;
+    const onSameKey = (existingProfiles ?? []).filter((p) => p.api_key_id === apiKeyId && p.model);
+    if (onSameKey.length === 0) return;
+    const ref = [...onSameKey].sort(
+      (a, b) => (b.last_used_at ?? b.created_at).localeCompare(a.last_used_at ?? a.created_at),
+    )[0];
+    if (ref?.model) setProfileModel(ref.model);
+  }, [isNewMode, apiKeyId, profileModel, existingProfiles]);
 
   // Add one or more domains (Enter, comma, blur, or pasted "a.com, b.com").
   // Splits on commas/whitespace, trims, dedupes — case-insensitively, since the
@@ -357,8 +417,8 @@ export function EditAgent() {
   const tabs: TabDef[] = [
     { value: "overview", label: "Overview" },
     { value: "tools", label: "Tools & MCP" },
-    { value: "extensions", label: "Subagents & skills" },
-    { value: "network", label: "Network & advanced" },
+    { value: "extensions", label: "Knowledge & subagents" },
+    { value: "network", label: "Advanced" },
   ];
 
   if (loadingProfile) {
@@ -394,7 +454,9 @@ export function EditAgent() {
     ? `Edit · ${name || "profile"}`
     : duplicatedFrom
       ? `Clone of ${duplicatedFrom}`
-      : "New profile";
+      : seededFrom
+        ? `New · ${seededFrom}`
+        : "New profile";
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto", padding: "24px 32px 64px" }}>
@@ -433,6 +495,11 @@ export function EditAgent() {
         {duplicatedFrom && (
           <div style={{ background: "rgba(245, 158, 11, 0.08)", border: "1px solid rgba(245, 158, 11, 0.25)", borderRadius: "var(--vz-radius-md)", padding: 12, fontSize: 12.5, color: "var(--vz-warn)", fontFamily: "var(--vz-font-mono)" }}>
             Cloned from <strong>{duplicatedFrom}</strong>. MCP secrets and registry passwords are <em>not</em> copied — re-enter them below if needed.
+          </div>
+        )}
+        {seededFrom && (
+          <div style={{ background: "var(--vz-sodium-08)", border: "1px solid var(--vz-sodium-25)", borderRadius: "var(--vz-radius-md)", padding: 12, fontSize: 12.5, color: "var(--vz-sodium)", fontFamily: "var(--vz-font-mono)" }}>
+            Started from the <strong>{seededFrom}</strong> template. Review the API key, adjust anything, then save.
           </div>
         )}
 
@@ -475,6 +542,12 @@ export function EditAgent() {
                     </div>
                   </Field>
                 </div>
+              </Panel>
+
+              <Panel title="System prompt (CLAUDE.md)">
+                <Field label="Instructions" hint="Appended to every run. Defines the agent's identity and standing orders.">
+                  <Textarea value={claudeMd} onChange={(e) => setClaudeMd(e.target.value)} placeholder="You are a senior engineer who…" rows={10} />
+                </Field>
               </Panel>
 
               <Panel title="Model">
@@ -530,6 +603,60 @@ export function EditAgent() {
                 </div>
               </Panel>
 
+            </div>
+          )}
+
+          {activeTab === "tools" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
+              <Panel title="Allowed tools">
+                <ToolPillSelect value={tools} onChange={setTools} hint="Empty = all tools available." />
+              </Panel>
+              <Panel title="MCP servers">
+                <McpServerEditor servers={mcpServers} onChange={setMcpServers} />
+              </Panel>
+            </div>
+          )}
+
+          {activeTab === "extensions" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
+              <Panel title="Knowledge">
+                <KnowledgeSection profileId={editingId} />
+              </Panel>
+              <Panel
+                title="Subagents"
+                action={
+                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => setNewSubagentOpen(true)}>
+                    New subagent
+                  </Button>
+                }
+              >
+                <ChecklistRows
+                  items={availableAgents ?? []}
+                  selectedIds={agentIds}
+                  onChange={setAgentIds}
+                  emptyText="No subagents yet — create one with the button above."
+                />
+              </Panel>
+              <Panel
+                title="Skills"
+                action={
+                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => setNewSkillOpen(true)}>
+                    New skill
+                  </Button>
+                }
+              >
+                <ChecklistRows
+                  items={availableSkills ?? []}
+                  selectedIds={skillIds}
+                  onChange={setSkillIds}
+                  emptyText="No skills yet — create one with the button above."
+                />
+              </Panel>
+            </div>
+          )}
+
+          {activeTab === "network" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
               <Panel title="Runtime">
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   <Field label="Setup commands" hint="Run on container start. One per line.">
@@ -539,6 +666,18 @@ export function EditAgent() {
                     <Checkbox checked={persistentSessions} onChange={setPersistentSessions}>Persistent sessions</Checkbox>
                     <Checkbox checked={memoryEnabled} onChange={setMemoryEnabled}>Agent memory</Checkbox>
                   </div>
+                  {availableImages && availableImages.length > 0 && (
+                    <Field label="Container image" hint="Most profiles run on the default. Pick another to customize.">
+                      <Select
+                        options={[
+                          { value: "", label: "Default (vonzio-agent:latest)" },
+                          ...availableImages.map((img) => ({ value: img.tag, label: img.tag })),
+                        ]}
+                        value={containerImage}
+                        onChange={setContainerImage}
+                      />
+                    </Field>
+                  )}
                 </div>
               </Panel>
 
@@ -571,65 +710,6 @@ export function EditAgent() {
                     Keep working until an independent judge confirms the goal is met (or a round/budget limit is hit) — not just until the turn limit. This is the default for the chat composer's “Run until done” toggle, which can override it per message.
                   </p>
                 </div>
-              </Panel>
-            </div>
-          )}
-
-          {activeTab === "tools" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
-              <Panel title="Allowed tools">
-                <ToolPillSelect value={tools} onChange={setTools} hint="Empty = all tools available." />
-              </Panel>
-              <Panel title="MCP servers">
-                <McpServerEditor servers={mcpServers} onChange={setMcpServers} />
-              </Panel>
-            </div>
-          )}
-
-          {activeTab === "extensions" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
-              <Panel
-                title="Subagents"
-                action={
-                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => setNewSubagentOpen(true)}>
-                    New subagent
-                  </Button>
-                }
-              >
-                <ChecklistRows
-                  items={availableAgents ?? []}
-                  selectedIds={agentIds}
-                  onChange={setAgentIds}
-                  emptyText="No subagents yet — create one with the button above."
-                />
-              </Panel>
-              <Panel
-                title="Skills"
-                action={
-                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => setNewSkillOpen(true)}>
-                    New skill
-                  </Button>
-                }
-              >
-                <ChecklistRows
-                  items={availableSkills ?? []}
-                  selectedIds={skillIds}
-                  onChange={setSkillIds}
-                  emptyText="No skills yet — create one with the button above."
-                />
-              </Panel>
-              <Panel title="Knowledge">
-                <KnowledgeSection profileId={editingId} />
-              </Panel>
-            </div>
-          )}
-
-          {activeTab === "network" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
-              <Panel title="System prompt (CLAUDE.md)">
-                <Field label="Instructions" hint="Appended to every run. Defines the agent's identity and standing orders.">
-                  <Textarea value={claudeMd} onChange={(e) => setClaudeMd(e.target.value)} placeholder="You are a senior engineer who…" rows={10} />
-                </Field>
               </Panel>
 
               <Panel title="Network egress">
@@ -716,20 +796,6 @@ export function EditAgent() {
                 )}
               </Panel>
 
-              {availableImages && availableImages.length > 0 && (
-                <Panel title="Container image">
-                  <Field label="Runtime image" hint="Most profiles run on the default. Pick another to customize.">
-                    <Select
-                      options={[
-                        { value: "", label: "Default (vonzio-agent:latest)" },
-                        ...availableImages.map((img) => ({ value: img.tag, label: img.tag })),
-                      ]}
-                      value={containerImage}
-                      onChange={setContainerImage}
-                    />
-                  </Field>
-                </Panel>
-              )}
             </div>
           )}
         </Tabs>

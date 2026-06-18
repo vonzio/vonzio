@@ -4,7 +4,7 @@
  */
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import {
-  Bot, Plus, Trash2, Pencil, Key as KeyIcon, Wrench, BookOpen, Copy,
+  Bot, Plus, Trash2, Pencil, Key as KeyIcon, Wrench, BookOpen, Copy, Sparkles,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi.js";
@@ -120,9 +120,14 @@ function ProfileSection() {
           {ownProfiles.length > 0 ? `Your profiles · ${ownProfiles.length}` : ""}
         </div>
         {!isFirstProfile && (
-          <Button size="sm" icon={<Plus size={14} />} onClick={() => navigate("/agents/new")}>
-            New profile
-          </Button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button variant="ghost" size="sm" icon={<Sparkles size={14} />} onClick={() => navigate("/agents/gallery")}>
+              Templates
+            </Button>
+            <Button size="sm" icon={<Plus size={14} />} onClick={() => navigate("/agents/new")}>
+              New profile
+            </Button>
+          </div>
         )}
       </div>
 
@@ -137,6 +142,14 @@ function ProfileSection() {
           description="A profile bundles your API key, tools, skills, and subagents. Create one or clone a shared profile to get started."
           action={
             <div style={{ display: "flex", gap: 8 }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Sparkles size={14} />}
+                onClick={() => navigate("/agents/gallery")}
+              >
+                Browse templates
+              </Button>
               {sharedProfiles[0] && (
                 <Button
                   variant="ghost"
