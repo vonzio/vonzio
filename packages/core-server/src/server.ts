@@ -671,6 +671,10 @@ export async function buildServer(deps: ServerDeps) {
       const { ollamaRoutes } = await import("./routes/ollama.js");
       v1.register(ollamaRoutes, { apiKeyService });
     }
+    {
+      const { agentTemplateRoutes } = await import("./routes/agent-templates.js");
+      v1.register(agentTemplateRoutes);
+    }
 
     // WS handler lives under /v1 scope (needs auth)
     setupWsHandler(v1, {
