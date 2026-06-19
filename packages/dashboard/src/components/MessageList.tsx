@@ -465,7 +465,7 @@ export function MessageList({
             agent_error: "Stopped — a turn failed",
           };
           const ok = g.done === true;
-          const accent = ok ? "var(--vz-accent, #00BFA5)" : "var(--vz-muted)";
+          const accent = ok ? "var(--vz-ok)" : "var(--vz-muted)";
           const title = g.kind === "eval"
             ? (ok ? "Goal met" : `Goal review · round ${(g.iteration ?? 0) + 1}`)
             : (stopTitles[g.reason ?? ""] ?? "Goal loop stopped");

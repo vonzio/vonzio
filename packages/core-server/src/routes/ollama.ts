@@ -23,14 +23,19 @@ export const ollamaRoutes = fp(
           return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "api_key_id is required"));
         }
 
-        const key = await apiKeyService.getWithSecrets(api_key_id);
-        if (!key || key.provider !== "ollama" || !key.api_key) {
+        // Authorize via the canonical visibility check (own key + admin-shared
+        // + explicit api_key_users grants, incl. owned keys shared per-user).
+        // Mirrors /v1/anthropic-keys/:id/models so a key the user can see in
+        // their picker is also one they can list models for. A hand-rolled
+        // ownership check here silently dropped junction grants.
+        const user = request.user!;
+        if (!(await apiKeyService.isAccessible(api_key_id, user.id, user.role))) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Ollama key not found"));
         }
 
-        const user = request.user!;
-        if (key.user_id && key.user_id !== user.id && user.role !== "admin") {
-          return reply.code(403).send(errorResponse(ErrorCodes.FORBIDDEN, "Access denied"));
+        const key = await apiKeyService.getWithSecrets(api_key_id);
+        if (!key || key.provider !== "ollama" || !key.api_key) {
+          return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Ollama key not found"));
         }
 
         try {

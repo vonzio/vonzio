@@ -92,3 +92,15 @@ body {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Workspace header collapses by its OWN width (container query), not the
+   viewport — so it degrades cleanly when the Deck/Preview panel splits the
+   screen (viewport breakpoints can't see the narrow pane). The root sets
+   container-type: inline-size inline. */
+@container (max-width: 520px) {
+  /* Keep the (tiny) status icon; drop the agent chip + the Deck label. */
+  .vz-wsh-profile,
+  .vz-wsh-label {
+    display: none !important;
+  }
+}

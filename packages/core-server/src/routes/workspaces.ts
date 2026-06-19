@@ -6,7 +6,7 @@ import type { ApiKeyService } from "../services/api-key-service.js";
 import type { EventLog } from "../events/event-log.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
-import { anthropicAuthHeaders } from "@vonzio/shared";
+import { generateTitle } from "../services/title-service.js";
 import { authorizeTenantAccess } from "../auth/user-auth.js";
 import { WORKSPACE_STATUSES, type Workspace, type WorkspaceStatus } from "@vonzio/shared";
 
@@ -233,36 +233,21 @@ export const workspaceRoutes = fp(
       const prompt = (userMsg.data.text as string).slice(0, 200);
       const response = (lastText?.data?.text as string ?? "").slice(0, 200);
 
-      // Get API key
-      const resolved = await profileService.getResolved(workspace.profile_id);
-      const apiKey = resolved?.resolved_api_key;
-
-      if (apiKey) {
-        try {
-          const res = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...anthropicAuthHeaders(resolved?.resolved_provider, apiKey),
-            },
-            body: JSON.stringify({
-              model: "claude-haiku-4-5-20251001",
-              max_tokens: 20,
-              messages: [{
-                role: "user",
-                content: `Generate a very short title (3-6 words, no quotes, no punctuation) summarizing this conversation topic:\n\nUser: ${prompt}\nAssistant: ${response}`,
-              }],
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json() as { content: Array<{ text: string }> };
-            const title = data.content?.[0]?.text?.trim().replace(/^["']|["']$/g, "").replace(/\.$/,"");
-            if (title && title.length > 0 && title.length < 60) {
-              await workspaceService.update(request.params.id, { name: title });
-              return { name: title };
-            }
-          }
-        } catch { /* fall through */ }
+      // Title via the workspace's ACTIVE model/provider — honoring the
+      // per-workspace key + model overrides. Single shared path (Anthropic /
+      // Ollama / OpenAI alike).
+      const resolved = await profileService.getResolved(workspace.profile_id, {
+        apiKeyIdOverride: workspace.api_key_id_override ?? undefined,
+      });
+      const title = await generateTitle(prompt, response, {
+        apiKey: resolved?.resolved_api_key,
+        provider: resolved?.resolved_provider,
+        baseUrl: resolved?.resolved_base_url,
+        model: workspace.model_override ?? resolved?.model,
+      });
+      if (title) {
+        await workspaceService.update(request.params.id, { name: title });
+        return { name: title };
       }
 
       return { name: workspace.name ?? "Untitled" };

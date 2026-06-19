@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
-import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Shield, Copy, Check, RotateCw } from "lucide-react";
+import { useState } from "react";
+import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Shield, Copy, Check, RotateCw, Wifi, WifiOff } from "lucide-react";
 import { Pill } from "@/brand/components.js";
-import { fetchProfileModels, type ProfileModel, restartWorkspace } from "@/api/client.js";
-import { MODEL_DISPLAY_FALLBACK } from "@/lib/model-display.js";
+import { restartWorkspace } from "@/api/client.js";
 import { getWorkspaceHeaderSlots } from "@/registry/index.js";
 import { useEntitlements } from "@vonzio/dashboard-registry";
 import type { ChatMessage } from "./ChatCore.js";
@@ -20,12 +19,6 @@ interface Props {
   messages: ChatMessage[];
   workspaceName: string;
   profileName?: string;
-  /** Active workspace model override (null when running on profile default). */
-  modelOverride?: string | null;
-  /** Profile's own default model — shown when there's no override. */
-  profileDefaultModel?: string | null;
-  /** Active profile id; used to resolve model display names. */
-  profileId?: string;
   /** VPN tunnel routing this workspace's agent, if any. SaaS-only:
    *  OSS workspaces always pass undefined and no pill renders. */
   attachedTunnel?: { id: string; name: string } | null;
@@ -76,7 +69,7 @@ function exportAsMarkdown(messages: ChatMessage[], workspaceName: string) {
 export function WorkspaceHeader({
   name, sessionId, status, connected, streaming,
   panelOpen, onTogglePanel, onToggleSidebar, onRename,
-  messages, workspaceName, profileName, modelOverride, profileDefaultModel, profileId,
+  messages, workspaceName, profileName,
   attachedTunnel, profileIdForSlot,
 }: Props) {
   const entitlements = useEntitlements();
@@ -85,45 +78,14 @@ export function WorkspaceHeader({
   );
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(name ?? "");
-  const [models, setModels] = useState<ProfileModel[]>([]);
   const [convoCopied, setConvoCopied] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
-
-  // Load profile models so we can render a friendly display name in the readout.
-  useEffect(() => {
-    if (!profileId) {
-      setModels([]);
-      return;
-    }
-    let cancelled = false;
-    fetchProfileModels(profileId)
-      .then((res) => {
-        if (!cancelled) setModels(res.models ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setModels([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [profileId]);
 
   // The "Open in Telegram" deep-link button moved to
   // @vonzio/plugin-telegram/dashboard/WorkspaceHeaderTelegramButton.tsx
   // in Phase 3D.1e -- rendered via the registerWorkspaceHeaderSlot
   // contribution alongside other header slots below.
-
-  const overridden = !!modelOverride;
-  const resolvedModelLabel = (() => {
-    const resolveId = (id: string) => {
-      const hit = models.find((m) => m.id === id);
-      return hit?.display_name ?? MODEL_DISPLAY_FALLBACK[id] ?? id;
-    };
-    if (modelOverride) return resolveId(modelOverride);
-    if (profileDefaultModel) return resolveId(profileDefaultModel);
-    return "default";
-  })();
 
   function handleSubmit() {
     if (editValue.trim()) {
@@ -133,22 +95,20 @@ export function WorkspaceHeader({
   }
 
   const statusLabel = connected ? status : "disconnected";
-  const statusTone =
-    !connected ? ("fail" as const)
-    : status === "active" ? ("ok" as const)
-    : status === "paused" ? ("warn" as const)
-    : undefined;
-  const idShort = sessionId ? sessionId.slice(0, 8) : null;
 
   return (
     <div
-      className="flex items-center justify-between gap-2"
+      className="vz-wsh flex items-center justify-between gap-2"
       style={{
         padding: "0 14px",
         height: 44,
         flexShrink: 0,
         borderBottom: "1px solid var(--vz-border)",
         background: "var(--vz-page)",
+        // Container query context: collapse the header by the ACTUAL pane width
+        // (not the viewport) so it degrades cleanly when the Deck/Preview panel
+        // splits the screen — viewport breakpoints can't see the narrow pane.
+        containerType: "inline-size",
       }}
     >
       <div className="flex items-center gap-2.5 min-w-0">
@@ -207,55 +167,21 @@ export function WorkspaceHeader({
           </button>
         )}
 
-        {/* Session ID badge (mono chip) */}
-        {idShort && (
-          <span
-            title={sessionId}
-            style={{
-              fontFamily: "var(--vz-font-mono)",
-              fontSize: 11,
-              color: "var(--vz-muted)",
-              background: "var(--vz-mute)",
-              border: "1px solid var(--vz-border)",
-              padding: "2px 8px",
-              borderRadius: 5,
-              flexShrink: 0,
-              letterSpacing: "0.02em",
-            }}
-          >
-            ~{idShort}
-          </span>
-        )}
-
-        {/* Model readout — read-only; the picker lives in the composer footer. */}
-        <span
-          className="hidden md:inline-flex"
-          aria-label="Active model"
-          title={overridden ? `Override: ${resolvedModelLabel}` : "Agent default model"}
-          style={{
-            fontFamily: "var(--vz-font-mono)",
-            fontSize: 11,
-            color: "var(--vz-muted-2)",
-            letterSpacing: "0.04em",
-            flexShrink: 0,
-            alignItems: "center",
-            gap: 4,
-          }}
-        >
-          <span>model:</span>
-          <span style={{ color: overridden ? "var(--vz-sodium)" : "var(--vz-muted-2)" }}>
-            {resolvedModelLabel}
-          </span>
-        </span>
+        {/* Session ID badge + model readout removed — the id is internal
+            chrome and the model picker already lives in the composer footer. */}
       </div>
 
       <div className="flex items-center gap-1.5 text-xs shrink-0">
-        {/* Status pill — hidden on mobile because the same signal is
-            already in the colored pip on the left side of the header. */}
-        <span className="hidden sm:inline-flex">
-          <Pill tone={statusTone} dot={connected && (status === "active" || status === "running")}>
-            {statusLabel}
-          </Pill>
+        {/* WebSocket/connection status — icon only, tooltip carries the label. */}
+        <span
+          className="vz-wsh-status"
+          title={statusLabel}
+          aria-label={`Status: ${statusLabel}`}
+          style={{ display: "inline-flex", alignItems: "center", color: pipColor(status, connected) }}
+        >
+          {connected
+            ? <Wifi className="w-3.5 h-3.5" />
+            : <WifiOff className="w-3.5 h-3.5" />}
         </span>
 
         {attachedTunnel && (
@@ -285,13 +211,19 @@ export function WorkspaceHeader({
 
         {profileName && (
           <span
-            className="hidden md:inline"
+            className="vz-wsh-profile"
+            title={`Agent: ${profileName}`}
             style={{
               fontFamily: "var(--vz-font-mono)",
-              fontSize: 11.5,
-              color: "var(--vz-muted)",
-              padding: "0 6px",
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--vz-sodium)",
+              background: "var(--vz-sodium-08)",
+              border: "1px solid var(--vz-sodium-25)",
+              padding: "2px 8px",
+              borderRadius: 5,
               letterSpacing: "0.02em",
+              flexShrink: 0,
             }}
           >
             {profileName}
@@ -308,22 +240,20 @@ export function WorkspaceHeader({
             } catch { /* clipboard unavailable (http origin) — no-op */ }
           }}
           className="vz-action-btn"
-          style={{ width: "auto", padding: "0 8px", gap: 5, fontSize: 12 }}
-          title="Copy conversation as Markdown"
+          title={convoCopied ? "Copied" : "Copy conversation as Markdown"}
+          aria-label="Copy conversation as Markdown"
         >
           {convoCopied ? <Check className="w-3 h-3" style={{ color: "var(--vz-ok)" }} /> : <Copy className="w-3 h-3" />}
-          <span className="hidden sm:inline">{convoCopied ? "Copied" : "Copy"}</span>
         </button>
 
         <button
           type="button"
           onClick={() => exportAsMarkdown(messages, workspaceName)}
           className="vz-action-btn"
-          style={{ width: "auto", padding: "0 8px", gap: 5, fontSize: 12 }}
           title="Export as Markdown"
+          aria-label="Export as Markdown"
         >
           <Download className="w-3 h-3" />
-          <span className="hidden sm:inline">Export</span>
         </button>
 
         {sessionId && (
@@ -344,11 +274,17 @@ export function WorkspaceHeader({
             }}
             className="vz-action-btn"
             disabled={restarting}
-            style={{ width: "auto", padding: "0 8px", gap: 5, fontSize: 12, color: confirmRestart ? "var(--vz-sodium)" : undefined }}
-            title="Restart the container — applies network/egress changes; the conversation is kept and resumes on your next message"
+            style={{ color: confirmRestart ? "var(--vz-sodium)" : undefined }}
+            title={
+              restarting
+                ? "Restarting…"
+                : confirmRestart
+                  ? "Click again to confirm restart"
+                  : "Restart the container — applies network/egress changes; the conversation is kept and resumes on your next message"
+            }
+            aria-label="Restart container"
           >
             <RotateCw className={restarting ? "w-3 h-3 animate-spin" : "w-3 h-3"} />
-            <span className="hidden sm:inline">{restarting ? "Restarting…" : confirmRestart ? "Confirm?" : "Restart"}</span>
           </button>
         )}
 
@@ -365,7 +301,7 @@ export function WorkspaceHeader({
           title={panelOpen ? "Hide Deck" : "Show Deck"}
         >
           {panelOpen ? <PanelRightClose className="w-3 h-3" /> : <PanelRightOpen className="w-3 h-3" />}
-          <span className="hidden sm:inline">Deck</span>
+          <span className="vz-wsh-label">Deck</span>
         </button>
       </div>
     </div>
