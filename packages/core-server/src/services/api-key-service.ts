@@ -17,6 +17,7 @@ export interface CreateApiKeyInput {
 
 export class ApiKeyService {
   private onKeyChanged?: (id: string) => void;
+  private orgMembershipResolver?: (userId: string) => Promise<Set<string>>;
 
   constructor(
     private db: DrizzleDB,
@@ -27,6 +28,14 @@ export class ApiKeyService {
    *  so dependent caches (e.g. the model-list cache) can invalidate. */
   setKeyChangeListener(fn: (id: string) => void): void {
     this.onKeyChanged = fn;
+  }
+
+  /** Register the SaaS org-membership resolver (cp-server). list() uses it to
+   *  distinguish an org-materialized shared key (grantee is a member of the
+   *  key's org → org-gated) from an explicit admin cross-user share (grantee
+   *  not a member → visible regardless of active org). OSS leaves it unset. */
+  setOrgMembershipResolver(fn: (userId: string) => Promise<Set<string>>): void {
+    this.orgMembershipResolver = fn;
   }
 
   async create(input: CreateApiKeyInput, userId?: string): Promise<AnthropicKey> {
@@ -80,14 +89,17 @@ export class ApiKeyService {
 
   /** List keys visible to a user: their own + shared keys where they are in api_key_users.
    *
-   * Active-org scoping: shared keys with org_id set are only included
-   * when the active org (from getActiveOrgId()) matches. This prevents
-   * cross-tenant leak — a member of Vonzio + their own personal org
-   * sees the Vonzio team key only when active org IS Vonzio. Personal-
-   * scope keys (user_id matches) and legacy admin-shared keys (user_id
-   * null AND org_id null) are visible regardless. OSS deployments
-   * never pin an active org → org_id-tagged shared keys stay hidden,
-   * which is the right OSS default (cp-server isn't running anyway).
+   * Active-org scoping: an org-materialized shared key (org_id set, grantee
+   * is a MEMBER of that org) is only included when the active org matches —
+   * this prevents cross-tenant leak (a member of Vonzio + their own personal
+   * org sees the Vonzio team key only when active org IS Vonzio). But an
+   * explicit admin cross-user share (org_id incidentally stamped to the
+   * admin's org, grantee NOT a member of it) is visible regardless of active
+   * org — otherwise the grantee, whose active org is their own, could never
+   * see a key an admin deliberately shared with them. Personal-scope keys
+   * (user_id matches) and legacy admin-shared keys (user_id null AND org_id
+   * null) are always visible. OSS has no membership resolver → org-tagged
+   * shared keys behave as before for the (single-tenant) default.
    */
   async list(userId?: string, userRole?: string): Promise<AnthropicKey[]> {
     const rows = await this.db.select().from(schema.anthropicKeys);
@@ -106,17 +118,22 @@ export class ApiKeyService {
     }
 
     const activeOrgId = getActiveOrgId();
+    const memberOrgIds = this.orgMembershipResolver
+      ? await this.orgMembershipResolver(userId)
+      : new Set<string>();
 
     // User sees: their own keys + shared keys they are explicitly granted access to
     return rows
       .filter((r) => {
         if (r.user_id === userId) return true; // own key
         if (!r.user_id) {
-          // Shared key tagged with an org → only visible when active org matches.
-          if (r.org_id && r.org_id !== activeOrgId) return false;
-          if (userRole === "admin") return true;
-          const allowed = junctionMap.get(r.id) ?? [];
-          return allowed.includes(userId);
+          const granted = userRole === "admin" || (junctionMap.get(r.id) ?? []).includes(userId);
+          if (!granted) return false;
+          // Org-tagged key not in the active org → hide ONLY if the user is a
+          // member of that org (a real org-context switch). A non-member with
+          // an explicit grant is an admin cross-user share → keep it.
+          if (r.org_id && r.org_id !== activeOrgId && memberOrgIds.has(r.org_id)) return false;
+          return true;
         }
         return false;
       })

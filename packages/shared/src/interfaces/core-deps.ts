@@ -51,6 +51,16 @@ export interface CoreDeps {
     activeOrgId: string | null,
   ) => Promise<Set<string>>;
   /**
+   * Optional — return the set of org ids the user is a member of. The
+   * api-key list filter uses this to tell an org-materialized shared key
+   * (grantee IS a member of the key's org → org-gated, shown only when that
+   * org is active) apart from an explicit admin cross-user share (grantee
+   * is NOT a member → shown regardless of active org). OSS leaves this
+   * undefined → empty set → admin per-user shares are always visible, which
+   * is the right single-tenant default.
+   */
+  orgIdsForUserMembership?: (userId: string) => Promise<Set<string>>;
+  /**
    * Optional — fired after a profile is created so cp-server can link
    * it to the active org in profile_orgs. OSS leaves this undefined;
    * profiles then have no org affinity (existing OSS behaviour).
