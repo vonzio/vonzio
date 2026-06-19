@@ -3,7 +3,7 @@
  * Extracted from Playground.tsx to avoid duplication.
  */
 import { useState, useEffect, useMemo, useRef } from "react";
-import { ChevronDown, ChevronRight, Loader2, Copy, Check, Trash2, FileText, FilePlus, FileEdit, Eye, Search, FolderSearch, Wrench, GitBranch, Download, Terminal, MessageCircleQuestion, Maximize2, Minimize2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Copy, Check, Trash2, FileText, FilePlus, FileEdit, Search, FolderSearch, Wrench, GitBranch, Download, Terminal, MessageCircleQuestion, Maximize2, Minimize2, Globe, Image as ImageIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -880,9 +880,30 @@ function BashRenderer({ input, output }: { input?: Record<string, unknown>; outp
   );
 }
 
+/** Detect an image-file Read result and pull out a usable data URL. */
+function readImageData(output?: string, fileName?: string): string | null {
+  if (!output) return null;
+  try {
+    const parsed = JSON.parse(output);
+    if (parsed?.type !== "image") return null;
+    const b64 = parsed?.file?.base64 ?? parsed?.base64;
+    if (typeof b64 !== "string" || !b64) return null;
+    if (b64.startsWith("data:")) return b64;
+    const ext = (fileName?.split(".").pop() ?? "").toLowerCase();
+    const mime = ext === "png" ? "image/png"
+      : ext === "gif" ? "image/gif"
+      : ext === "webp" ? "image/webp"
+      : ext === "svg" ? "image/svg+xml"
+      : "image/jpeg";
+    return `data:${mime};base64,${b64}`;
+  } catch { return null; }
+}
+
 function ReadRenderer({ input, output }: { input?: Record<string, unknown>; output?: string }) {
   const filePath = (input?.file_path ?? "") as string;
   const fileName = filePath.split("/").pop() ?? filePath;
+
+  const imageData = useMemo(() => readImageData(output, fileName), [output, fileName]);
 
   let content = output ?? "";
   try {
@@ -893,6 +914,28 @@ function ReadRenderer({ input, output }: { input?: Record<string, unknown>; outp
       content = parsed.content;
     }
   } catch { /* use raw */ }
+
+  if (imageData) {
+    return (
+      <div>
+        <div
+          className="flex items-center gap-2 px-3 py-1.5"
+          style={{ background: "var(--vz-mute)", borderBottom: "1px solid var(--vz-border)" }}
+        >
+          <ImageIcon className="w-3 h-3" style={{ color: "var(--vz-muted-2)" }} />
+          <span className="font-mono" style={{ color: "var(--vz-ink)" }}>{fileName}</span>
+          <span className="font-mono text-[10px] truncate" style={{ color: "var(--vz-muted-2)" }}>{filePath}</span>
+        </div>
+        <div className="p-3" style={{ background: "var(--vz-mute)" }}>
+          <img
+            src={imageData}
+            alt={fileName}
+            style={{ maxWidth: "100%", maxHeight: 360, borderRadius: "var(--vz-radius-sm)", border: "1px solid var(--vz-border)" }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   const isCSVFile = /\.(csv|tsv)$/i.test(fileName);
   const table = useMemo(() => isCSVFile ? detectCSV(content) : null, [content, isCSVFile]);
@@ -921,6 +964,61 @@ function ReadRenderer({ input, output }: { input?: Record<string, unknown>; outp
             {content.length > 800 ? content.slice(0, 800) + `\n... (${content.length} chars)` : content}
           </pre>
         )
+      )}
+    </div>
+  );
+}
+
+// ─── Web Search / Fetch Renderer ─────────────────────────────────────
+
+function WebSearchRenderer({ input, output }: { input?: Record<string, unknown>; output?: string }) {
+  const query = (input?.query ?? input?.url ?? "") as string;
+  let results: string[] = [];
+  let durationSeconds: number | undefined;
+  if (output) {
+    try {
+      const parsed = JSON.parse(output);
+      const raw = parsed?.results ?? parsed?.content;
+      if (Array.isArray(raw)) {
+        results = raw.map((r) => typeof r === "string" ? r : (r?.title ?? r?.text ?? r?.url ?? JSON.stringify(r)));
+      } else if (typeof raw === "string") {
+        results = [raw];
+      }
+      if (typeof parsed?.durationSeconds === "number") durationSeconds = parsed.durationSeconds;
+    } catch { /* fall back to empty */ }
+  }
+
+  return (
+    <div>
+      {query && (
+        <div
+          className="flex items-center gap-2 px-3 py-1.5"
+          style={{ background: "var(--vz-mute)", borderBottom: "1px solid var(--vz-border)" }}
+        >
+          <Search className="w-3 h-3 shrink-0" style={{ color: "var(--vz-muted-2)" }} />
+          <span className="font-mono truncate" style={{ color: "var(--vz-ink)" }}>{query}</span>
+          {typeof durationSeconds === "number" && (
+            <span className="ml-auto font-mono text-[10px] shrink-0" style={{ color: "var(--vz-muted-2)" }}>
+              {durationSeconds.toFixed(1)}s
+            </span>
+          )}
+        </div>
+      )}
+      {results.length > 0 ? (
+        <ol style={{ margin: 0, padding: "6px 0" }}>
+          {results.map((r, i) => (
+            <li
+              key={i}
+              className="flex gap-2 px-3 py-1"
+              style={{ listStyle: "none", color: "var(--vz-ink-2)", fontSize: 12 }}
+            >
+              <span className="font-mono shrink-0" style={{ color: "var(--vz-muted-2)" }}>{i + 1}.</span>
+              <span>{r}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="px-3 py-2" style={{ color: "var(--vz-muted)", fontSize: 12 }}>No results.</div>
       )}
     </div>
   );
@@ -1194,8 +1292,17 @@ function writeAdapter(props: ToolRendererProps) {
   if (props.output) {
     try { parsedOutput = JSON.parse(props.output); } catch { /* raw text */ }
   }
-  if (!parsedOutput) return <DefaultRenderer input={props.input} output={props.output} />;
-  return <WriteRenderer output={parsedOutput} containerId={props.containerId} />;
+  // Fall back to the tool input when output is missing or non-JSON — the
+  // input already carries file_path + content, enough for a clean render.
+  const out = parsedOutput ?? (props.input?.file_path
+    ? { type: "create", filePath: props.input.file_path, content: props.input.content }
+    : null);
+  if (!out) return <DefaultRenderer input={props.input} output={props.output} />;
+  return <WriteRenderer output={out} containerId={props.containerId} />;
+}
+
+function webSearchAdapter(props: ToolRendererProps) {
+  return <WebSearchRenderer input={props.input} output={props.output} />;
 }
 
 function bashAdapter(props: ToolRendererProps) {
@@ -1231,6 +1338,7 @@ const TOOL_RENDERERS: Record<string, ToolRendererConfig> = {
   Write: {
     component: writeAdapter,
     summary: (input) => (input?.file_path as string)?.split("/").pop() ?? null,
+    autoExpand: true,
   },
   Bash: {
     component: bashAdapter,
@@ -1244,6 +1352,8 @@ const TOOL_RENDERERS: Record<string, ToolRendererConfig> = {
   Read: {
     component: readAdapter,
     summary: (input) => (input?.file_path as string)?.split("/").pop() ?? null,
+    // Collapse text reads; auto-open image reads (the thumbnail is the point).
+    autoExpand: (_input, output) => !!readImageData(output, undefined),
   },
   Glob: {
     component: defaultAdapter,
@@ -1262,6 +1372,14 @@ const TOOL_RENDERERS: Record<string, ToolRendererConfig> = {
     component: csvTableAdapter,
     summary: (input) => (input?.title as string) ?? "table",
     autoExpand: true,
+  },
+  WebSearch: {
+    component: webSearchAdapter,
+    summary: (input) => (input?.query as string) ?? null,
+  },
+  WebFetch: {
+    component: webSearchAdapter,
+    summary: (input) => (input?.url as string) ?? (input?.query as string) ?? null,
   },
   TodoWrite: { component: defaultAdapter, hidden: true },
   AskUserQuestion: { component: defaultAdapter, hidden: true },
@@ -1285,7 +1403,7 @@ function toolIcon(tool: string): React.ComponentType<{ size?: number; className?
     case "Glob": return FolderSearch;
     case "Mermaid": return GitBranch;
     case "WebFetch":
-    case "WebSearch": return Eye;
+    case "WebSearch": return Globe;
     default: return Wrench;
   }
 }

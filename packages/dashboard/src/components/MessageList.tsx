@@ -9,6 +9,7 @@ import {
 } from "../api/client.js";
 import { useOptionalUser } from "../contexts/UserContext.js";
 import { useTheme } from "../hooks/useTheme.js";
+import { WordmarkText } from "../brand/components.js";
 
 function formatClockTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -100,8 +101,8 @@ function AgentHeaderStrip({ time, copyText }: { time: Date; copyText?: string })
     >
       <div className="flex items-center gap-3">
         <div className="shrink-0"><AgentAvatar /></div>
-        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--vz-ink)", lineHeight: 1 }}>
-          vonzio<span style={{ color: "var(--vz-muted-2)", fontWeight: 400 }}> · agent</span>
+        <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1 }}>
+          <WordmarkText />
         </span>
         <span
           style={{
@@ -630,12 +631,7 @@ export function MessageList({
             <MsgRow
               key={msg.id}
               avatar={<AgentAvatar />}
-              name={
-                <>
-                  vonzio
-                  <span style={{ color: "var(--vz-muted-2)", fontWeight: 400 }}> · agent</span>
-                </>
-              }
+              name={<WordmarkText />}
               time={msg.timestamp}
               compact={compact}
               trailing={
