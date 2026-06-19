@@ -6,15 +6,51 @@
     "prompt": "Design a high-end fitness studio brand website, emphasizing professionalism and community belonging.\n\nVisual Strategy:\n- Imagery: athletic poses, sweat, muscle definition, equipment texture.\n- Photography: high-contrast black and white, emphasizing strength and beauty.\n- Composition: people as the main subject, blurred surroundings.\n\nColor Palette:\n- Primary: pure black, dark gray.\n- Accent: neon orange, metallic silver.\n- Background: dark, strong textural feel.\n\nTypography:\n- Headings: bold sans-serif, powerful.\n- Body: clean and forceful, condensed; minimal whitespace, high information density.\n\nPage Structure:\n- Hero: brand attitude + coach team showcase.\n- Curriculum: organized by goals (muscle gain, fat loss, fitness).\n- Coach Profiles: professional background + certifications.\n- Member Stories: real transformation case studies.\n- Book a Trial Class: clear CTA.\n\nOverall vibe: professional, hardcore, motivating, sense of belonging. Build it as a single responsive HTML file and serve it so I can preview it."
   },
   {
-    "id": "data-analysis",
-    "label": "Analyze a dataset",
-    "icon": "sparkles",
-    "prompt": "I'll share a dataset (CSV/JSON). Act as a senior data analyst and deliver a decision-ready analysis.\n\nDo this:\n1. Profile the data: shape, columns, types, missing values, obvious quality issues — and state assumptions.\n2. Clean it (document every transformation) and explain why.\n3. Find the 3-5 most decision-relevant insights, each with the supporting numbers.\n4. Quantify: trends, distributions, correlations, outliers — call out what's surprising vs expected.\n5. Visualize the key findings (save charts as PNGs in the workspace).\n6. End with a short, plain-language 'So what / now what' — concrete recommendations and their caveats.\n\nBe rigorous: distinguish correlation from causation, note sample-size limits, and flag anything that needs more data. Ask me for the file (or for the business question) before you start if it's missing."
+    "id": "playable-game",
+    "label": "Build a playable game",
+    "icon": "game",
+    "prompt": "Build a polished, playable browser game in a single self-contained HTML file (inline CSS + JS, no build step), then serve it so I can play it at the preview URL.\n\nGame: a fast, juicy arcade game — pick something fun (e.g. a neon Breakout, an endless runner, or Snake with a twist) and make it genuinely good:\n- Smooth 60fps canvas loop, keyboard + touch controls.\n- Score, lives, increasing difficulty, a game-over + restart screen.\n- 'Juice': particles, screen shake, sound effects (WebAudio), satisfying feedback.\n- Crisp visuals with a bold color palette; mobile-responsive canvas.\n\nKeep it to one file. After serving it, tell me the controls and the preview URL."
+  },
+  {
+    "id": "data-dashboard",
+    "label": "Turn a CSV into a dashboard",
+    "icon": "chart",
+    "prompt": "I'll share a CSV. Turn it into an interactive, self-contained HTML dashboard and serve it for preview.\n\nDo this:\n1. Profile the data (columns, types, ranges, missing values) and state assumptions.\n2. Design a clean dashboard: KPI cards up top, then 3-5 charts that actually answer 'what's going on here' (trend, breakdown, distribution, comparison).\n3. Make it interactive — filters/date-range/segment toggles that update the charts (vanilla JS + a lightweight chart lib via CDN, or hand-rolled canvas; no build step).\n4. Polished, responsive, dark-mode-friendly styling.\n5. Embed the data inline so the single HTML file works standalone.\n\nServe it and give me the preview URL + a 3-bullet 'what the data says'. Ask me for the file if I haven't shared it."
+  },
+  {
+    "id": "clone-from-screenshot",
+    "label": "Recreate a site from a screenshot",
+    "icon": "code",
+    "prompt": "I'll attach a screenshot of a web page (or give a URL). Recreate its layout as a clean, responsive single HTML file and serve it for preview.\n\n- Match the structure, spacing, typography scale, and color palette as closely as you can from the image.\n- Use semantic HTML + modern CSS (fl/grid); make it responsive even if the original isn't.\n- Use tasteful placeholder content/images where the real assets aren't available.\n- Note any deliberate deviations or things you couldn't determine from the screenshot.\n\nServe it and give me the preview URL so I can compare side by side."
+  },
+  {
+    "id": "research-brief",
+    "label": "Research a topic into a brief",
+    "icon": "search",
+    "prompt": "Act as a sharp research analyst. Give me a decision-ready brief on a topic I'll name.\n\nStructure:\n- TL;DR: 3-5 bullets a busy exec can act on.\n- The landscape: key players/options/approaches, with the trade-offs that actually matter.\n- Evidence: concrete facts, numbers, and recent developments — cite sources/links.\n- What's contested or uncertain (don't paper over disagreement).\n- Recommendation + the 'it depends on…' conditions.\n\nBe concrete and skeptical: separate fact from hype, flag where data is thin. If web access is available, pull current sources; otherwise reason from what you know and say so. Save the brief as a markdown file in the workspace. Ask me for the topic if I haven't given one."
   },
   {
     "id": "automation-script",
     "label": "Write an automation script",
     "icon": "message",
-    "prompt": "Help me build a small, production-quality automation tool. Treat it as real software, not a snippet.\n\nProcess:\n1. First ask the 2-3 questions you need (what to automate, inputs/outputs, where it runs, any APIs/credentials).\n2. Propose the approach + the language/libraries, with a one-line justification, before writing code.\n3. Implement it as a clean, single-purpose script with: clear arg/config handling, helpful errors, no silent failures, and comments only where intent isn't obvious.\n4. Add a dry-run / safe mode if it mutates anything.\n5. Include a short README (what it does, how to run, env vars) and 2-3 example invocations.\n6. Verify it runs (create a tiny fixture and execute it); show the output.\n\nKeep it idiomatic and minimal — no over-engineering, no 'just in case' abstractions."
+    "prompt": "Help me build a small, production-quality automation tool. Treat it as real software, not a snippet.\n\nProcess:\n1. First ask the 2-3 questions you need (what to automate, inputs/outputs, where it runs, any APIs/credentials).\n2. Propose the approach + language/libraries, with a one-line justification, before writing code.\n3. Implement a clean, single-purpose script: clear arg/config handling, helpful errors, no silent failures, comments only where intent isn't obvious.\n4. Add a dry-run / safe mode if it mutates anything.\n5. Include a short README (what it does, how to run, env vars) and 2-3 example invocations.\n6. Verify it runs (create a tiny fixture and execute it); show the output.\n\nKeep it idiomatic and minimal — no over-engineering."
+  },
+  {
+    "id": "data-analysis",
+    "label": "Analyze a dataset",
+    "icon": "chart",
+    "prompt": "I'll share a dataset (CSV/JSON). Act as a senior data analyst and deliver a decision-ready analysis.\n\n1. Profile the data: shape, columns, types, missing values, quality issues — state assumptions.\n2. Clean it (document every transformation) and explain why.\n3. Find the 3-5 most decision-relevant insights, each with supporting numbers.\n4. Quantify trends, distributions, correlations, outliers — call out surprising vs expected.\n5. Visualize the key findings (save charts as PNGs in the workspace).\n6. End with a plain-language 'So what / now what': concrete recommendations + caveats.\n\nBe rigorous: correlation vs causation, sample-size limits, flag what needs more data. Ask me for the file or the business question if it's missing."
+  },
+  {
+    "id": "api-service",
+    "label": "Build & run a small API",
+    "icon": "rocket",
+    "prompt": "Build a small, well-structured REST API, run it in the workspace, and show it working.\n\n- Pick a sensible stack (e.g. Node/Express or Python/FastAPI) and a focused domain — ask me for the domain, or propose one (e.g. a tasks API, a URL shortener, a notes service).\n- Endpoints: full CRUD with input validation, sane status codes, and JSON errors.\n- In-memory or SQLite storage so it runs with zero external setup.\n- A short README with the routes + example curl calls.\n- Start the server and exercise every endpoint with curl, showing the requests + responses.\n\nKeep it clean and idiomatic. Tell me how to call it (and the preview URL if it's reachable)."
+  },
+  {
+    "id": "portfolio-site",
+    "label": "Make a portfolio site",
+    "icon": "globe",
+    "prompt": "Build me a striking single-page personal/portfolio website as one self-contained HTML file, and serve it for preview.\n\n- Sections: hero with a strong tagline, about, selected work (cards with hover detail), skills, and a contact CTA.\n- Modern, distinctive design — confident typography, smooth scroll, subtle motion/scroll-reveal, dark mode.\n- Fully responsive; fast (no heavy frameworks — vanilla + maybe one CDN lib).\n- Tasteful placeholder content I can swap later.\n\nAsk me for my name/role/highlights, or scaffold it with realistic placeholders. Serve it and give me the preview URL."
   }
 ]

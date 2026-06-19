@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot } from "lucide-react";
+import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot, Gamepad2, BarChart3, Search, Rocket, Globe } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
@@ -75,6 +75,14 @@ function isServablePreviewTarget(url: string): boolean {
   const ext = last.slice(dot + 1).toLowerCase();
   return !NON_SERVABLE_PREVIEW_EXT.has(ext);
 }
+
+// Minimal built-in starters — only used if config/prompt-suggestions.json is
+// missing/unreachable, so the new-chat strip is never empty.
+const SUGGESTION_FALLBACK: PromptSuggestion[] = [
+  { id: "landing", label: "Build a landing page", icon: "code", prompt: "Build me a responsive landing page with a hero section, features grid, and a contact form." },
+  { id: "data", label: "Analyze some data", icon: "chart", prompt: "Help me analyze a dataset. I'll share the file with you." },
+  { id: "script", label: "Write a script", icon: "message", prompt: "Write a Python script that automates a common task. What kind of task should we automate?" },
+];
 
 // ─── Component ──────────────────────────────────────────────────────
 
@@ -693,17 +701,28 @@ export function Workspace() {
   // image, overridable via volume mount). Fall back to a minimal built-in set
   // if the config is missing/unreachable so the strip is never empty.
   const { data: suggestionData } = useApi<{ suggestions: PromptSuggestion[] }>(() => fetchPromptSuggestions());
-  const suggestionIcon = (key?: string) =>
-    key === "code" ? <Code className="w-4 h-4" />
-    : key === "message" ? <MessageSquare className="w-4 h-4" />
-    : <Sparkles className="w-4 h-4" />;
-  const SUGGESTION_FALLBACK: PromptSuggestion[] = [
-    { id: "landing", label: "Build a landing page", icon: "code", prompt: "Build me a responsive landing page with a hero section, features grid, and a contact form." },
-    { id: "data", label: "Analyze some data", icon: "sparkles", prompt: "Help me analyze a dataset. I'll share the file with you." },
-    { id: "script", label: "Write a script", icon: "message", prompt: "Write a Python script that automates a common task. What kind of task should we automate?" },
-  ];
-  const suggestions = ((suggestionData?.suggestions?.length ? suggestionData.suggestions : SUGGESTION_FALLBACK))
-    .map((s) => ({ icon: suggestionIcon(s.icon), label: s.label, prompt: s.prompt }));
+  const suggestionIcon = (key?: string) => {
+    switch (key) {
+      case "code": return <Code className="w-4 h-4" />;
+      case "message": return <MessageSquare className="w-4 h-4" />;
+      case "game": return <Gamepad2 className="w-4 h-4" />;
+      case "chart": return <BarChart3 className="w-4 h-4" />;
+      case "search": return <Search className="w-4 h-4" />;
+      case "rocket": return <Rocket className="w-4 h-4" />;
+      case "globe": return <Globe className="w-4 h-4" />;
+      default: return <Sparkles className="w-4 h-4" />;
+    }
+  };
+  // Show a rotating subset so the strip feels fresh + hints at the range without
+  // clutter. Shuffle once per fetch (not per render) via useMemo keyed on data.
+  const suggestions = useMemo(() => {
+    const pool = suggestionData?.suggestions?.length ? suggestionData.suggestions : SUGGESTION_FALLBACK;
+    return [...pool]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 4)
+      .map((s) => ({ icon: suggestionIcon(s.icon), label: s.label, prompt: s.prompt }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestionData]);
 
   function handleSuggestion(prompt: string) {
     setInputWithDraft(prompt);
