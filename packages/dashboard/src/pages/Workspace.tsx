@@ -6,7 +6,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
 import { useApi } from "../hooks/useApi.js";
 import { useIsMobile, useIsNarrow } from "../hooks/use-mobile.js";
-import { fetchProfiles, fetchUserAnthropicKeys, updateProfile, type ProfileSummary, type UserAnthropicKey } from "../api/client.js";
+import { fetchProfiles, fetchUserAnthropicKeys, updateProfile, fetchModelsForApiKey, fetchPromptSuggestions, type ProfileSummary, type UserAnthropicKey, type PromptSuggestion } from "../api/client.js";
 import { WorkspaceSidebar } from "../components/WorkspaceSidebar.js";
 import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
@@ -372,7 +372,18 @@ export function Workspace() {
     if (!activeProfile || !attachableKey) return;
     setAttaching(true);
     try {
-      await updateProfile(activeProfile.id, { api_key_id: attachableKey.id });
+      const body: { api_key_id: string; model?: string } = { api_key_id: attachableKey.id };
+      // Also pick a default model for the key's provider. An empty model
+      // resolves to a Claude default at run time, which fails for ollama/openai
+      // keys ("model … may not exist"). Best-effort: if the provider list is
+      // unreachable, leave it unset and let the user pick in the editor.
+      if (!activeProfile.model) {
+        try {
+          const { models } = await fetchModelsForApiKey(attachableKey.id);
+          if (models?.length) body.model = models[0].id;
+        } catch { /* leave model unset */ }
+      }
+      await updateProfile(activeProfile.id, body);
       await refetchProfiles();
     } finally {
       setAttaching(false);
@@ -687,11 +698,21 @@ export function Workspace() {
           : null;
 
   // ─── Suggestion chips ────────────────────────────────────────────
-  const suggestions = [
-    { icon: <Code className="w-4 h-4" />, label: "Build a landing page", prompt: "Build me a responsive landing page with a hero section, features grid, and a contact form." },
-    { icon: <Sparkles className="w-4 h-4" />, label: "Analyze some data", prompt: "Help me analyze a dataset. I'll share the file with you." },
-    { icon: <MessageSquare className="w-4 h-4" />, label: "Write a script", prompt: "Write a Python script that automates a common task. What kind of task should we automate?" },
+  // Curated starters come from config/prompt-suggestions.json (baked into the
+  // image, overridable via volume mount). Fall back to a minimal built-in set
+  // if the config is missing/unreachable so the strip is never empty.
+  const { data: suggestionData } = useApi<{ suggestions: PromptSuggestion[] }>(() => fetchPromptSuggestions());
+  const suggestionIcon = (key?: string) =>
+    key === "code" ? <Code className="w-4 h-4" />
+    : key === "message" ? <MessageSquare className="w-4 h-4" />
+    : <Sparkles className="w-4 h-4" />;
+  const SUGGESTION_FALLBACK: PromptSuggestion[] = [
+    { id: "landing", label: "Build a landing page", icon: "code", prompt: "Build me a responsive landing page with a hero section, features grid, and a contact form." },
+    { id: "data", label: "Analyze some data", icon: "sparkles", prompt: "Help me analyze a dataset. I'll share the file with you." },
+    { id: "script", label: "Write a script", icon: "message", prompt: "Write a Python script that automates a common task. What kind of task should we automate?" },
   ];
+  const suggestions = ((suggestionData?.suggestions?.length ? suggestionData.suggestions : SUGGESTION_FALLBACK))
+    .map((s) => ({ icon: suggestionIcon(s.icon), label: s.label, prompt: s.prompt }));
 
   function handleSuggestion(prompt: string) {
     setInputWithDraft(prompt);

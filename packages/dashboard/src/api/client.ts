@@ -287,6 +287,12 @@ export function fetchProfiles(): Promise<ProfileSummary[]> {
   return request("/profiles");
 }
 
+/** New-chat starter prompts, served from config/prompt-suggestions.json. */
+export interface PromptSuggestion { id: string; label: string; icon?: string; prompt: string }
+export function fetchPromptSuggestions(): Promise<{ suggestions: PromptSuggestion[] }> {
+  return request("/prompt-suggestions");
+}
+
 /** Mark a profile as the user's default agent (clears the flag on the others). */
 export function setDefaultProfile(id: string): Promise<{ ok: boolean; id: string }> {
   return request(`/profiles/${id}/default`, { method: "POST" });

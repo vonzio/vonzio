@@ -6,7 +6,38 @@
 import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
+
+/** Starter prompt suggestions shown on the new-chat screen. Baked into the
+ *  image at config/prompt-suggestions.json (and overridable via a volume mount,
+ *  same pattern as config/system-prompt.md). Read once, cached for the process. */
+interface PromptSuggestion { id: string; label: string; icon?: string; prompt: string }
+let __suggestionsCache: PromptSuggestion[] | null = null;
+function loadPromptSuggestions(): PromptSuggestion[] {
+  if (__suggestionsCache) return __suggestionsCache;
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(process.cwd(), "config", "prompt-suggestions.json"),
+    resolve(thisDir, "../../../../config/prompt-suggestions.json"),
+    "/app/config/prompt-suggestions.json", // Docker path
+  ];
+  for (const path of candidates) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf-8"));
+      if (Array.isArray(parsed)) {
+        __suggestionsCache = parsed.filter(
+          (s): s is PromptSuggestion => !!s && typeof s.id === "string" && typeof s.prompt === "string",
+        );
+        return __suggestionsCache;
+      }
+    } catch { /* try next candidate */ }
+  }
+  __suggestionsCache = [];
+  return __suggestionsCache;
+}
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import type { DrizzleDB } from "../db/index.js";
@@ -65,6 +96,13 @@ export const userResourceRoutes = fp(
       if (!profile) return null;
       return canAccess(user, profile.user_id) ? profile : null;
     };
+
+    // ─── Prompt suggestions (new-chat starter chips) ────────
+    // Served from config/prompt-suggestions.json (baked into the image,
+    // overridable via volume mount). Curated + global; no per-user data.
+    server.get("/v1/prompt-suggestions", async () => {
+      return { suggestions: loadPromptSuggestions() };
+    });
 
     // ─── Tools ──────────────────────────────────────────────
     server.get("/v1/tools", async (request) => {

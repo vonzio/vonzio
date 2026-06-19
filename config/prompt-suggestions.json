@@ -1,0 +1,20 @@
+[
+  {
+    "id": "landing-page",
+    "label": "Design a landing page",
+    "icon": "code",
+    "prompt": "Design a high-end fitness studio brand website, emphasizing professionalism and community belonging.\n\nVisual Strategy:\n- Imagery: athletic poses, sweat, muscle definition, equipment texture.\n- Photography: high-contrast black and white, emphasizing strength and beauty.\n- Composition: people as the main subject, blurred surroundings.\n\nColor Palette:\n- Primary: pure black, dark gray.\n- Accent: neon orange, metallic silver.\n- Background: dark, strong textural feel.\n\nTypography:\n- Headings: bold sans-serif, powerful.\n- Body: clean and forceful, condensed; minimal whitespace, high information density.\n\nPage Structure:\n- Hero: brand attitude + coach team showcase.\n- Curriculum: organized by goals (muscle gain, fat loss, fitness).\n- Coach Profiles: professional background + certifications.\n- Member Stories: real transformation case studies.\n- Book a Trial Class: clear CTA.\n\nOverall vibe: professional, hardcore, motivating, sense of belonging. Build it as a single responsive HTML file and serve it so I can preview it."
+  },
+  {
+    "id": "data-analysis",
+    "label": "Analyze a dataset",
+    "icon": "sparkles",
+    "prompt": "I'll share a dataset (CSV/JSON). Act as a senior data analyst and deliver a decision-ready analysis.\n\nDo this:\n1. Profile the data: shape, columns, types, missing values, obvious quality issues — and state assumptions.\n2. Clean it (document every transformation) and explain why.\n3. Find the 3-5 most decision-relevant insights, each with the supporting numbers.\n4. Quantify: trends, distributions, correlations, outliers — call out what's surprising vs expected.\n5. Visualize the key findings (save charts as PNGs in the workspace).\n6. End with a short, plain-language 'So what / now what' — concrete recommendations and their caveats.\n\nBe rigorous: distinguish correlation from causation, note sample-size limits, and flag anything that needs more data. Ask me for the file (or for the business question) before you start if it's missing."
+  },
+  {
+    "id": "automation-script",
+    "label": "Write an automation script",
+    "icon": "message",
+    "prompt": "Help me build a small, production-quality automation tool. Treat it as real software, not a snippet.\n\nProcess:\n1. First ask the 2-3 questions you need (what to automate, inputs/outputs, where it runs, any APIs/credentials).\n2. Propose the approach + the language/libraries, with a one-line justification, before writing code.\n3. Implement it as a clean, single-purpose script with: clear arg/config handling, helpful errors, no silent failures, and comments only where intent isn't obvious.\n4. Add a dry-run / safe mode if it mutates anything.\n5. Include a short README (what it does, how to run, env vars) and 2-3 example invocations.\n6. Verify it runs (create a tiny fixture and execute it); show the output.\n\nKeep it idiomatic and minimal — no over-engineering, no 'just in case' abstractions."
+  }
+]
