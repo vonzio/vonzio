@@ -19,7 +19,7 @@ import { MessageList } from "../components/MessageList.js";
 import { QuestionPicker } from "../components/ChatCore.js";
 import { HOME_DRAFT_KEY, HOME_AGENT_KEY } from "./Home.js";
 import { reopenOnboarding } from "../components/OnboardingHost.js";
-import { Button } from "../brand/components.js";
+import { Button, Select } from "../brand/components.js";
 import { authClient } from "../lib/auth-client.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -819,40 +819,23 @@ export function Workspace() {
                       {!keyMissing && (
                         <div className="w-full" style={{ maxWidth: 620, display: "flex", flexDirection: "column", gap: 14 }}>
                           {(profiles?.length ?? 0) > 0 && (
-                            <div>
+                            <div style={{ maxWidth: 360, width: "100%", margin: "0 auto" }}>
                               <div style={{ fontFamily: "var(--vz-font-mono)", fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--vz-muted-2)", marginBottom: 8, textAlign: "center" }}>
                                 Start with an agent
                               </div>
-                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
-                                {profiles!.map((p) => {
-                                  const selected = (selectedProfileId || defaultProfileId) === p.id;
-                                  return (
-                                    <button
-                                      key={p.id}
-                                      type="button"
-                                      onClick={() => {
-                                        // Mirror AgentPicker: switching profile
-                                        // discards any in-flight model/key pick.
-                                        setSelectedProfileId(p.id);
-                                        setPendingModelOverride(null);
-                                        setPendingKeyOverride(null);
-                                        inputRef.current?.focus();
-                                      }}
-                                      style={{
-                                        display: "flex", alignItems: "center", gap: 8, padding: "9px 11px",
-                                        borderRadius: "var(--vz-radius-md)", cursor: "pointer", textAlign: "left",
-                                        fontSize: 13, fontFamily: "inherit",
-                                        background: selected ? "var(--vz-sodium-08)" : "var(--vz-card)",
-                                        border: `1px solid ${selected ? "var(--vz-sodium-25)" : "var(--vz-border)"}`,
-                                        color: "var(--vz-ink)",
-                                      }}
-                                    >
-                                      <Bot size={15} style={{ color: selected ? "var(--vz-sodium)" : "var(--vz-muted)", flexShrink: 0 }} />
-                                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                              <Select
+                                value={selectedProfileId || defaultProfileId}
+                                onChange={(id) => {
+                                  // Mirror AgentPicker: switching profile discards
+                                  // any in-flight model/key pick.
+                                  setSelectedProfileId(id);
+                                  setPendingModelOverride(null);
+                                  setPendingKeyOverride(null);
+                                  inputRef.current?.focus();
+                                }}
+                                options={profiles!.map((p) => ({ value: p.id, label: p.name }))}
+                                searchable={(profiles?.length ?? 0) > 6}
+                              />
                             </div>
                           )}
                           <button
@@ -951,17 +934,21 @@ export function Workspace() {
             >
             {/* Agent status indicator */}
             {statusLabel && !chat.pendingQuestion && (
-              <div className="px-0 pb-2" style={{ pointerEvents: "auto" }}>
-                <div className="max-w-3xl mx-auto">
+              <div className="px-0 pb-2" style={{ pointerEvents: "none" }}>
+                {/* Compact, auto-width pill (not a full-width bar) so it doesn't
+                    cover the last messages while the agent works. */}
+                <div className="max-w-3xl mx-auto flex">
                   <div
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm"
+                    className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs"
                     style={{
-                      background: "var(--vz-mute)",
+                      pointerEvents: "auto",
+                      background: "var(--vz-card)",
                       border: "1px solid var(--vz-border)",
                       color: "var(--vz-muted)",
+                      boxShadow: "var(--vz-shadow-sm)",
                     }}
                   >
-                    <Loader2 className="w-4 h-4 animate-spin" style={{ color: "var(--vz-sodium)" }} />
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--vz-sodium)" }} />
                     {statusLabel}
                   </div>
                 </div>
