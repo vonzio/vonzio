@@ -60,4 +60,27 @@ describe("ApiKeyService.list — org-scoped shared-key visibility", () => {
 
     expect(await idsFor("stranger", "user", null)).not.toContain(key.id);
   });
+
+  it("shows an OWNED key (user_id set) to a grantee added via the junction", async () => {
+    // Admin's own key (not a fully-shared key) with the grantee in allowed_user_ids.
+    const key = await runWithOrgId("org-admin", () =>
+      svc.create(
+        { name: "admins-own-key", provider: "api_key", api_key: "sk-o", allowed_user_ids: ["testeur"] },
+        "admin_1", // owner — user_id is set, NOT null
+      ),
+    );
+    svc.setOrgMembershipResolver(async () => new Set(["org-testeur"]));
+
+    expect(await idsFor("testeur", "user", "org-testeur")).toContain(key.id);
+  });
+
+  it("does NOT leak another user's personal key to an admin (no junction grant)", async () => {
+    const key = await runWithOrgId("org-bob", () =>
+      svc.create({ name: "bobs-key", provider: "api_key", api_key: "sk-b" }, "bob"),
+    );
+    svc.setOrgMembershipResolver(async () => new Set(["org-admin"]));
+
+    // Admin viewing their own key list must not see bob's personal key.
+    expect(await idsFor("admin_1", "admin", "org-admin")).not.toContain(key.id);
+  });
 });
