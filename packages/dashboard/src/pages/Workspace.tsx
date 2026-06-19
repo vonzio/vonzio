@@ -6,7 +6,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
 import { useApi } from "../hooks/useApi.js";
 import { useIsMobile, useIsNarrow } from "../hooks/use-mobile.js";
-import { fetchProfiles, fetchUserAnthropicKeys, updateProfile, fetchModelsForApiKey, fetchPromptSuggestions, type ProfileSummary, type UserAnthropicKey, type PromptSuggestion } from "../api/client.js";
+import { fetchProfiles, fetchUserAnthropicKeys, updateProfile, fetchPromptSuggestions, type ProfileSummary, type UserAnthropicKey, type PromptSuggestion } from "../api/client.js";
 import { WorkspaceSidebar } from "../components/WorkspaceSidebar.js";
 import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
@@ -372,18 +372,9 @@ export function Workspace() {
     if (!activeProfile || !attachableKey) return;
     setAttaching(true);
     try {
-      const body: { api_key_id: string; model?: string } = { api_key_id: attachableKey.id };
-      // Also pick a default model for the key's provider. An empty model
-      // resolves to a Claude default at run time, which fails for ollama/openai
-      // keys ("model … may not exist"). Best-effort: if the provider list is
-      // unreachable, leave it unset and let the user pick in the editor.
-      if (!activeProfile.model) {
-        try {
-          const { models } = await fetchModelsForApiKey(attachableKey.id);
-          if (models?.length) body.model = models[0].id;
-        } catch { /* leave model unset */ }
-      }
-      await updateProfile(activeProfile.id, body);
+      // The server attaches the key and auto-picks a provider-appropriate model
+      // for a model-less agent (ProfileService.update), so no model needed here.
+      await updateProfile(activeProfile.id, { api_key_id: attachableKey.id });
       await refetchProfiles();
     } finally {
       setAttaching(false);

@@ -206,6 +206,13 @@ export async function buildServer(deps: ServerDeps) {
   // Drop a key's cached model list when its credential or base_url changes,
   // so editing an OpenAI endpoint doesn't serve the old provider's models.
   apiKeyService.setKeyChangeListener((id) => modelListService.invalidate(id));
+  // Let ProfileService auto-pick a model for ollama/openai keys when an agent
+  // is created/attached without one (wired here to avoid a construction cycle:
+  // modelListService depends on profileService).
+  profileService.setDefaultModelResolver(async (apiKeyId) => {
+    const r = await modelListService.listForApiKey(apiKeyId);
+    return r.ok ? (r.models[0]?.id ?? null) : null;
+  });
   const toolFileService = new ToolFileService(db, config.TOOLS_DIR);
   const skillService = new SkillService(db, config.SKILLS_DIR);
   const subagentService = new SubagentService(db);

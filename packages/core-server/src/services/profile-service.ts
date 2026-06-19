@@ -49,6 +49,25 @@ export class ProfileService {
     private apiKeyService?: ApiKeyService,
   ) {}
 
+  // Resolves a default model id for a key (first available from the provider).
+  // Injected post-construction because the model-list service depends on this
+  // service (would be circular in the constructor).
+  private defaultModelResolver?: (apiKeyId: string) => Promise<string | null>;
+  setDefaultModelResolver(fn: (apiKeyId: string) => Promise<string | null>): void {
+    this.defaultModelResolver = fn;
+  }
+
+  /** When a key is attached but no model is chosen, pick a provider-appropriate
+   *  default. Only for ollama/openai — an empty model on those resolves to a
+   *  Claude id at run time and fails ("model … may not exist"). Anthropic keeps
+   *  an empty model (the SDK picks a valid Claude default). */
+  private async pickDefaultModel(model: string | null, apiKeyId: string | null): Promise<string | null> {
+    if (model || !apiKeyId || !this.defaultModelResolver || !this.apiKeyService) return model;
+    const key = await this.apiKeyService.get(apiKeyId);
+    if (!key || (key.provider !== "ollama" && key.provider !== "openai")) return model;
+    return (await this.defaultModelResolver(apiKeyId)) ?? null;
+  }
+
   /** Pick a slug for a profile, validating user-provided ones and resolving collisions for auto-generated ones */
   private async resolveSlug(
     input: { slug?: string; name: string },
@@ -107,6 +126,10 @@ export class ProfileService {
       isDefault = existingDefault.length === 0;
     }
 
+    // Auto-pick a model for ollama/openai keys when none was specified, so the
+    // agent is immediately runnable (covers onboarding's auto-created agent).
+    const model = await this.pickDefaultModel(input.model ?? null, apiKeyId);
+
     const row = {
       id,
       user_id: userId ?? null,
@@ -122,7 +145,7 @@ export class ProfileService {
       claude_md: input.claude_md ?? null,
       git_provider_id: input.git_provider_id ?? (input.git_provider_ids?.[0] ?? null),
       git_provider_ids: input.git_provider_ids ?? (input.git_provider_id ? [input.git_provider_id] : []),
-      model: input.model ?? null,
+      model,
       effort: input.effort ?? null,
       container_image: input.container_image ?? null,
       container_registry: input.container_registry ? this.encryptRegistry(input.container_registry) : null,
@@ -237,11 +260,17 @@ export class ProfileService {
     // is grandfathered/backfilled (e.g. an org_system_backfill key the user
     // doesn't directly "own") — an unrelated edit would 500. The key was valid
     // when set; only a change needs re-checking.
+    const updates: Record<string, unknown> = {};
     if (input.api_key_id !== undefined && (input.api_key_id || null) !== (existing[0].api_key_id ?? null)) {
       await this.validateApiKeyAccess(input.api_key_id || null, existing[0].user_id, userRole);
+      // Attaching a key to a model-less agent (e.g. accepting a shared key):
+      // pick a provider-appropriate model so it's runnable, unless the caller
+      // is also setting one.
+      if (input.model === undefined && !existing[0].model && input.api_key_id) {
+        const picked = await this.pickDefaultModel(null, input.api_key_id);
+        if (picked) updates.model = picked;
+      }
     }
-
-    const updates: Record<string, unknown> = {};
     if (input.name !== undefined) updates.name = input.name;
     if (input.slug !== undefined && input.slug !== existing[0].slug) {
       updates.slug = await this.resolveSlug(
