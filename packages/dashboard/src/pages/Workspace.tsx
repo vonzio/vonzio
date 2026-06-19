@@ -6,7 +6,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
 import { useApi } from "../hooks/useApi.js";
 import { useIsMobile, useIsNarrow } from "../hooks/use-mobile.js";
-import { fetchProfiles, generateWorkspaceTitle, type ProfileSummary } from "../api/client.js";
+import { fetchProfiles, type ProfileSummary } from "../api/client.js";
 import { WorkspaceSidebar } from "../components/WorkspaceSidebar.js";
 import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
@@ -439,20 +439,10 @@ export function Workspace() {
     onToolResult: handleToolResult,
     onAssistantMessage: handleAssistantMessage,
     onTitleUpdate: (sid, name) => {
+      // Server-side auto-title (ws/handler) emits workspace.title_updated after
+      // the turn; just refresh. The previous onTurnDone → generateWorkspaceTitle
+      // call was a redundant second title pass (double LLM cost) — removed.
       refetch();
-    },
-    onTurnDone: () => {
-      // After first turn, ask server to generate a smart title
-      const wid = activeWorkspaceId;
-      if (!wid) return;
-      const ws = allWorkspaces.find((w) => w.session_id === wid);
-      const name = ws?.name ?? "";
-      const looksAuto = !name || name.endsWith("...") || name.startsWith("Workspace ") || name.startsWith("– ") || name.startsWith("- ") || name.length > 45;
-      if (looksAuto) {
-        generateWorkspaceTitle(wid).then(({ name: title }) => {
-          if (title) refetch();
-        }).catch(() => {});
-      }
     },
     onLogEntry: (entry) => setLogs((prev) => [...prev, entry]),
   });
