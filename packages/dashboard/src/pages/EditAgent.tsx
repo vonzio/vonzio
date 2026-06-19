@@ -20,9 +20,9 @@
  * modal — same fields, same shape, same handleSave. The only delta is
  * where it renders.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Plus, Upload } from "lucide-react";
 import {
   Button, Field, Input, Textarea, Select, type SelectOption,
   Checkbox, Panel, Tabs, type TabDef, Modal, Banner,
@@ -30,7 +30,7 @@ import {
 import { ErrorBanner } from "./MyAgents.js";
 import {
   createProfile, updateProfile,
-  fetchUserSkills, fetchUserAgents, createUserAgent, createUserSkill,
+  fetchUserSkills, fetchUserAgents, createUserAgent, createUserSkill, uploadSkillBundle,
   fetchUserGitProviders, type GitProviderInfo,
   fetchUserAnthropicKeys, type UserAnthropicKey,
   fetchWorkspaces, fetchAgentTemplates,
@@ -145,6 +145,8 @@ export function EditAgent() {
   const [newSkillDesc, setNewSkillDesc] = useState("");
   const [newSkillBody, setNewSkillBody] = useState("");
   const [creatingSkill, setCreatingSkill] = useState(false);
+  const [uploadingSkill, setUploadingSkill] = useState(false);
+  const skillFileRef = useRef<HTMLInputElement>(null);
 
   const selectedKey = (availableApiKeys ?? []).find((k) => k.id === apiKeyId);
   const isOllamaKey = selectedKey?.provider === "ollama";
@@ -414,6 +416,21 @@ export function EditAgent() {
     }
   }
 
+  async function handleUploadSkill(file: File) {
+    setUploadingSkill(true);
+    setError("");
+    try {
+      const created = (await uploadSkillBundle(file)) as { id?: string };
+      if (created?.id) setSkillIds((prev) => prev.includes(created.id!) ? prev : [...prev, created.id!]);
+      await refetchSkills();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to upload skill");
+    } finally {
+      setUploadingSkill(false);
+      if (skillFileRef.current) skillFileRef.current.value = "";
+    }
+  }
+
   const tabs: TabDef[] = [
     { value: "overview", label: "Overview" },
     { value: "tools", label: "Tools & MCP" },
@@ -640,16 +657,34 @@ export function EditAgent() {
               <Panel
                 title="Skills"
                 action={
-                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => setNewSkillOpen(true)}>
-                    New skill
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      ref={skillFileRef}
+                      type="file"
+                      accept=".zip"
+                      className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadSkill(f); }}
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Upload size={12} />}
+                      disabled={uploadingSkill}
+                      onClick={() => skillFileRef.current?.click()}
+                    >
+                      {uploadingSkill ? "Uploading…" : "Upload .zip"}
+                    </Button>
+                    <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => setNewSkillOpen(true)}>
+                      New skill
+                    </Button>
+                  </div>
                 }
               >
                 <ChecklistRows
                   items={availableSkills ?? []}
                   selectedIds={skillIds}
                   onChange={setSkillIds}
-                  emptyText="No skills yet — create one with the button above."
+                  emptyText="No skills yet — upload a .zip bundle or create one."
                 />
               </Panel>
             </div>

@@ -44,12 +44,14 @@
     "@vonzio/plugin-slack": "*",
     "@vonzio/plugin-telegram": "*",
     "@vonzio/shared": "*",
+    "adm-zip": "^0.5.17",
     "bcrypt": "^6.0.0",
     "better-auth": "^1.6.10",
     "cron-parser": "^5.5.0",
     "dockerode": "^5.0.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.1",
+    "esbuild": "0.28.1",
     "fastify": "^5.8.5",
     "fastify-plugin": "^5.1.0",
     "marked": "^16.4.2",
@@ -62,10 +64,10 @@
     "tsx": "^4.19.4",
     "undici": "^8.3.0",
     "ws": "^8.18.2",
-    "zod": "^3.24.4",
-    "esbuild": "0.28.1"
+    "zod": "^3.24.4"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/bcrypt": "^6.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/dockerode": "^4.0.1",

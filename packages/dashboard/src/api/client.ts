@@ -407,6 +407,20 @@ export function deleteUserSkill(id: string): Promise<{ status: string }> {
   return request(`/skills/${id}`, { method: "DELETE" });
 }
 
+/** Upload a skill bundle (.zip with SKILL.md + scripts/assets) as base64 JSON. */
+export async function uploadSkillBundle(file: File): Promise<Record<string, unknown>> {
+  const buf = await file.arrayBuffer();
+  // Chunked base64 — avoids a call-stack overflow on large (multi-MB) bundles.
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  const archive_b64 = btoa(binary);
+  return request("/skills/upload", { method: "POST", body: JSON.stringify({ archive_b64 }) }) as Promise<Record<string, unknown>>;
+}
+
 export function fetchUserAgents(): Promise<Record<string, unknown>[]> {
   return request("/agents");
 }

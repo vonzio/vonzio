@@ -715,6 +715,15 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`UPDATE workspaces SET pinned = true WHERE starred = true AND pinned = false`);
     },
   },
+  {
+    version: 29,
+    description: "Skills bundle support: archive_key (zip in SkillStorage), size_bytes, manifest (file list). NULL = legacy single-file skill.",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE skills ADD COLUMN IF NOT EXISTS archive_key TEXT`);
+      await handle.db.execute(sql`ALTER TABLE skills ADD COLUMN IF NOT EXISTS size_bytes INTEGER`);
+      await handle.db.execute(sql`ALTER TABLE skills ADD COLUMN IF NOT EXISTS manifest JSONB`);
+    },
+  },
 ];
 
 /**

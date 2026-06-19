@@ -236,8 +236,16 @@ export const skills = pgTable("skills", {
   user_id: text("user_id"),
   name: text("name").notNull(),
   description: text("description").notNull(),
+  // SKILL.md body — always kept for listing/preview, even for bundle skills.
   content: text("content").notNull(),
   source: text("source", { enum: ["filesystem", "uploaded"] }).notNull(),
+  // Bundle skills (SKILL.md + scripts/assets) store the zip via SkillStorage and
+  // record its key here. NULL = single-file skill (content is the whole skill).
+  archive_key: text("archive_key"),
+  // Total uncompressed size of the bundle, and the re-rooted file list (for the
+  // dashboard file-tree preview). NULL for single-file skills.
+  size_bytes: integer("size_bytes"),
+  manifest: jsonb("manifest").$type<string[]>(),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });

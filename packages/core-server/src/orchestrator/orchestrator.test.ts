@@ -13,6 +13,7 @@ import { ProfileService } from "../services/profile-service.js";
 import { ApiKeyService } from "../services/api-key-service.js";
 import { ToolFileService } from "../services/tool-file-service.js";
 import { SkillService } from "../services/skill-service.js";
+import { FsSkillStorage } from "../services/skill-storage.js";
 import { SubagentService } from "../services/subagent-service.js";
 import { DocumentService } from "../services/document-service.js";
 import { GitProviderService } from "../services/git-provider-service.js";
@@ -220,7 +221,7 @@ describe("Orchestrator", () => {
       concurrencyLimiter: limiter,
       profileService,
       toolFileService: new ToolFileService(handle.db, "/tmp/vonzio-test-tools"),
-      skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills"),
+      skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills", new FsSkillStorage("/tmp/vonzio-test-skills-data")),
       subagentService: new SubagentService(handle.db),
       documentService: new DocumentService(handle.db),
       gitProviderService: new GitProviderService(handle.db, ENCRYPTION_KEY),
@@ -419,7 +420,7 @@ describe("Orchestrator", () => {
       concurrencyLimiter: new ConcurrencyLimiter(4),
       profileService: new ProfileService(handle.db, ENCRYPTION_KEY),
       toolFileService: new ToolFileService(handle.db, "/tmp/vonzio-test-tools"),
-      skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills"),
+      skillService: new SkillService(handle.db, "/tmp/vonzio-test-skills", new FsSkillStorage("/tmp/vonzio-test-skills-data")),
       subagentService: new SubagentService(handle.db),
       documentService: new DocumentService(handle.db),
       gitProviderService: new GitProviderService(handle.db, ENCRYPTION_KEY),

@@ -1229,14 +1229,34 @@ export class Orchestrator extends EventEmitter {
       ? await this.deps.subagentService.resolveAgents(agentIds)
       : undefined;
 
-    // Resolve and write skills into container
+    // Resolve and mount skills into the agent's personal scope
+    // (~/.claude/skills/<name>/), so real-world skills that reference
+    // ~/.claude/skills/<name>/scripts/... resolve unmodified. Bundle skills
+    // (SKILL.md + scripts/assets) ship as a zip and are unpacked in-container;
+    // single-file skills just write SKILL.md. agent-runner loads the "user"
+    // setting scope so the SDK discovers them.
     const skillIds = profile.skill_ids ?? [];
     let hasSkills = false;
     if (skillIds.length > 0) {
       const resolvedSkills = await this.deps.skillService.resolveSkills(skillIds);
       for (const skill of resolvedSkills) {
-        const skillPath = `/workspace/.claude/skills/${skill.name}/SKILL.md`;
-        await this.drainExec(containerId, ["sh", "-c", `mkdir -p /workspace/.claude/skills/${skill.name} && cat > ${skillPath}`], skill.content);
+        // Sanitized at upload time, but guard the shell interpolation anyway.
+        const safe = skill.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+        const dir = `"$HOME/.claude/skills/${safe}"`;
+        if (skill.archive) {
+          // Stream the zip in (base64) and unpack it into the skill dir.
+          await this.drainExec(
+            containerId,
+            ["sh", "-c", `mkdir -p ${dir} && base64 -d > /tmp/${safe}.zip && unzip -o -q /tmp/${safe}.zip -d ${dir} && rm -f /tmp/${safe}.zip`],
+            skill.archive.toString("base64"),
+          );
+        } else {
+          await this.drainExec(
+            containerId,
+            ["sh", "-c", `mkdir -p ${dir} && cat > ${dir}/SKILL.md`],
+            skill.content,
+          );
+        }
       }
       hasSkills = resolvedSkills.length > 0;
     }

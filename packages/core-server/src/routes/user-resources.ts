@@ -53,6 +53,7 @@ function canAccess(user: { id: string; role: string }, resourceUserId: string | 
 }
 import type { ToolFileService } from "../services/tool-file-service.js";
 import type { SkillService } from "../services/skill-service.js";
+import { BundleError } from "../services/skill-service.js";
 import type { SubagentService } from "../services/subagent-service.js";
 import type { GitProviderService } from "../services/git-provider-service.js";
 import type { ApiKeyService } from "../services/api-key-service.js";
@@ -152,6 +153,34 @@ export const userResourceRoutes = fp(
       }, request.user!.id);
       return reply.code(201).send(skill);
     });
+
+    // Bundle upload: a zip (SKILL.md + scripts/assets) as base64 JSON. ~70MB
+    // body cap = 50MB bundle * 1.34 base64 + slack, matching the documents path.
+    server.post<{ Body: { archive_b64?: string } }>(
+      "/v1/skills/upload",
+      { bodyLimit: 70 * 1024 * 1024 },
+      async (request, reply) => {
+        const archive_b64 = request.body?.archive_b64;
+        if (!archive_b64) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "archive_b64 is required"));
+        }
+        let buf: Buffer;
+        try {
+          buf = Buffer.from(archive_b64, "base64");
+        } catch {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "archive_b64 is not valid base64"));
+        }
+        try {
+          const skill = await skillService.uploadBundle(buf, request.user!.id);
+          return reply.code(201).send(skill);
+        } catch (err) {
+          if (err instanceof BundleError) {
+            return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, err.message));
+          }
+          throw err;
+        }
+      },
+    );
 
     server.delete<{ Params: { id: string } }>("/v1/skills/:id", async (request, reply) => {
       const rows = await db.select().from(schema.skills).where(eq(schema.skills.id, request.params.id));
