@@ -395,16 +395,28 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
         </div>
 
         {/* Select / bulk-actions toggle */}
-        <div className="flex items-center justify-end mt-2 px-0.5">
+        <div className={cn("flex items-center mt-2 px-0.5", selectMode ? "justify-between" : "justify-end")}>
           {selectMode ? (
-            <button
-              type="button"
-              onClick={exitSelect}
-              className="inline-flex items-center gap-1 text-[11px]"
-              style={{ color: "var(--vz-muted-2)", background: "none", border: 0 }}
-            >
-              <X className="w-3 h-3" /> Cancel
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="inline-flex items-center gap-1 text-[11px]"
+                style={{ color: "var(--vz-muted-2)", background: "none", border: 0 }}
+              >
+                {allSelected
+                  ? <><Square className="w-3 h-3" /> Clear all</>
+                  : <><CheckSquare className="w-3 h-3" /> Check all</>}
+              </button>
+              <button
+                type="button"
+                onClick={exitSelect}
+                className="inline-flex items-center gap-1 text-[11px]"
+                style={{ color: "var(--vz-muted-2)", background: "none", border: 0 }}
+              >
+                <X className="w-3 h-3" /> Cancel
+              </button>
+            </>
           ) : (
             <button
               type="button"
@@ -460,16 +472,6 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
           <span className="text-[12px]" style={{ color: "var(--vz-ink-3)" }}>
             {selected.size} selected
           </span>
-          <button
-            type="button"
-            onClick={toggleSelectAll}
-            className="inline-flex items-center gap-1 text-[11px]"
-            style={{ color: "var(--vz-muted-2)", background: "none", border: 0, cursor: "pointer" }}
-          >
-            {allSelected
-              ? <><Square className="w-3 h-3" /> Clear all</>
-              : <><CheckSquare className="w-3 h-3" /> Check all</>}
-          </button>
           <Button
             variant="danger"
             size="sm"
