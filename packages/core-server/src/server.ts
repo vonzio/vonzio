@@ -768,6 +768,7 @@ export async function buildServer(deps: ServerDeps) {
     integrationService,
     workspaceService,
     profileService,
+    skillService,
     eventLog,
     resolveSession: (token: string) => {
       const session = orchestrator.resolvePlatformToken(token);

@@ -21,7 +21,9 @@ interface SlackConfig {
 }
 import type { WorkspaceService } from "../services/workspace-service.js";
 import type { ProfileService } from "../services/profile-service.js";
+import type { SkillService } from "../services/skill-service.js";
 import type { EventLog } from "../events/event-log.js";
+import AdmZip from "adm-zip";
 import type { Workspace, WorkspaceStatus } from "@vonzio/shared";
 import { WORKSPACE_STATUSES } from "@vonzio/shared";
 
@@ -42,6 +44,7 @@ export interface PlatformMcpOptions {
   integrationService: IntegrationService;
   workspaceService: WorkspaceService;
   profileService: ProfileService;
+  skillService: SkillService;
   eventLog: EventLog;
   resolveSession: (token: string) => PlatformMcpSession | null;
 }
@@ -357,6 +360,34 @@ const TOOL_DEFINITIONS = [
     description: "List public Slack channels the bot has access to.",
     inputSchema: { type: "object", properties: {} },
   },
+  // ─── Skills ───
+  {
+    name: "create_skill",
+    description:
+      "Author a new Agent Skill and save it to the user's skill library. A skill is a reusable Markdown playbook (SKILL.md) that future agent runs auto-discover and pull in when relevant. Provide a `body` (the SKILL.md instructions) and optionally `files` (helper scripts/assets) to make it a multi-file bundle. By default the new skill is attached to the calling agent so it's available from the next turn onward. Use this to capture a repeatable workflow you just figured out.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Skill name (lowercase, hyphenated, e.g. 'drama-cover-kit')" },
+        description: { type: "string", description: "One-line description incl. when to use it / trigger conditions" },
+        body: { type: "string", description: "The SKILL.md Markdown instructions (frontmatter is added automatically if omitted)" },
+        files: {
+          type: "array",
+          description: "Optional helper files bundled with the skill (e.g. scripts). Each is { path, content }; paths are relative to the skill root.",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Relative path, e.g. 'scripts/run.sh'" },
+              content: { type: "string", description: "File contents (UTF-8 text)" },
+            },
+            required: ["path", "content"],
+          },
+        },
+        attach: { type: "boolean", description: "Attach to the calling agent so it's usable next turn (default true)" },
+      },
+      required: ["name", "body"],
+    },
+  },
 ];
 
 async function handleToolCall(
@@ -366,6 +397,7 @@ async function handleToolCall(
   integrationService: IntegrationService,
   workspaceService: WorkspaceService,
   profileService: ProfileService,
+  skillService: SkillService,
   eventLog: EventLog,
   session: PlatformMcpSession,
   toolName: string,
@@ -865,6 +897,62 @@ async function handleToolCall(
       return toolResult(`Channels (${channels.length}):\n${lines.join("\n")}`);
     }
 
+    // ─── Skills ───
+    case "create_skill": {
+      const name = (args.name as string)?.trim();
+      const body = args.body as string;
+      const description = ((args.description as string) ?? "").trim();
+      if (!name || !body) return toolResult("Missing required parameters: name, body", true);
+
+      // Ensure the SKILL.md carries frontmatter so discovery has name/description.
+      const skillMd = body.trimStart().startsWith("---")
+        ? body
+        : `---\nname: ${name}\ndescription: ${description || `Skill: ${name}`}\n---\n\n${body}`;
+
+      const files = Array.isArray(args.files)
+        ? (args.files as Array<{ path?: unknown; content?: unknown }>)
+            .filter((f) => typeof f.path === "string" && typeof f.content === "string")
+            .map((f) => ({ path: f.path as string, content: f.content as string }))
+        : [];
+
+      let skill;
+      try {
+        if (files.length > 0) {
+          // Bundle: SKILL.md + helper files → zip → uploadBundle (re-roots/validates).
+          const zip = new AdmZip();
+          zip.addFile("SKILL.md", Buffer.from(skillMd, "utf-8"));
+          for (const f of files) {
+            const rel = f.path.replace(/^\/+/, "").replace(/\.\.(\/|$)/g, "");
+            if (rel && rel !== "SKILL.md") zip.addFile(rel, Buffer.from(f.content, "utf-8"));
+          }
+          skill = await skillService.uploadBundle(zip.toBuffer(), userId);
+        } else {
+          skill = await skillService.upload({ name, description, content: skillMd }, userId);
+        }
+      } catch (err) {
+        return toolResult(err instanceof Error ? err.message : "Failed to create skill", true);
+      }
+
+      // Attach to the calling agent (default) so the next turn auto-mounts it —
+      // the earliest point the SDK re-scans ~/.claude/skills anyway.
+      let attached = false;
+      if (args.attach !== false) {
+        const profile = await profileService.get(profileId);
+        if (profile) {
+          const ids = Array.from(new Set([...(profile.skill_ids ?? []), skill.id]));
+          await profileService.update(profileId, { skill_ids: ids });
+          attached = true;
+        }
+      }
+
+      return toolResult(
+        `Skill created and saved to your library.\nID: ${skill.id}\nName: ${skill.name}\n` +
+        (attached
+          ? "Attached to this agent — it'll be available from the next turn onward."
+          : "Not attached to an agent; enable it in the agent's Skills settings to use it."),
+      );
+    }
+
     default:
       return toolResult(`Unknown tool: ${toolName}`, true);
   }
@@ -872,7 +960,7 @@ async function handleToolCall(
 
 export const platformMcpPlugin = fp(
   async (server: FastifyInstance, opts: PlatformMcpOptions) => {
-    const { playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, eventLog, resolveSession } = opts;
+    const { playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, eventLog, resolveSession } = opts;
 
     server.post("/mcp/platform", async (request, reply) => {
       const body = request.body as JsonRpcRequest;
@@ -917,7 +1005,7 @@ export const platformMcpPlugin = fp(
           }
 
           try {
-            const result = await handleToolCall(playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, eventLog, session, params.name, params.arguments ?? {});
+            const result = await handleToolCall(playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, eventLog, session, params.name, params.arguments ?? {});
             return reply.send(rpcResult(id, result));
           } catch (err) {
             const message = err instanceof Error ? err.message : "Unknown error";
