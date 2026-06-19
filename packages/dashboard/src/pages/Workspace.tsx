@@ -754,9 +754,6 @@ export function Workspace() {
               messages={chat.messages}
               workspaceName={activeWorkspace.name ?? "workspace"}
               profileName={profileName}
-              modelOverride={activeWorkspace.model_override ?? null}
-              profileDefaultModel={activeProfile?.model ?? null}
-              profileId={activeProfile?.id}
               attachedTunnel={activeWorkspace.attached_tunnel ?? null}
             />
           ) : isNarrow && (
@@ -1186,20 +1183,19 @@ export function Workspace() {
                       type="button"
                       onClick={() => setGoalModeOverride(!effectiveGoalMode)}
                       title={effectiveGoalMode ? "Run until done: ON — agent loops until the goal is judged complete" : "Run until done: off"}
+                      aria-label="Run until done"
                       aria-pressed={effectiveGoalMode}
                       style={{
-                        height: 28, padding: "0 8px", borderRadius: "var(--vz-radius-sm)",
-                        display: "inline-flex", alignItems: "center", gap: 5,
-                        background: effectiveGoalMode ? "var(--vz-accent, #00BFA5)" : "var(--vz-mute)",
-                        border: `1px solid ${effectiveGoalMode ? "var(--vz-accent, #00BFA5)" : "var(--vz-border)"}`,
+                        height: 28, width: 28, padding: 0, borderRadius: "var(--vz-radius-sm)",
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        background: effectiveGoalMode ? "var(--vz-sodium)" : "var(--vz-mute)",
+                        border: `1px solid ${effectiveGoalMode ? "var(--vz-sodium)" : "var(--vz-border)"}`,
                         color: effectiveGoalMode ? "#fff" : "var(--vz-muted)",
-                        cursor: "pointer", fontSize: 11, fontWeight: 500,
-                        fontFamily: "var(--vz-font-sans)",
+                        cursor: "pointer",
                         transition: "color var(--vz-fast) var(--vz-ease), background var(--vz-fast) var(--vz-ease), border-color var(--vz-fast) var(--vz-ease)",
                       }}
                     >
                       <Target className="w-3.5 h-3.5" />
-                      Run until done
                     </button>
 
                     {/* Meta line: model picker · workspace context. Must be a

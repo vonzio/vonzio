@@ -184,7 +184,9 @@ export function Select({
   // Tracks the trigger's screen position so the portaled menu can follow
   // it on scroll/resize. position: fixed lets the menu escape modal
   // overflow clipping.
-  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [rect, setRect] = useState<
+    { left: number; width: number; maxHeight: number; top?: number; bottom?: number } | null
+  >(null);
   useLayoutEffect(() => {
     if (!open) {
       setRect(null);
@@ -192,7 +194,20 @@ export function Select({
     }
     const measure = () => {
       const r = ref.current?.getBoundingClientRect();
-      if (r) setRect({ top: r.bottom + 4, left: r.left, width: r.width });
+      if (!r) return;
+      // Flip the menu above the trigger when there isn't enough room below
+      // and there's more room above (e.g. a picker near the page bottom).
+      const MENU_MAX = 360;
+      const spaceBelow = window.innerHeight - r.bottom;
+      const spaceAbove = r.top;
+      const openUp = spaceBelow < Math.min(MENU_MAX, 240) && spaceAbove > spaceBelow;
+      const maxHeight = Math.max(160, Math.min(MENU_MAX, (openUp ? spaceAbove : spaceBelow) - 8));
+      setRect({
+        left: r.left,
+        width: r.width,
+        maxHeight,
+        ...(openUp ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
+      });
     };
     measure();
     window.addEventListener("scroll", measure, true);
@@ -254,7 +269,14 @@ export function Select({
           className="vz-menu"
           // Portaled to document.body + position:fixed so modal overflow
           // doesn't clip us. Position tracks the trigger's bounding rect.
-          style={{ position: "fixed", top: rect.top, left: rect.left, width: rect.width }}
+          style={{
+            position: "fixed",
+            left: rect.left,
+            width: rect.width,
+            maxHeight: rect.maxHeight,
+            overflowY: "auto",
+            ...(rect.top != null ? { top: rect.top } : { bottom: rect.bottom }),
+          }}
           // Belt-and-suspenders: stop mousedown bubbling to the document
           // listener so the close-on-outside-click can't race the item click.
           onMouseDown={(e) => e.stopPropagation()}

@@ -570,7 +570,7 @@ export function ChatEmbed() {
         <div className="max-w-3xl mx-auto">
           <div
             className="relative border border-[color:var(--vz-border)] rounded-xl bg-[var(--vz-card)] shadow-sm focus-within:ring-2 focus-within:border-transparent"
-            style={{ ["--tw-ring-color" as string]: "var(--vz-teal, #00BFA5)" }}
+            style={{ ["--tw-ring-color" as string]: "var(--vz-sodium)" }}
             onDrop={handleDrop}
             onDragOver={(e) => e.preventDefault()}
           >
@@ -623,7 +623,7 @@ export function ChatEmbed() {
                 onClick={send}
                 disabled={streaming || !connected || (!input.trim() && attachments.length === 0)}
                 className="m-1.5 p-2 rounded-lg text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
-                style={{ background: "var(--vz-teal, #00BFA5)" }}
+                style={{ background: "var(--vz-sodium)" }}
               >
                 {streaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </button>

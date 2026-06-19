@@ -121,7 +121,7 @@ export function AnthropicKeySection() {
         body.api_key = apiKey;
       }
       if (editingKey.provider === "openai") body.base_url = baseUrl.trim() || null;
-      if (!editingKey.user_id) body.allowed_user_ids = sharedWith;
+      if (isAdmin) body.allowed_user_ids = sharedWith;
       if (isAdmin) await updateAnthropicKey(editingKey.id, body as Parameters<typeof updateAnthropicKey>[1]);
       else await updateUserAnthropicKey(editingKey.id, body as Record<string, unknown>);
       closeEditor(); refetch();
@@ -182,9 +182,9 @@ export function AnthropicKeySection() {
       label: "Shared with",
       render: (k: AnthropicKeyInfo) => (
         <span style={{ fontSize: 12, color: "var(--vz-muted)" }}>
-          {!k.user_id && k.allowed_user_ids?.length
+          {k.allowed_user_ids?.length
             ? `${k.allowed_user_ids.length} user${k.allowed_user_ids.length > 1 ? "s" : ""}`
-            : k.user_id ? "—" : "none"}
+            : "none"}
         </span>
       ),
     }] : []),
@@ -402,7 +402,7 @@ export function AnthropicKeySection() {
               </span>
             </div>
           )}
-          {isAdmin && editingKey && !editingKey.user_id && (
+          {isAdmin && editingKey && (
             <div>
               <SubLabel>Share with users</SubLabel>
               <div style={{ fontSize: 12, color: "var(--vz-muted-2)", marginBottom: 8 }}>
@@ -417,7 +417,7 @@ export function AnthropicKeySection() {
                 {allUsers.length === 0 ? (
                   <p style={{ fontSize: 12, color: "var(--vz-muted-2)", padding: 12, margin: 0 }}>loading users…</p>
                 ) : (
-                  allUsers.map((u) => (
+                  allUsers.filter((u) => u.id !== editingKey.user_id).map((u) => (
                     <Checkbox
                       key={u.id}
                       checked={sharedWith.includes(u.id)}
