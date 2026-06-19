@@ -36,7 +36,7 @@ function MsgRow({
   time,
   children,
   trailing,
-  divider = true,
+  divider = false,
   compact = false,
 }: {
   avatar: React.ReactNode;
@@ -773,7 +773,7 @@ export function MessageList({
           return (
             <React.Fragment key={msg.id}>
               {headerStrip}
-              <div style={{ paddingLeft: ROW_INDENT, paddingBottom: 14, borderBottom: "1px solid var(--vz-border)" }}>
+              <div style={{ paddingLeft: ROW_INDENT, paddingBottom: 14 }}>
                 <ToolBlock tool={msg.tool ?? ""} input={msg.toolInput} pending={isLast && streaming} containerId={containerId} />
               </div>
             </React.Fragment>
@@ -808,7 +808,7 @@ export function MessageList({
               return (
                 <React.Fragment key={msg.id}>
                   {headerStrip}
-                  <div style={{ paddingLeft: ROW_INDENT, paddingBottom: 14, borderBottom: "1px solid var(--vz-border)" }}>
+                  <div style={{ paddingLeft: ROW_INDENT, paddingBottom: 14 }}>
                     <ToolBlock tool={msg.tool} input={toolInput} containerId={containerId} />
                     <div
                       className="mt-1 overflow-hidden text-[11px]"
@@ -831,7 +831,7 @@ export function MessageList({
               return (
                 <React.Fragment key={msg.id}>
                   {headerStrip}
-                  <div style={{ paddingLeft: ROW_INDENT, paddingBottom: 14, borderBottom: "1px solid var(--vz-border)" }}>
+                  <div style={{ paddingLeft: ROW_INDENT, paddingBottom: 14 }}>
                     <ToolBlock tool={msg.tool} input={toolInput} containerId={containerId} />
                     <div className="mt-1">
                       <RemoteCSVTable containerId={containerId} filePath={csvPath} title={csvFileName} />
@@ -845,7 +845,7 @@ export function MessageList({
           return (
             <React.Fragment key={msg.id}>
               {headerStrip}
-              <div style={{ paddingLeft: ROW_INDENT, paddingBottom: 14, borderBottom: "1px solid var(--vz-border)" }}>
+              <div style={{ paddingLeft: ROW_INDENT, paddingBottom: 14 }}>
                 <ToolBlock tool={msg.tool ?? ""} input={toolInput} output={msg.content} containerId={containerId} />
               </div>
             </React.Fragment>

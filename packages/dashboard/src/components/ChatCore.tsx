@@ -585,16 +585,17 @@ function TableHeader({ headers, sortCol, sortAsc, onSort, className }: {
   className?: string;
 }) {
   return (
-    <thead className={`sticky top-0 bg-gray-50 z-10 ${className ?? ""}`}>
+    <thead className={`sticky top-0 z-10 ${className ?? ""}`} style={{ background: "var(--vz-mute)" }}>
       <tr>
         {headers.map((h, i) => (
           <th
             key={i}
             onClick={() => onSort(i)}
-            className="px-3 py-1.5 text-left text-gray-500 font-medium cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap border-b border-gray-200"
+            className="px-3 py-1.5 text-left font-medium cursor-pointer select-none whitespace-nowrap"
+            style={{ color: "var(--vz-muted)", borderBottom: "1px solid var(--vz-border)" }}
           >
             {h}
-            {sortCol === i && <span className="ml-1 text-gray-400">{sortAsc ? "↑" : "↓"}</span>}
+            {sortCol === i && <span className="ml-1" style={{ color: "var(--vz-muted-2)" }}>{sortAsc ? "↑" : "↓"}</span>}
           </th>
         ))}
       </tr>
@@ -713,8 +714,8 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
 
   return (
     <div>
-      <div className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 border-b border-gray-100">
-        <span className="text-[10px] text-gray-400 mr-auto">{infoText}</span>
+      <div className="flex items-center gap-1.5 px-3 py-1" style={{ background: "var(--vz-mute)", borderBottom: "1px solid var(--vz-border)" }}>
+        <span className="text-[10px] mr-auto" style={{ color: "var(--vz-muted-2)" }}>{infoText}</span>
         {toolButtons()}
         <button onClick={() => setFullscreen(true)} className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer" title="Enlarge">
           <Maximize2 className="w-3 h-3" />
@@ -725,9 +726,9 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
           <TableHeader headers={table.headers} sortCol={sortCol} sortAsc={sortAsc} onSort={handleSort} />
           <tbody>
             {visible.map((row, i) => (
-              <tr key={i} className="border-t border-gray-100 hover:bg-blue-50/30">
+              <tr key={i} style={{ borderTop: "1px solid var(--vz-border)" }}>
                 {row.map((cell, j) => (
-                  <td key={j} className="px-3 py-1 text-gray-700 whitespace-nowrap">{cell}</td>
+                  <td key={j} className="px-3 py-1 whitespace-nowrap" style={{ color: "var(--vz-ink-2)" }}>{cell}</td>
                 ))}
               </tr>
             ))}
@@ -737,7 +738,8 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
       {truncated && (
         <button
           onClick={() => setShowAll(true)}
-          className="w-full py-1.5 text-[10px] text-blue-500 hover:text-blue-700 hover:bg-blue-50 cursor-pointer transition-colors border-t border-gray-100"
+          className="w-full py-1.5 text-[10px] cursor-pointer transition-colors"
+          style={{ color: "var(--vz-sodium)", borderTop: "1px solid var(--vz-border)" }}
         >
           Show all {table.rows.length} rows (showing first {PAGE_SIZE_INLINE})
         </button>
@@ -759,9 +761,9 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
                 <TableHeader headers={table.headers} sortCol={sortCol} sortAsc={sortAsc} onSort={handleSort} />
                 <tbody>
                   {fullVisible.map((row, i) => (
-                    <tr key={i} className="border-t border-gray-100 hover:bg-blue-50/30">
+                    <tr key={i} style={{ borderTop: "1px solid var(--vz-border)" }}>
                       {row.map((cell, j) => (
-                        <td key={j} className="px-3 py-2 text-gray-700 whitespace-nowrap">{cell}</td>
+                        <td key={j} className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--vz-ink-2)" }}>{cell}</td>
                       ))}
                     </tr>
                   ))}
@@ -778,21 +780,24 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
 
 /** Toggle bar for raw/table view, shown when CSV is detected */
 function RawTableToggle({ view, onToggle }: { view: "raw" | "table"; onToggle: () => void }) {
+  const tab = (active: boolean) => ({
+    background: active ? "var(--vz-card)" : "transparent",
+    color: active ? "var(--vz-ink)" : "var(--vz-muted)",
+    fontWeight: active ? 500 : 400,
+  });
   return (
-    <div className="flex rounded-md border border-gray-200 overflow-hidden">
+    <div className="flex rounded-md overflow-hidden" style={{ border: "1px solid var(--vz-border)" }}>
       <button
         onClick={view === "table" ? onToggle : undefined}
-        className={`px-2 py-0.5 text-[10px] cursor-pointer transition-colors ${
-          view === "raw" ? "bg-white text-gray-700 font-medium" : "bg-gray-100 text-gray-400 hover:text-gray-600"
-        }`}
+        className="px-2 py-0.5 text-[10px] cursor-pointer transition-colors"
+        style={tab(view === "raw")}
       >
         Raw
       </button>
       <button
         onClick={view === "raw" ? onToggle : undefined}
-        className={`px-2 py-0.5 text-[10px] cursor-pointer transition-colors ${
-          view === "table" ? "bg-white text-gray-700 font-medium" : "bg-gray-100 text-gray-400 hover:text-gray-600"
-        }`}
+        className="px-2 py-0.5 text-[10px] cursor-pointer transition-colors"
+        style={tab(view === "table")}
       >
         Table
       </button>
@@ -829,7 +834,7 @@ function BashRenderer({ input, output }: { input?: Record<string, unknown>; outp
       {command && (
         <div
           className="px-3 py-1.5 font-mono overflow-x-auto"
-          style={{ background: "var(--vz-graphite)", color: "var(--vz-ink-2)" }}
+          style={{ background: "var(--vz-mute)", color: "var(--vz-ink)", borderBottom: "1px solid var(--vz-border)" }}
         >
           <span className="select-none" style={{ color: "var(--vz-sodium)" }}>$ </span>{displayCmd}
         </div>
