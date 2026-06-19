@@ -48,8 +48,20 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
   // still-pending question we should restore as a clickable card.
   const replayPendingQuestionRef = useRef<{ question: string; options: string[] } | null>(null);
   const sessionReadyResolveRef = useRef<((id: string) => void) | null>(null);
+  // True between startSession() and the session.ready that answers it — the
+  // window where a brand-new session has been requested but its id hasn't
+  // propagated back into the `sessionId` prop yet.
+  const startingSessionRef = useRef(false);
   const currentSessionIdRef = useRef(sessionId);
-  currentSessionIdRef.current = sessionId;
+  // Keep the ref in sync with the prop, but never let a transient null prop
+  // (an empty "New Workspace" before its session id propagates) clobber a
+  // session id we've already adopted from session.ready during a fresh start.
+  if (sessionId) {
+    currentSessionIdRef.current = sessionId;
+    startingSessionRef.current = false;
+  } else if (!startingSessionRef.current) {
+    currentSessionIdRef.current = null;
+  }
 
   const onContainerIdChangeRef = useRef(onContainerIdChange);
   onContainerIdChangeRef.current = onContainerIdChange;
@@ -77,14 +89,15 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     // Cross-session guard: the WS connection stays subscribed to every
     // session visited (or started) during its lifetime, so events for OTHER
     // workspaces arrive here too. Without this, another workspace's tokens,
-    // tool calls, and goal cards append into the currently-open timeline.
-    // session.ready is exempt — it fires while a NEW session is being
-    // created, before currentSessionIdRef has caught up.
+    // tool calls, and goal cards append into the currently-open timeline —
+    // including into a fresh "New Workspace" that has no session id yet (where
+    // currentSessionIdRef is null but an OLD session is still streaming).
+    // session.ready is exempt — it fires while a NEW session is being created
+    // and carries the id we're about to adopt.
     const msgSession = msg.session_id as string | undefined;
     if (
       msg.type !== "session.ready" &&
       msgSession &&
-      currentSessionIdRef.current &&
       msgSession !== currentSessionIdRef.current
     ) {
       return;
@@ -398,6 +411,11 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       }
       case "session.ready": {
         const sid = msg.session_id as string;
+        // Adopt the new id immediately so this session's own tokens/tools (which
+        // arrive before the `sessionId` prop round-trips) pass the cross-session
+        // guard. startingSessionRef stays true until the prop catches up, so the
+        // render-time sync above won't null this back out in the meantime.
+        if (sid) currentSessionIdRef.current = sid;
         if (msg.container_id && msg.container_id !== "pending") {
           const cid = msg.container_id as string;
           setContainerId(cid);
@@ -453,6 +471,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         log(`[${ts()}] Stopped by user`);
         break;
       case "error":
+        startingSessionRef.current = false;
         if (msg.code === "SESSION_NOT_FOUND") {
           setMessages([]);
           addSystem("Previous session expired. Start a new conversation.");
@@ -601,6 +620,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         return;
       }
       sessionReadyResolveRef.current = resolve;
+      startingSessionRef.current = true;
       wsRef.current.send(JSON.stringify({
         type: "session.start",
         profile_id: overrideProfileId ?? profileId,
