@@ -36,6 +36,16 @@ export type ExtraAuthHooks = {
    * see ExtraAuthHooks type docstring for the orphan-state caveat.
    */
   userCreateAfter?: (user: { id: string; email: string; name: string | null }) => Promise<void>;
+  /**
+   * Composed into session.create.before, fired ONLY when the session being
+   * created is an impersonation session (Better Auth sets `impersonatedBy`).
+   * Runs before the session row is inserted, so a throw aborts the
+   * impersonation — this is the binding enforcement point for SaaS
+   * impersonation policy (block target classes + audit), reached no matter
+   * which endpoint triggers the swap (dashboard, raw admin API, …).
+   * OSS deployments leave this undefined → impersonation behaves stock.
+   */
+  sessionImpersonateBefore?: (info: { targetUserId: string; impersonatedBy: string }) => Promise<void>;
 };
 
 function resolveLoginMethod(context: { path?: string } | null | undefined): string | null {
@@ -207,6 +217,20 @@ export function createAuth(config: Config, pool: pg.Pool, db: DrizzleDB, tracker
       },
       session: {
         create: {
+          before: async (session) => {
+            // Impersonation sessions carry `impersonatedBy` (set by the
+            // admin plugin). This fires for EVERY impersonation regardless
+            // of entry point, so SaaS policy (block admins, audit) enforced
+            // here is binding — not bypassable via the raw admin API.
+            const impersonatedBy = (session as { impersonatedBy?: string } | null)?.impersonatedBy;
+            if (impersonatedBy && hooks.sessionImpersonateBefore) {
+              await hooks.sessionImpersonateBefore({
+                targetUserId: session.userId,
+                impersonatedBy,
+              });
+            }
+            return undefined;
+          },
           after: async (session, context) => {
             tracker?.track({
               event: "user.logged_in",
