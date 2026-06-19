@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, ChevronRight, Star, Archive, Trash2, MessageSquare, CheckCircle2, Clock, ListChecks, CheckSquare, Square, X } from "lucide-react";
+import { Plus, ChevronRight, Pin, Archive, Trash2, MessageSquare, CheckCircle2, Clock, ListChecks, CheckSquare, Square, X, Search } from "lucide-react";
 import type { GroupedWorkspaces } from "../hooks/useWorkspaces.js";
 import type { WorkspaceSummary } from "../api/client.js";
 import { Modal, Button } from "@/brand/components.js";
@@ -14,6 +14,9 @@ interface Props {
   onDelete: (id: string) => void;
   inSheet?: boolean;
 }
+
+// How many rows a section shows before a "Show more" button appears.
+const PAGE_SIZE = 25;
 
 // ─── Time + status helpers ────────────────────────────────────────────
 
@@ -106,6 +109,12 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
   // clutter the sidebar for users without history.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Free-text filter over workspace names. Search spans every bucket.
+  const [query, setQuery] = useState("");
+  // Per-section "show more" pagination — each section reveals PAGE_SIZE rows at
+  // a time so a long history doesn't render hundreds of nodes at once.
+  const [shown, setShown] = useState<Record<string, number>>({});
+  const showMore = (id: string) => setShown((s) => ({ ...s, [id]: (s[id] ?? PAGE_SIZE) + PAGE_SIZE }));
 
   // Bulk selection: a "Select" mode turns rows into checkboxes and surfaces a
   // bulk action bar (Delete). Clicking a row toggles its selection instead of
@@ -129,24 +138,37 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
     exitSelect();
   };
 
-  // Re-bucket the four useWorkspaces categories into LIVE / TODAY / EARLIER.
-  // The legacy `archived` group already contains finished items; the others
-  // hold live ones.
-  const { live, today, earlier } = useMemo(() => {
+  // Re-bucket the four useWorkspaces categories into PINNED / LIVE / TODAY /
+  // EARLIER. Pinned workspaces are pulled out first (always-on, top group);
+  // the rest split by recency. A name search filters across every bucket.
+  const { pinned, live, today, earlier } = useMemo(() => {
     const all: WorkspaceSummary[] = [
       ...grouped.starred,
       ...grouped.active,
       ...grouped.paused,
       ...grouped.archived,
     ];
-    const dedup = Array.from(new Map(all.map((w) => [w.session_id, w])).values());
+    const q = query.trim().toLowerCase();
+    const matches = (w: WorkspaceSummary) =>
+      !q || (w.name ?? w.session_id).toLowerCase().includes(q);
+    const dedup = Array.from(new Map(all.map((w) => [w.session_id, w])).values()).filter(matches);
     const sortByActive = (a: WorkspaceSummary, b: WorkspaceSummary) => b.last_active_at.localeCompare(a.last_active_at);
+    const rest = dedup.filter((w) => !w.pinned);
     return {
-      live: dedup.filter((w) => !isFinished(w)).sort(sortByActive),
-      today: dedup.filter((w) => isFinished(w) && isToday(w.last_active_at)).sort(sortByActive),
-      earlier: dedup.filter((w) => isFinished(w) && !isToday(w.last_active_at)).sort(sortByActive),
+      pinned: dedup.filter((w) => w.pinned).sort(sortByActive),
+      live: rest.filter((w) => !isFinished(w)).sort(sortByActive),
+      today: rest.filter((w) => isFinished(w) && isToday(w.last_active_at)).sort(sortByActive),
+      earlier: rest.filter((w) => isFinished(w) && !isToday(w.last_active_at)).sort(sortByActive),
     };
-  }, [grouped]);
+  }, [grouped, query]);
+
+  const allVisibleIds = useMemo(
+    () => [...pinned, ...live, ...today, ...earlier].map((w) => w.session_id),
+    [pinned, live, today, earlier],
+  );
+  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id));
+  const toggleSelectAll = () =>
+    setSelected(allSelected ? new Set() : new Set(allVisibleIds));
 
   function ChatItem({ workspace, group, index }: { workspace: WorkspaceSummary; group: "live" | "today" | "earlier"; index: number }) {
     const isActive = workspace.session_id === activeId;
@@ -209,7 +231,7 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
         >
           {index}
         </span>
-        {workspace.starred && <Star className="w-3 h-3 shrink-0" style={{ color: "var(--vz-warn)", fill: "var(--vz-warn)" }} />}
+        {workspace.pinned && <Pin className="w-3 h-3 shrink-0" style={{ color: "var(--vz-sodium)", fill: "var(--vz-sodium)" }} />}
         <span className="flex-1 truncate">{name}</span>
 
         {/* Status word ("stuck" / "failed") OR time — hide when hovering to surface actions */}
@@ -230,12 +252,12 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
         {!selectMode && <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); onUpdate(workspace.session_id, { starred: !workspace.starred }); }}
+            onClick={(e) => { e.stopPropagation(); onUpdate(workspace.session_id, { pinned: !workspace.pinned }); }}
             className="vz-action-btn"
-            style={{ width: 22, height: 22, color: workspace.starred ? "var(--vz-warn)" : "var(--vz-muted-2)" }}
-            title={workspace.starred ? "Unstar" : "Star"}
+            style={{ width: 22, height: 22, color: workspace.pinned ? "var(--vz-sodium)" : "var(--vz-muted-2)" }}
+            title={workspace.pinned ? "Unpin (allow idle)" : "Pin (keep always-on)"}
           >
-            <Star className="w-3 h-3" />
+            <Pin className="w-3 h-3" />
           </button>
           <button
             type="button"
@@ -272,6 +294,9 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
   }) {
     if (items.length === 0) return null;
     const isOpen = collapsed[id] === undefined ? !defaultCollapsed : !collapsed[id];
+    const limit = shown[id] ?? PAGE_SIZE;
+    const visibleItems = items.slice(0, limit);
+    const remaining = items.length - visibleItems.length;
 
     return (
       <div className="mb-1">
@@ -298,9 +323,19 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
           <span>{label}</span>
           <span style={{ marginLeft: "auto", letterSpacing: "0.04em" }}>{items.length}</span>
         </button>
-        {isOpen && items.map((w, i) => (
+        {isOpen && visibleItems.map((w, i) => (
           <ChatItem key={w.session_id} workspace={w} group={group} index={i + 1} />
         ))}
+        {isOpen && remaining > 0 && (
+          <button
+            type="button"
+            onClick={() => showMore(id)}
+            className="w-full text-left px-3 py-1 mx-1.5 text-[11px]"
+            style={{ color: "var(--vz-sodium)", background: "none", border: 0, cursor: "pointer" }}
+          >
+            Show {Math.min(remaining, PAGE_SIZE)} more{remaining > PAGE_SIZE ? ` (${remaining} left)` : ""}
+          </button>
+        )}
       </div>
     );
   }
@@ -324,8 +359,40 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
             <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
           </span>
           <span>New task</span>
-          <span className="vz-kbd vz-new-task__kbd">⌘N</span>
+          <span className="vz-kbd vz-new-task__kbd">⌘K</span>
         </button>
+
+        {/* Search */}
+        <div className="relative mt-2">
+          <Search
+            className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ color: "var(--vz-muted-2)" }}
+          />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search chats…"
+            className="w-full text-[12px] rounded-md outline-none"
+            style={{
+              padding: "5px 24px 5px 28px",
+              background: "var(--vz-card)",
+              border: "1px solid var(--vz-border)",
+              color: "var(--vz-ink)",
+            }}
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2"
+              style={{ color: "var(--vz-muted-2)", background: "none", border: 0, cursor: "pointer" }}
+              title="Clear search"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
 
         {/* Select / bulk-actions toggle */}
         <div className="flex items-center justify-end mt-2 px-0.5">
@@ -354,6 +421,13 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
 
       {/* Time-bucketed list */}
       <div className="flex-1 overflow-y-auto pb-3">
+        <Section
+          id="pinned"
+          label="Pinned"
+          icon={Pin}
+          items={pinned}
+          group="live"
+        />
         <Section
           id="live"
           label="Active"
@@ -386,6 +460,16 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
           <span className="text-[12px]" style={{ color: "var(--vz-ink-3)" }}>
             {selected.size} selected
           </span>
+          <button
+            type="button"
+            onClick={toggleSelectAll}
+            className="inline-flex items-center gap-1 text-[11px]"
+            style={{ color: "var(--vz-muted-2)", background: "none", border: 0, cursor: "pointer" }}
+          >
+            {allSelected
+              ? <><Square className="w-3 h-3" /> Clear all</>
+              : <><CheckSquare className="w-3 h-3" /> Check all</>}
+          </button>
           <Button
             variant="danger"
             size="sm"

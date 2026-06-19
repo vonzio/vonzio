@@ -525,6 +525,27 @@ export class SessionRegistry {
     const connectedIds = this.getConnectedSessionIds();
 
     for (const [id, session] of entries) {
+      // Pinned ("always-on") sessions are fully exempt from the sweeper: no
+      // idle-pause, no idle-destroy, and no absolute expiry. Keep their TTL
+      // pushed forward so the displayed expiry reflects "alive" and the
+      // expiry path below can never trip, and keep them marked active. They
+      // stay running until the user unpins or deletes them.
+      if (session.pinned) {
+        if (session.status === "idle") session.status = "active";
+        const horizon = now + this.config.maxLifetimeSecs * 1000;
+        // Only write when the stored expiry has drifted past the halfway mark
+        // to avoid a DB write on every 30s tick.
+        if (new Date(session.expires_at).getTime() - now < (this.config.maxLifetimeSecs * 1000) / 2) {
+          const next = new Date(horizon).toISOString();
+          session.expires_at = next;
+          await this.db
+            .update(schema.workspaces)
+            .set({ expires_at: next })
+            .where(eq(schema.workspaces.session_id, id));
+        }
+        continue;
+      }
+
       // Check absolute expiry
       if (new Date(session.expires_at).getTime() <= now) {
         // Destroy container if it exists (covers paused sessions too)

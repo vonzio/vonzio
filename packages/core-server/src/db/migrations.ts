@@ -708,6 +708,13 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 28,
+    description: "Replace 'star' with 'pin': migrate starred workspaces to pinned (pinned now means top-group + always-on, exempt from the idle sweeper).",
+    up: async (handle) => {
+      await handle.db.execute(sql`UPDATE workspaces SET pinned = true WHERE starred = true AND pinned = false`);
+    },
+  },
 ];
 
 /**

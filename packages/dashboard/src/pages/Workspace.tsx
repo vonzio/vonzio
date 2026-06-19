@@ -623,6 +623,22 @@ export function Workspace() {
     setTimeout(() => inputRef.current?.focus(), 100);
   }
 
+  // ⌘K / Ctrl+K → new task. (⌘N can't be used — browsers reserve it for "new
+  // window" and a page can't preventDefault it.) Ref keeps the handler fresh
+  // without re-binding the listener every render.
+  const handleCreateRef = useRef(handleCreate);
+  handleCreateRef.current = handleCreate;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        handleCreateRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // ─── Send message ────────────────────────────────────────────────
   async function handleSend() {
     const text = input.trim();
