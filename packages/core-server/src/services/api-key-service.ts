@@ -122,20 +122,24 @@ export class ApiKeyService {
       ? await this.orgMembershipResolver(userId)
       : new Set<string>();
 
-    // User sees: their own keys + shared keys they are explicitly granted access to
+    // User sees: their own keys + any key explicitly granted to them via the
+    // api_key_users junction — whether it's a fully-shared key (user_id null)
+    // OR a key owned by someone else who shared it (e.g. an admin's own key
+    // with the grantee added to allowed_user_ids). Honoring the junction only
+    // for user_id-null keys silently dropped admin-owned shares. Admins also
+    // see fully-shared keys regardless of an explicit grant (they manage them)
+    // — but NOT other users' personal keys.
     return rows
       .filter((r) => {
         if (r.user_id === userId) return true; // own key
-        if (!r.user_id) {
-          const granted = userRole === "admin" || (junctionMap.get(r.id) ?? []).includes(userId);
-          if (!granted) return false;
-          // Org-tagged key not in the active org → hide ONLY if the user is a
-          // member of that org (a real org-context switch). A non-member with
-          // an explicit grant is an admin cross-user share → keep it.
-          if (r.org_id && r.org_id !== activeOrgId && memberOrgIds.has(r.org_id)) return false;
-          return true;
-        }
-        return false;
+        const grantedByJunction = (junctionMap.get(r.id) ?? []).includes(userId);
+        const adminShared = userRole === "admin" && !r.user_id;
+        if (!grantedByJunction && !adminShared) return false;
+        // Org-tagged key not in the active org → hide ONLY if the user is a
+        // member of that org (a real org-context switch). A non-member with
+        // an explicit grant is a cross-user share → keep it.
+        if (r.org_id && r.org_id !== activeOrgId && memberOrgIds.has(r.org_id)) return false;
+        return true;
       })
       .map((r) => this.mapRow(r, true, junctionMap.get(r.id) ?? []));
   }
