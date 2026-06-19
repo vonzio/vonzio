@@ -6,7 +6,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
 import { useApi } from "../hooks/useApi.js";
 import { useIsMobile, useIsNarrow } from "../hooks/use-mobile.js";
-import { fetchProfiles, type ProfileSummary } from "../api/client.js";
+import { fetchProfiles, fetchUserAnthropicKeys, updateProfile, type ProfileSummary, type UserAnthropicKey } from "../api/client.js";
 import { WorkspaceSidebar } from "../components/WorkspaceSidebar.js";
 import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
@@ -357,6 +357,27 @@ export function Workspace() {
   // `profiles` is undefined mid-fetch, which would otherwise flash the
   // add-key CTA + disable the composer for users who DO have a key.
   const keyMissing = profiles !== undefined && !hasApiKey;
+
+  // Keys the user can actually use (own + shared/admin-granted). When the
+  // active agent has no key but the user HAS an accessible one (e.g. an admin
+  // shared a key with them), we offer a one-click "use this key" instead of
+  // forcing them to add their own — the shared key is already usable.
+  const { data: availableApiKeys } = useApi<UserAnthropicKey[]>(() => fetchUserAnthropicKeys());
+  const attachableKey: UserAnthropicKey | undefined =
+    keyMissing && activeProfile && !activeProfile.team_owned
+      ? (availableApiKeys ?? [])[0]
+      : undefined;
+  const [attaching, setAttaching] = useState(false);
+  const attachKey = async () => {
+    if (!activeProfile || !attachableKey) return;
+    setAttaching(true);
+    try {
+      await updateProfile(activeProfile.id, { api_key_id: attachableKey.id });
+      await refetchProfiles();
+    } finally {
+      setAttaching(false);
+    }
+  };
 
   // Derive the preview URL pattern from the template the server publishes
   // (e.g. "https://{container_id}-{port}.app.vonz.io" in prod,
@@ -798,19 +819,30 @@ export function Workspace() {
                       </svg>
                       <div className="text-center">
                         <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--vz-ink)" }}>
-                          {keyMissing ? "Add an API key to get started" : "How can I help?"}
+                          {!keyMissing ? "How can I help?"
+                            : attachableKey ? "Use your shared key to get started"
+                            : "Add an API key to get started"}
                         </h2>
                         <p className="text-sm text-muted-foreground">
-                          {keyMissing
-                            ? "You'll need a provider key before you can chat — it takes a few seconds."
-                            : ((profiles?.length ?? 0) > 1 ? "Select an agent and start a conversation" : "Start a conversation")}
+                          {!keyMissing
+                            ? ((profiles?.length ?? 0) > 1 ? "Select an agent and start a conversation" : "Start a conversation")
+                            : attachableKey
+                              ? `“${attachableKey.name}” is shared with you — attach it to your agent to start chatting.`
+                              : "You'll need a provider key before you can chat — it takes a few seconds."}
                         </p>
                       </div>
                       {keyMissing && (
-                        <Button onClick={() => reopenOnboarding()}>
-                          <Key className="w-4 h-4 mr-1.5" />
-                          Add API key
-                        </Button>
+                        attachableKey ? (
+                          <Button onClick={attachKey} disabled={attaching}>
+                            <Key className="w-4 h-4 mr-1.5" />
+                            {attaching ? "Setting up…" : `Use ${attachableKey.name}`}
+                          </Button>
+                        ) : (
+                          <Button onClick={() => reopenOnboarding()}>
+                            <Key className="w-4 h-4 mr-1.5" />
+                            Add API key
+                          </Button>
+                        )
                       )}
                       {/* Launcher: pick an agent to start with (cards), or start
                           from a template. The composer below stays the fast path
@@ -974,10 +1006,15 @@ export function Workspace() {
                       }}
                     >
                       <Key className="w-4 h-4 shrink-0" />
-                      <span className="flex-1">No API key configured — add one to continue this conversation.</span>
+                      <span className="flex-1">
+                        {attachableKey
+                          ? `“${attachableKey.name}” is shared with you — attach it to this agent to continue.`
+                          : "No API key configured — add one to continue this conversation."}
+                      </span>
                       <button
                         type="button"
-                        onClick={() => reopenOnboarding()}
+                        onClick={attachableKey ? attachKey : () => reopenOnboarding()}
+                        disabled={attaching}
                         style={{
                           background: "var(--vz-sodium)", color: "#fff",
                           padding: "5px 12px", borderRadius: "var(--vz-radius-sm)",
@@ -985,7 +1022,7 @@ export function Workspace() {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        Add API key
+                        {attachableKey ? (attaching ? "Setting up…" : `Use ${attachableKey.name}`) : "Add API key"}
                       </button>
                     </div>
                   </div>
