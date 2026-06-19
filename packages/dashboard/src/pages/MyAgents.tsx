@@ -2,9 +2,9 @@
  * Profiles — agent configuration library.
  * Tabs: Profiles (primary), Tools, Skills, Subagents.
  */
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import {
-  Bot, Plus, Trash2, Pencil, Key as KeyIcon, Wrench, BookOpen, Copy, Sparkles, Star,
+  Bot, Plus, Trash2, Pencil, Key as KeyIcon, Wrench, BookOpen, Copy, Sparkles, Star, Upload,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi.js";
@@ -12,7 +12,7 @@ import { slugify } from "../lib/utils.js";
 import {
   fetchProfiles, deleteProfile, setDefaultProfile,
   fetchUserTools, createUserTool, deleteUserTool,
-  fetchUserSkills, createUserSkill, deleteUserSkill,
+  fetchUserSkills, createUserSkill, deleteUserSkill, uploadSkillBundle,
   fetchUserAgents, createUserAgent, deleteUserAgent,
   type ProfileSummary,
 } from "../api/client.js";
@@ -482,6 +482,8 @@ function SkillSection() {
   const [skillName, setSkillName] = useState("");
   const [skillDesc, setSkillDesc] = useState("");
   const [skillContent, setSkillContent] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const handleCreate = async () => {
     if (!skillName || !skillContent) return;
@@ -492,6 +494,20 @@ function SkillSection() {
       setShowForm(false);
       refetch();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  };
+
+  const handleUpload = async (file: File) => {
+    setUploading(true);
+    setError("");
+    try {
+      await uploadSkillBundle(file);
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to upload skill");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -559,6 +575,20 @@ function SkillSection() {
       onErrorDismiss={() => setError("")}
       onAdd={() => setShowForm(true)}
       addLabel="New skill"
+      extraActions={
+        <>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".zip"
+            style={{ display: "none" }}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); }}
+          />
+          <Button size="sm" variant="ghost" icon={<Upload size={14} />} disabled={uploading} onClick={() => fileRef.current?.click()}>
+            {uploading ? "Uploading…" : "Upload .zip"}
+          </Button>
+        </>
+      }
       loading={loading}
       yours={yours}
       bundled={bundled}
@@ -785,6 +815,7 @@ function CatalogLayout({
   onErrorDismiss,
   onAdd,
   addLabel,
+  extraActions,
   loading,
   yours,
   bundled,
@@ -802,6 +833,7 @@ function CatalogLayout({
   onErrorDismiss: () => void;
   onAdd: () => void;
   addLabel: string;
+  extraActions?: ReactNode;
   loading: boolean;
   yours: Record<string, unknown>[];
   bundled: Record<string, unknown>[];
@@ -827,13 +859,23 @@ function CatalogLayout({
         rows={yours}
         rowKey={(t) => t.id as string}
         loading={loading}
-        actions={<Button size="sm" icon={<Plus size={14} />} onClick={onAdd}>{addLabel}</Button>}
+        actions={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            {extraActions}
+            <Button size="sm" icon={<Plus size={14} />} onClick={onAdd}>{addLabel}</Button>
+          </span>
+        }
         emptyState={
           <EmptyState
             icon={emptyIcon}
             title={emptyTitle}
             description={emptyDescription}
-            action={<Button size="sm" icon={<Plus size={14} />} onClick={onAdd}>{addLabel}</Button>}
+            action={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {extraActions}
+                <Button size="sm" icon={<Plus size={14} />} onClick={onAdd}>{addLabel}</Button>
+              </span>
+            }
           />
         }
       />
