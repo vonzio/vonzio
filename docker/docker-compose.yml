@@ -145,6 +145,13 @@ services:
     restart: unless-stopped
     networks:
       - vonzio
+      # Also join the egress network so core-server can reach egress-enforced
+      # agent containers for the hostname preview / file proxy. Feature 0005
+      # isolates agents on the internal `vonzio-egress` network; without
+      # core-server also being on it, preview URLs (<container>-<port>.DOMAIN)
+      # time out because core-server (on `vonzio` only) can't route to the
+      # agent's IP. Harmless when egress is off (network is just empty).
+      - vonzio-egress
 
   agent:
     build:
