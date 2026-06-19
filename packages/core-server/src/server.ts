@@ -651,6 +651,14 @@ export async function buildServer(deps: ServerDeps) {
           ? coreDeps.hiddenUserSecretIdsForOrg(userId, activeOrgId)
           : Promise.resolve(new Set()),
     });
+    // Late-bind the org-membership resolver (cp-server mutates coreDeps after
+    // boot). list() uses it to keep admin cross-user key shares visible to
+    // grantees who aren't members of the key's (incidentally stamped) org.
+    apiKeyService.setOrgMembershipResolver((userId) =>
+      coreDeps.orgIdsForUserMembership
+        ? coreDeps.orgIdsForUserMembership(userId)
+        : Promise.resolve(new Set<string>()),
+    );
     // Docker image catalogue — same data as /admin/images, but
     // visible to any logged-in user (org owners need it for the
     // team-agent editor's container picker). Image names aren't
