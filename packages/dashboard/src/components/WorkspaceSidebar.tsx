@@ -16,7 +16,7 @@ interface Props {
 }
 
 // How many rows a section shows before a "Show more" button appears.
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 5;
 
 // ─── Time + status helpers ────────────────────────────────────────────
 
