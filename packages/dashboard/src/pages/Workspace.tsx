@@ -319,13 +319,13 @@ export function Workspace() {
     navigate("/w", { replace: true });
   }, [routeId, workspacesLoading, activeWorkspace, activeWorkspaceId, navigate]);
   // Resolve activeProfile in this order: real workspace owner → user's
-  // empty-state pick from AgentPicker → first profile. The middle case
-  // matters so the ModelPicker (and the rest of the composer chrome) shows
-  // models for the profile the user just picked, not whatever happens to
-  // sit at profiles[0].
+  // empty-state pick from AgentPicker → the user's default agent → first
+  // profile. The middle cases matter so the ModelPicker (and the rest of the
+  // composer chrome) shows models for the profile the user picked / defaulted.
   const activeProfile =
     profiles?.find((p) => p.id === activeWorkspace?.profile_id) ??
     profiles?.find((p) => p.id === selectedProfileId) ??
+    profiles?.find((p) => p.is_default) ??
     profiles?.[0];
   const profileName = activeProfile?.name ?? "Default";
 
@@ -336,7 +336,7 @@ export function Workspace() {
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
-  const defaultProfileId = profiles?.[0]?.id ?? "";
+  const defaultProfileId = (profiles?.find((p) => p.is_default) ?? profiles?.[0])?.id ?? "";
 
   // Pick up a draft / chosen agent handed off from the Home launcher (it stashes
   // these then navigates to /w). Apply once on a fresh new-chat mount, then clear.

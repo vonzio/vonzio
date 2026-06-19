@@ -1,4 +1,4 @@
-import { eq, or, isNull } from "drizzle-orm";
+import { eq, or, isNull, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { encrypt, decrypt } from "../auth/crypto.js";
 import type { DrizzleDB } from "../db/index.js";
@@ -94,6 +94,19 @@ export class ProfileService {
 
     const slug = await this.resolveSlug({ slug: input.slug, name: input.name }, userId ?? null);
 
+    // First agent a user owns becomes their default, so the new-chat picker
+    // always has one preselected. Subsequent agents are non-default until the
+    // user picks one. Shared rows (no userId) are never auto-defaulted.
+    let isDefault = false;
+    if (userId) {
+      const existingDefault = await this.db
+        .select({ id: schema.profiles.id })
+        .from(schema.profiles)
+        .where(and(eq(schema.profiles.user_id, userId), eq(schema.profiles.is_default, true)))
+        .limit(1);
+      isDefault = existingDefault.length === 0;
+    }
+
     const row = {
       id,
       user_id: userId ?? null,
@@ -121,12 +134,35 @@ export class ProfileService {
       auto_continue: input.auto_continue ?? false,
       max_continuations: input.max_continuations ?? 5,
       continuation_budget_usd: input.continuation_budget_usd ?? null,
+      is_default: isDefault,
       created_at: now,
       last_used_at: null,
     };
 
     await this.db.insert(schema.profiles).values(row);
     return this.mapRow(row, true);
+  }
+
+  /** Mark `id` as the user's default agent, clearing the flag on their other
+   *  agents (at most one default per user). Returns false if the profile
+   *  doesn't exist or isn't owned by the user. */
+  async setDefault(id: string, userId: string): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select({ user_id: schema.profiles.user_id })
+        .from(schema.profiles)
+        .where(eq(schema.profiles.id, id));
+      if (rows.length === 0 || rows[0].user_id !== userId) return false;
+      await tx
+        .update(schema.profiles)
+        .set({ is_default: false })
+        .where(and(eq(schema.profiles.user_id, userId), eq(schema.profiles.is_default, true)));
+      await tx
+        .update(schema.profiles)
+        .set({ is_default: true })
+        .where(eq(schema.profiles.id, id));
+      return true;
+    });
   }
 
   async get(id: string): Promise<Profile | null> {
@@ -367,6 +403,7 @@ export class ProfileService {
       continuation_budget_usd: row.continuation_budget_usd ?? undefined,
       concurrency_limit: row.concurrency_limit,
       user_id: row.user_id,
+      is_default: row.is_default,
       created_at: row.created_at,
       last_used_at: row.last_used_at ?? undefined,
     };

@@ -156,6 +156,9 @@ export const profiles = pgTable("profiles", {
   auto_continue: boolean("auto_continue").notNull().default(false),
   max_continuations: integer("max_continuations").notNull().default(5),
   continuation_budget_usd: doublePrecision("continuation_budget_usd"),
+  // The user's default agent — preselected in the new-chat picker and used for
+  // new conversations. At most one per user (enforced in ProfileService).
+  is_default: boolean("is_default").notNull().default(false),
   created_at: text("created_at").notNull(),
   last_used_at: text("last_used_at"),
 });

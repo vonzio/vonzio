@@ -274,6 +274,8 @@ export interface ProfileSummary {
   /** Profile default for the composer's "Run until done" (goal-loop) toggle. */
   auto_continue?: boolean;
   user_id?: string | null;
+  /** The user's default agent — preselected in the new-chat picker. */
+  is_default?: boolean;
   /** SaaS-only — true when this row was materialized from an
    *  org_profile (team-shared agent). Read-only for members. */
   team_owned?: boolean;
@@ -283,6 +285,11 @@ export interface ProfileSummary {
 
 export function fetchProfiles(): Promise<ProfileSummary[]> {
   return request("/profiles");
+}
+
+/** Mark a profile as the user's default agent (clears the flag on the others). */
+export function setDefaultProfile(id: string): Promise<{ ok: boolean; id: string }> {
+  return request(`/profiles/${id}/default`, { method: "POST" });
 }
 
 export function createProfile(body: Record<string, unknown>): Promise<ProfileSummary> {

@@ -691,6 +691,23 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS documents_session_id_idx ON documents (session_id)`);
     },
   },
+  {
+    version: 27,
+    description: "Add profiles.is_default: the user's default agent (preselected in the new-chat picker). At most one per user, enforced in ProfileService.",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false`);
+      // Backfill: mark each user's earliest profile as their default so existing
+      // accounts get one without manual action. user_id NULL (shared) excluded.
+      await handle.db.execute(sql`
+        UPDATE profiles SET is_default = true
+        WHERE id IN (
+          SELECT DISTINCT ON (user_id) id FROM profiles
+          WHERE user_id IS NOT NULL
+          ORDER BY user_id, created_at ASC
+        )
+      `);
+    },
+  },
 ];
 
 /**

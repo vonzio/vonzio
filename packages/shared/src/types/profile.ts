@@ -171,6 +171,9 @@ export interface Profile {
   continuation_budget_usd?: number;
   concurrency_limit: number;
   user_id?: string | null;
+  /** The user's default agent — preselected in the new-chat picker and used
+   *  for new conversations. At most one per user. */
+  is_default: boolean;
   /**
    * SaaS-only flag. `true` when the row is a per-member materialization
    * of an org_profile (team-shared agent). Dashboard uses this to
