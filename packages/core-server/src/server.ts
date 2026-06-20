@@ -769,11 +769,19 @@ export async function buildServer(deps: ServerDeps) {
     workspaceService,
     profileService,
     skillService,
+    subagentService,
+    documentService,
     eventLog,
     resolveSession: (token: string) => {
       const session = orchestrator.resolvePlatformToken(token);
       return session
-        ? { userId: session.userId, profileId: session.profileId, orgId: session.orgId }
+        ? {
+            userId: session.userId,
+            profileId: session.profileId,
+            orgId: session.orgId,
+            sessionId: session.sessionId,
+            capabilities: session.capabilities,
+          }
         : null;
     },
   });

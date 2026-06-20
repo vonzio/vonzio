@@ -186,7 +186,7 @@ export class Orchestrator extends EventEmitter {
   private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
-  private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
+  private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] }>();
   // Per-task tokens for plugin-contributed MCP servers (ctx.mcpRegistry).
   private pluginMcpTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private log: Logger;
@@ -222,7 +222,7 @@ export class Orchestrator extends EventEmitter {
     this.gmailTokens.delete(token);
   }
 
-  resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null } | undefined {
+  resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] } | undefined {
     return this.platformTokens.get(token);
   }
 
@@ -1172,7 +1172,13 @@ export class Orchestrator extends EventEmitter {
     // Platform MCP: inject server for agent-initiated platform operations (playbooks, tasks)
     if (this.deps.config.internalServerUrl && userId) {
       const platformToken = `platform_${nanoid()}`;
-      this.platformTokens.set(platformToken, { userId, profileId: profile.id, orgId: taskOrgId });
+      this.platformTokens.set(platformToken, {
+        userId,
+        profileId: profile.id,
+        orgId: taskOrgId,
+        sessionId: task.session_id ?? task.id,
+        capabilities: profile.platform_capabilities ?? [],
+      });
       mcpTokensToClean.push({ type: "platform", token: platformToken });
       const platformMcpUrl = `${this.deps.config.internalServerUrl}/mcp/platform`;
       nonSdkServers.push({

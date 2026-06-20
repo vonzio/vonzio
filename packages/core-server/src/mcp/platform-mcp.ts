@@ -22,6 +22,8 @@ interface SlackConfig {
 import type { WorkspaceService } from "../services/workspace-service.js";
 import type { ProfileService } from "../services/profile-service.js";
 import type { SkillService } from "../services/skill-service.js";
+import type { SubagentService, CreateSubagentInput } from "../services/subagent-service.js";
+import type { DocumentService } from "../services/document-service.js";
 import type { EventLog } from "../events/event-log.js";
 import AdmZip from "adm-zip";
 import type { Workspace, WorkspaceStatus } from "@vonzio/shared";
@@ -35,6 +37,12 @@ interface PlatformMcpSession {
    *  agent-initiated platform ops respect the same org boundary as the
    *  HTTP routes. */
   orgId: string | null;
+  /** The calling agent's session — used to audit platform tool calls into
+   *  that session's event log. */
+  sessionId: string;
+  /** Opt-in capability groups (from profile.platform_capabilities). Gated
+   *  tools are only listed/callable when their `group` is in this set. */
+  capabilities: string[];
 }
 
 export interface PlatformMcpOptions {
@@ -45,6 +53,8 @@ export interface PlatformMcpOptions {
   workspaceService: WorkspaceService;
   profileService: ProfileService;
   skillService: SkillService;
+  subagentService: SubagentService;
+  documentService: DocumentService;
   eventLog: EventLog;
   resolveSession: (token: string) => PlatformMcpSession | null;
 }
@@ -75,7 +85,15 @@ function toolResult(text: string, isError = false) {
   return { content: [{ type: "text", text }], ...(isError && { isError: true }) };
 }
 
-const TOOL_DEFINITIONS = [
+interface ToolDef {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  /** Opt-in capability group; absent = always available (default-on). */
+  group?: string;
+}
+
+const TOOL_DEFINITIONS: ToolDef[] = [
   // ─── Playbook tools ───
   {
     name: "playbook_create",
@@ -388,6 +406,97 @@ const TOOL_DEFINITIONS = [
       required: ["name", "body"],
     },
   },
+  {
+    name: "skill_list",
+    description: "List the skills in your library (uploaded + bundled).",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "skill_delete",
+    description: "Delete a skill from your library by id. Bundled (read-only) skills can't be deleted.",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+  },
+  // ─── Subagents ───
+  {
+    name: "subagent_list",
+    description: "List your subagent templates (specialized agents the main agent can delegate to).",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "subagent_create",
+    description: "Create a reusable subagent template with its own prompt, allowed tools, and model.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        description: { type: "string", description: "When to delegate to this subagent" },
+        prompt: { type: "string", description: "The subagent's system prompt" },
+        tools: { type: "array", items: { type: "string" }, description: "Allowed tool names (optional)" },
+        model: { type: "string", description: "Model override (optional)" },
+      },
+      required: ["name", "description", "prompt"],
+    },
+  },
+  {
+    name: "subagent_delete",
+    description: "Delete a subagent template by id.",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+  },
+  // ─── Knowledge documents (agent-level) ───
+  {
+    name: "knowledge_list",
+    description: "List the knowledge documents attached to the calling agent (mounted read-only at /knowledge in every chat).",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "knowledge_add",
+    description: "Add a text/markdown knowledge document to the calling agent's library. The doc is mounted read-only at /knowledge in future chats. Use to persist research/notes for reuse.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "File name, e.g. 'api-notes.md'" },
+        content: { type: "string", description: "UTF-8 text content" },
+      },
+      required: ["name", "content"],
+    },
+  },
+  {
+    name: "knowledge_delete",
+    description: "Delete a knowledge document by id from the calling agent.",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+  },
+  // ─── Lifecycle completion ───
+  {
+    name: "task_cancel",
+    description: "Cancel a queued or running task by id.",
+    inputSchema: { type: "object", properties: { task_id: { type: "string" } }, required: ["task_id"] },
+  },
+  {
+    name: "playbook_delete",
+    description: "Delete a playbook by id (stops its scheduling and removes it).",
+    inputSchema: { type: "object", properties: { playbook_id: { type: "string" } }, required: ["playbook_id"] },
+  },
+  {
+    name: "playbook_runs",
+    description: "List recent runs for a specific playbook.",
+    inputSchema: {
+      type: "object",
+      properties: { playbook_id: { type: "string" }, limit: { type: "number" } },
+      required: ["playbook_id"],
+    },
+  },
+  {
+    name: "playbook_run_cancel",
+    description: "Cancel an in-progress playbook run by run id.",
+    inputSchema: { type: "object", properties: { run_id: { type: "string" } }, required: ["run_id"] },
+  },
+  // ─── Gated: destructive workspace ops (opt-in via 'workspace_destructive') ───
+  {
+    name: "workspace_delete",
+    description: "Permanently delete a workspace by session_id: tears down the container and drops the conversation. Irreversible.",
+    inputSchema: { type: "object", properties: { session_id: { type: "string" } }, required: ["session_id"] },
+    group: "workspace_destructive",
+  },
 ];
 
 async function handleToolCall(
@@ -398,12 +507,19 @@ async function handleToolCall(
   workspaceService: WorkspaceService,
   profileService: ProfileService,
   skillService: SkillService,
+  subagentService: SubagentService,
+  documentService: DocumentService,
   eventLog: EventLog,
   session: PlatformMcpSession,
   toolName: string,
   args: Record<string, unknown>,
 ) {
   const { userId, profileId, orgId } = session;
+  // Audit a write to the calling agent's session transcript, so platform
+  // mutations the agent makes are visible/attributable in the event log.
+  const audit = (action: string, detail: Record<string, unknown>) => {
+    try { eventLog.append(session.sessionId, "platform_action", { action, ...detail }); } catch { /* non-fatal */ }
+  };
   // Coalesce null → undefined so service methods that take `orgId?: string`
   // treat OSS / pre-backfill rows as "no scoping". Drizzle's eq() rejects
   // null and the OSS path expects undefined.
@@ -953,6 +1069,134 @@ async function handleToolCall(
       );
     }
 
+    case "skill_list": {
+      const skills = await skillService.list(userId);
+      if (skills.length === 0) return toolResult("No skills.");
+      return toolResult(skills.map((s) => `${s.id} — ${s.name}${s.source === "filesystem" ? " [bundled]" : ""}: ${s.description}`).join("\n"));
+    }
+
+    case "skill_delete": {
+      const id = args.id as string;
+      if (!id) return toolResult("Missing required parameter: id", true);
+      const skill = await skillService.get(id);
+      if (!skill || (skill.source !== "filesystem" && (await skillService.list(userId)).every((s) => s.id !== id))) {
+        return toolResult("Skill not found", true);
+      }
+      const ok = await skillService.delete(id);
+      if (!ok) return toolResult("Skill not found or not deletable (bundled skills are read-only).", true);
+      audit("skill_delete", { id });
+      return toolResult(`Deleted skill ${id}.`);
+    }
+
+    case "subagent_list": {
+      const subs = await subagentService.list(userId);
+      if (subs.length === 0) return toolResult("No subagents.");
+      return toolResult(subs.map((s) => `${s.id} — ${s.name}: ${s.description}`).join("\n"));
+    }
+
+    case "subagent_create": {
+      const name = args.name as string;
+      const description = args.description as string;
+      const prompt = args.prompt as string;
+      if (!name || !description || !prompt) return toolResult("Missing required parameters: name, description, prompt", true);
+      const input: CreateSubagentInput = {
+        name,
+        description,
+        prompt,
+        tools: Array.isArray(args.tools) ? (args.tools as string[]) : undefined,
+        model: (args.model as string) || undefined,
+      };
+      const sub = await subagentService.create(input, userId);
+      audit("subagent_create", { id: sub.id, name: sub.name });
+      return toolResult(`Subagent created.\nID: ${sub.id}\nName: ${sub.name}`);
+    }
+
+    case "subagent_delete": {
+      const id = args.id as string;
+      if (!id) return toolResult("Missing required parameter: id", true);
+      const owned = (await subagentService.list(userId)).some((s) => s.id === id);
+      if (!owned) return toolResult("Subagent not found", true);
+      const ok = await subagentService.delete(id);
+      if (!ok) return toolResult("Subagent not found", true);
+      audit("subagent_delete", { id });
+      return toolResult(`Deleted subagent ${id}.`);
+    }
+
+    case "knowledge_list": {
+      const docs = await documentService.list(profileId);
+      if (docs.length === 0) return toolResult("No knowledge documents on this agent.");
+      return toolResult(docs.map((d) => `${d.id} — ${d.name} (${d.media_type}, ${d.size_bytes} bytes)`).join("\n"));
+    }
+
+    case "knowledge_add": {
+      const name = args.name as string;
+      const content = args.content as string;
+      if (!name || typeof content !== "string") return toolResult("Missing required parameters: name, content", true);
+      const doc = await documentService.upload(
+        { profile_id: profileId, name, media_type: "text/markdown", content_b64: Buffer.from(content, "utf-8").toString("base64") },
+        userId,
+      );
+      audit("knowledge_add", { id: doc.id, name: doc.name });
+      return toolResult(`Knowledge document added.\nID: ${doc.id}\nName: ${doc.name}\nAvailable at /knowledge in future chats.`);
+    }
+
+    case "knowledge_delete": {
+      const id = args.id as string;
+      if (!id) return toolResult("Missing required parameter: id", true);
+      const owned = (await documentService.list(profileId)).some((d) => d.id === id);
+      if (!owned) return toolResult("Document not found", true);
+      const ok = await documentService.delete(id);
+      if (!ok) return toolResult("Document not found", true);
+      audit("knowledge_delete", { id });
+      return toolResult(`Deleted knowledge document ${id}.`);
+    }
+
+    case "task_cancel": {
+      const taskId = args.task_id as string;
+      if (!taskId) return toolResult("Missing required parameter: task_id", true);
+      const task = await taskService.get(taskId);
+      if (!task || !task.profile_id || task.profile_id !== profileId) return toolResult("Task not found", true);
+      const ok = await taskService.cancel(taskId);
+      audit("task_cancel", { task_id: taskId });
+      return toolResult(ok ? `Cancelled task ${taskId}.` : `Task ${taskId} could not be cancelled (already finished?).`);
+    }
+
+    case "playbook_delete": {
+      const playbookId = args.playbook_id as string;
+      if (!playbookId) return toolResult("Missing required parameter: playbook_id", true);
+      const ok = await playbookService.delete(playbookId, userId, scopedOrgId);
+      if (!ok) return toolResult("Playbook not found", true);
+      audit("playbook_delete", { playbook_id: playbookId });
+      return toolResult(`Deleted playbook ${playbookId}.`);
+    }
+
+    case "playbook_runs": {
+      const playbookId = args.playbook_id as string;
+      if (!playbookId) return toolResult("Missing required parameter: playbook_id", true);
+      const pb = await playbookService.get(playbookId, { userId, orgId: scopedOrgId });
+      if (!pb) return toolResult("Playbook not found", true);
+      const limit = clampInt(args.limit, 20, 1, 100);
+      const runs = await playbookService.listRuns(playbookId, limit);
+      if (runs.length === 0) return toolResult("No runs for this playbook.");
+      return toolResult(runs.map((r) => `${r.id} — ${r.status} (${r.started_at})`).join("\n"));
+    }
+
+    case "playbook_run_cancel": {
+      const runId = args.run_id as string;
+      if (!runId) return toolResult("Missing required parameter: run_id", true);
+      const ok = chainRunner.cancelRun(runId);
+      audit("playbook_run_cancel", { run_id: runId });
+      return toolResult(ok ? `Requested cancellation of run ${runId}.` : `Run ${runId} is not active.`);
+    }
+
+    case "workspace_delete": {
+      const r = requireOwnedWorkspace(args);
+      if ("error" in r) return r.error;
+      const ok = await workspaceService.delete(r.workspace.session_id, { orgId: scopedOrgId });
+      audit("workspace_delete", { session_id: r.workspace.session_id });
+      return toolResult(ok ? `Deleted workspace ${r.workspace.session_id}.` : "Workspace not found", !ok);
+    }
+
     default:
       return toolResult(`Unknown tool: ${toolName}`, true);
   }
@@ -960,7 +1204,7 @@ async function handleToolCall(
 
 export const platformMcpPlugin = fp(
   async (server: FastifyInstance, opts: PlatformMcpOptions) => {
-    const { playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, eventLog, resolveSession } = opts;
+    const { playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, subagentService, documentService, eventLog, resolveSession } = opts;
 
     server.post("/mcp/platform", async (request, reply) => {
       const body = request.body as JsonRpcRequest;
@@ -995,8 +1239,14 @@ export const platformMcpPlugin = fp(
         case "notifications/initialized":
           return reply.send(rpcResult(id, {}));
 
-        case "tools/list":
-          return reply.send(rpcResult(id, { tools: TOOL_DEFINITIONS }));
+        case "tools/list": {
+          // Hide gated tools whose capability group the agent hasn't opted into.
+          // The `group` field is internal metadata — strip it from the wire.
+          const visible = TOOL_DEFINITIONS
+            .filter((t) => !t.group || session.capabilities.includes(t.group))
+            .map(({ group: _group, ...rest }) => rest);
+          return reply.send(rpcResult(id, { tools: visible }));
+        }
 
         case "tools/call": {
           const params = body.params as { name?: string; arguments?: Record<string, unknown> } | undefined;
@@ -1005,7 +1255,13 @@ export const platformMcpPlugin = fp(
           }
 
           try {
-            const result = await handleToolCall(playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, eventLog, session, params.name, params.arguments ?? {});
+            // Gate: a tool with a `group` is only callable when the agent has
+            // opted into that capability group. Mirrors the tools/list filter.
+            const def = TOOL_DEFINITIONS.find((t) => t.name === params.name);
+            if (def?.group && !session.capabilities.includes(def.group)) {
+              return reply.send(rpcResult(id, toolResult(`Tool "${params.name}" is not enabled for this agent. Enable the "${def.group}" capability in the agent's settings.`, true)));
+            }
+            const result = await handleToolCall(playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, subagentService, documentService, eventLog, session, params.name, params.arguments ?? {});
             return reply.send(rpcResult(id, result));
           } catch (err) {
             const message = err instanceof Error ? err.message : "Unknown error";

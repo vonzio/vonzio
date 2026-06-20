@@ -49,6 +49,17 @@ import { ChecklistRows } from "../components/ChecklistRows.js";
 // Tab identifiers — single source of truth so the hash gate, the Tabs
 // component, and the JSX render guards can't drift.
 const TAB_VALUES = ["overview", "tools", "extensions", "network"] as const;
+
+// Opt-in platform-MCP capability groups. Mirror of PLATFORM_CAPABILITY_GROUPS in
+// @vonzio/shared (the dashboard doesn't depend on shared) — keep in sync; the
+// `group` strings must match the gated tool defs in platform-mcp.ts.
+const PLATFORM_CAPABILITY_GROUPS: { group: string; label: string; description: string }[] = [
+  {
+    group: "workspace_destructive",
+    label: "Delete workspaces",
+    description: "Let this agent permanently delete workspaces (tears down the container and drops the conversation).",
+  },
+];
 type TabValue = (typeof TAB_VALUES)[number];
 
 const slugifyName = (value: string): string => slugify(value, 48);
@@ -99,6 +110,7 @@ export function EditAgent() {
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
+  const [platformCaps, setPlatformCaps] = useState<string[]>([]);
   const [apiKeyId, setApiKeyId] = useState("");
   const [gitProviderIds, setGitProviderIds] = useState<string[]>([]);
   const [containerImage, setContainerImage] = useState("");
@@ -237,6 +249,7 @@ export function EditAgent() {
         setTools((full.default_tools as string[]) ?? []);
         setAgentIds((full.agent_ids as string[]) ?? []);
         setSkillIds((full.skill_ids as string[]) ?? []);
+        setPlatformCaps((full.platform_capabilities as string[]) ?? []);
         setGitProviderIds((full.git_provider_ids as string[]) ?? (full.git_provider_id ? [full.git_provider_id as string] : []));
         setProfileModel((full.model as string) ?? "");
         setEffort((full.effort as string) ?? "");
@@ -331,7 +344,7 @@ export function EditAgent() {
           ? [...new Set(["*", ...resolvedEgressDomains()])]
           : resolvedEgressDomains(),
         claude_md: claudeMd.trim() || "", mcp_servers: mcpServers,
-        agent_ids: agentIds, skill_ids: skillIds, git_provider_ids: gitProviderIds,
+        agent_ids: agentIds, skill_ids: skillIds, platform_capabilities: platformCaps, git_provider_ids: gitProviderIds,
         container_image: containerImage || undefined,
         setup_commands: setupCommands.trim() ? setupCommands.split("\n").map((s) => s.trim()).filter(Boolean) : [],
         persistent_sessions: persistentSessions,
@@ -713,6 +726,26 @@ export function EditAgent() {
                       />
                     </Field>
                   )}
+                </div>
+              </Panel>
+
+              <Panel title="Platform capabilities">
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <p style={{ fontSize: 12, color: "var(--vz-muted)", margin: 0 }}>
+                    Powerful/destructive platform tools this agent may call via the built-in vonzio MCP. Off by default — enable only what you trust this agent to do autonomously.
+                  </p>
+                  {PLATFORM_CAPABILITY_GROUPS.map((cap) => (
+                    <Checkbox
+                      key={cap.group}
+                      checked={platformCaps.includes(cap.group)}
+                      onChange={(on) =>
+                        setPlatformCaps((prev) => on ? [...new Set([...prev, cap.group])] : prev.filter((g) => g !== cap.group))
+                      }
+                    >
+                      <span style={{ fontWeight: 500 }}>{cap.label}</span>
+                      <span style={{ display: "block", fontSize: 11.5, color: "var(--vz-muted)" }}>{cap.description}</span>
+                    </Checkbox>
+                  ))}
                 </div>
               </Panel>
 

@@ -25,6 +25,7 @@ export interface CreateProfileInput {
   mcp_servers?: McpServerConfig[];
   agent_ids?: string[];
   skill_ids?: string[];
+  platform_capabilities?: string[];
   claude_md?: string;
   git_provider_id?: string; // deprecated — single provider
   git_provider_ids?: string[];
@@ -142,6 +143,7 @@ export class ProfileService {
       mcp_servers: this.encryptMcpServers(input.mcp_servers ?? []),
       agent_ids: input.agent_ids ?? [],
       skill_ids: input.skill_ids ?? [],
+      platform_capabilities: input.platform_capabilities ?? [],
       claude_md: input.claude_md ?? null,
       git_provider_id: input.git_provider_id ?? (input.git_provider_ids?.[0] ?? null),
       git_provider_ids: input.git_provider_ids ?? (input.git_provider_id ? [input.git_provider_id] : []),
@@ -294,6 +296,7 @@ export class ProfileService {
     if (input.mcp_servers !== undefined) updates.mcp_servers = this.encryptMcpServers(input.mcp_servers, existing[0].mcp_servers);
     if (input.agent_ids !== undefined) updates.agent_ids = input.agent_ids;
     if (input.skill_ids !== undefined) updates.skill_ids = input.skill_ids;
+    if (input.platform_capabilities !== undefined) updates.platform_capabilities = input.platform_capabilities;
     if (input.claude_md !== undefined) updates.claude_md = input.claude_md || null;
     if (input.git_provider_ids !== undefined) {
       updates.git_provider_ids = input.git_provider_ids;
@@ -414,6 +417,7 @@ export class ProfileService {
       mcp_servers: redact ? this.redactMcpServers(row.mcp_servers) : this.decryptMcpServers(row.mcp_servers),
       agent_ids: row.agent_ids,
       skill_ids: row.skill_ids,
+      platform_capabilities: row.platform_capabilities ?? [],
       claude_md: row.claude_md ?? undefined,
       git_provider_id: row.git_provider_id ?? undefined,
       git_provider_ids: row.git_provider_ids ?? [],

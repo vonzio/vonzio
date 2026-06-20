@@ -140,6 +140,10 @@ export const profiles = pgTable("profiles", {
     .$type<string[]>()
     .notNull()
     .default([]),
+  platform_capabilities: jsonb("platform_capabilities")
+    .$type<string[]>()
+    .notNull()
+    .default([]),
   model: text("model"),
   effort: text("effort"),
   container_image: text("container_image"),

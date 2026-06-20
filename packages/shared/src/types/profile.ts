@@ -155,6 +155,11 @@ export interface Profile {
   mcp_servers: McpServerConfig[];
   agent_ids: string[];
   skill_ids: string[];
+  /** Opt-in platform-MCP capability groups this agent may use beyond the
+   *  default-on set. Gated/sensitive tools (e.g. deleting workspaces) only
+   *  appear in the agent's platform toolset when their group is listed here.
+   *  See PLATFORM_CAPABILITY_GROUPS. */
+  platform_capabilities: string[];
   claude_md?: string;
   git_provider_id?: string; // deprecated
   git_provider_ids: string[];
@@ -186,6 +191,28 @@ export interface Profile {
   created_at: string;
   last_used_at?: string;
 }
+
+/**
+ * Catalog of OPT-IN platform-MCP capability groups (Bucket B). The default-on
+ * tools (introspection + the originally-shipped writes) carry no group and are
+ * always available; only the powerful/destructive groups below are gated behind
+ * an explicit per-agent opt-in stored in `profile.platform_capabilities`.
+ * Single source of truth shared by the server (tool filtering) and the dashboard
+ * (the per-agent toggle UI). The `group` strings must match the tool defs.
+ */
+export interface PlatformCapabilityGroup {
+  group: string;
+  label: string;
+  description: string;
+}
+
+export const PLATFORM_CAPABILITY_GROUPS: readonly PlatformCapabilityGroup[] = [
+  {
+    group: "workspace_destructive",
+    label: "Delete workspaces",
+    description: "Let this agent permanently delete workspaces (tears down the container and drops the conversation).",
+  },
+] as const;
 
 /** Profile joined with its API key credentials — used by orchestrator only */
 export interface ResolvedProfile extends Profile {

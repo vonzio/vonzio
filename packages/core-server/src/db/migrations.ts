@@ -724,6 +724,13 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE skills ADD COLUMN IF NOT EXISTS manifest JSONB`);
     },
   },
+  {
+    version: 30,
+    description: "Platform MCP capability gating: profiles.platform_capabilities (opt-in groups for gated agent-facing platform tools).",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS platform_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    },
+  },
 ];
 
 /**
