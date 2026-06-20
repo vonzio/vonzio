@@ -37,13 +37,16 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   // Load models across all of the user's keys. Degrade to a hardcoded set
-  // under the profile's key when the endpoint is unreachable or empty.
+  // ONLY when the profile already has a key attached and the endpoint is
+  // unreachable/empty (transient) — so a keyed user isn't stranded. A profile
+  // with NO key attached shows the honest empty state instead of a fallback
+  // list that would falsely imply platform models are available.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const fallback: KeyModelGroup[] = [
-      { key_id: profileApiKeyId ?? "", key_name: "Models", provider: "anthropic", models: FALLBACK_MODELS },
-    ];
+    const fallback: KeyModelGroup[] = profileApiKeyId
+      ? [{ key_id: profileApiKeyId, key_name: "Models", provider: "anthropic", models: FALLBACK_MODELS }]
+      : [];
     fetchAllUserModels()
       .then((res) => {
         if (cancelled) return;
