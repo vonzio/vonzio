@@ -274,6 +274,8 @@ export interface ProfileSummary {
   /** Profile default for the composer's "Run until done" (goal-loop) toggle. */
   auto_continue?: boolean;
   user_id?: string | null;
+  /** The user's default agent — preselected in the new-chat picker. */
+  is_default?: boolean;
   /** SaaS-only — true when this row was materialized from an
    *  org_profile (team-shared agent). Read-only for members. */
   team_owned?: boolean;
@@ -283,6 +285,17 @@ export interface ProfileSummary {
 
 export function fetchProfiles(): Promise<ProfileSummary[]> {
   return request("/profiles");
+}
+
+/** New-chat starter prompts, served from config/prompt-suggestions.json. */
+export interface PromptSuggestion { id: string; label: string; icon?: string; prompt: string }
+export function fetchPromptSuggestions(): Promise<{ suggestions: PromptSuggestion[] }> {
+  return request("/prompt-suggestions");
+}
+
+/** Mark a profile as the user's default agent (clears the flag on the others). */
+export function setDefaultProfile(id: string): Promise<{ ok: boolean; id: string }> {
+  return request(`/profiles/${id}/default`, { method: "POST" });
 }
 
 export function createProfile(body: Record<string, unknown>): Promise<ProfileSummary> {
@@ -392,6 +405,50 @@ export function createUserSkill(body: Record<string, unknown>): Promise<unknown>
 
 export function deleteUserSkill(id: string): Promise<{ status: string }> {
   return request(`/skills/${id}`, { method: "DELETE" });
+}
+
+/**
+ * Upload a skill from a file: a .zip bundle (SKILL.md + scripts/assets) or a
+ * lone .md / SKILL.md (saved as a single-file skill). Dispatches by extension.
+ */
+export async function uploadSkillFile(file: File): Promise<Record<string, unknown>> {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".zip")) return uploadSkillBundle(file);
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    const text = await file.text();
+    const { name, description } = parseSkillFrontmatter(text);
+    // Frontmatter name wins; else the filename (minus extension), unless it's
+    // literally SKILL.md (a folderless export) in which case fall back to "skill".
+    const base = file.name.replace(/\.(md|markdown)$/i, "");
+    const resolvedName = name || (base.toLowerCase() === "skill" ? "skill" : base);
+    return createUserSkill({ name: resolvedName, description, content: text }) as Promise<Record<string, unknown>>;
+  }
+  throw new Error("Unsupported file — upload a .zip bundle or a .md skill file.");
+}
+
+/** Pull `name`/`description` out of a SKILL.md YAML frontmatter block. */
+function parseSkillFrontmatter(text: string): { name: string; description: string } {
+  const fm = text.match(/^---\n([\s\S]*?)\n---/);
+  const grab = (key: string) => {
+    if (!fm) return "";
+    const m = fm[1].match(new RegExp(`^${key}:\\s*["']?(.+?)["']?\\s*$`, "m"));
+    return m ? m[1].trim() : "";
+  };
+  return { name: grab("name"), description: grab("description") };
+}
+
+/** Upload a skill bundle (.zip with SKILL.md + scripts/assets) as base64 JSON. */
+export async function uploadSkillBundle(file: File): Promise<Record<string, unknown>> {
+  const buf = await file.arrayBuffer();
+  // Chunked base64 — avoids a call-stack overflow on large (multi-MB) bundles.
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  const archive_b64 = btoa(binary);
+  return request("/skills/upload", { method: "POST", body: JSON.stringify({ archive_b64 }) }) as Promise<Record<string, unknown>>;
 }
 
 export function fetchUserAgents(): Promise<Record<string, unknown>[]> {

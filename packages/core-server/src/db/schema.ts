@@ -140,6 +140,10 @@ export const profiles = pgTable("profiles", {
     .$type<string[]>()
     .notNull()
     .default([]),
+  platform_capabilities: jsonb("platform_capabilities")
+    .$type<string[]>()
+    .notNull()
+    .default([]),
   model: text("model"),
   effort: text("effort"),
   container_image: text("container_image"),
@@ -156,6 +160,9 @@ export const profiles = pgTable("profiles", {
   auto_continue: boolean("auto_continue").notNull().default(false),
   max_continuations: integer("max_continuations").notNull().default(5),
   continuation_budget_usd: doublePrecision("continuation_budget_usd"),
+  // The user's default agent — preselected in the new-chat picker and used for
+  // new conversations. At most one per user (enforced in ProfileService).
+  is_default: boolean("is_default").notNull().default(false),
   created_at: text("created_at").notNull(),
   last_used_at: text("last_used_at"),
 });
@@ -233,8 +240,16 @@ export const skills = pgTable("skills", {
   user_id: text("user_id"),
   name: text("name").notNull(),
   description: text("description").notNull(),
+  // SKILL.md body — always kept for listing/preview, even for bundle skills.
   content: text("content").notNull(),
   source: text("source", { enum: ["filesystem", "uploaded"] }).notNull(),
+  // Bundle skills (SKILL.md + scripts/assets) store the zip via SkillStorage and
+  // record its key here. NULL = single-file skill (content is the whole skill).
+  archive_key: text("archive_key"),
+  // Total uncompressed size of the bundle, and the re-rooted file list (for the
+  // dashboard file-tree preview). NULL for single-file skills.
+  size_bytes: integer("size_bytes"),
+  manifest: jsonb("manifest").$type<string[]>(),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });

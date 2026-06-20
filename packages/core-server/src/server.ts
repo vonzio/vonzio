@@ -37,6 +37,7 @@ import { ApiKeyService } from "./services/api-key-service.js";
 import { ModelListService } from "./services/model-list-service.js";
 import { ToolFileService } from "./services/tool-file-service.js";
 import { SkillService } from "./services/skill-service.js";
+import { FsSkillStorage } from "./services/skill-storage.js";
 import { DocumentService } from "./services/document-service.js";
 import { SubagentService } from "./services/subagent-service.js";
 import { GitProviderService } from "./services/git-provider-service.js";
@@ -206,8 +207,15 @@ export async function buildServer(deps: ServerDeps) {
   // Drop a key's cached model list when its credential or base_url changes,
   // so editing an OpenAI endpoint doesn't serve the old provider's models.
   apiKeyService.setKeyChangeListener((id) => modelListService.invalidate(id));
+  // Let ProfileService auto-pick a model for ollama/openai keys when an agent
+  // is created/attached without one (wired here to avoid a construction cycle:
+  // modelListService depends on profileService).
+  profileService.setDefaultModelResolver(async (apiKeyId) => {
+    const r = await modelListService.listForApiKey(apiKeyId);
+    return r.ok ? (r.models[0]?.id ?? null) : null;
+  });
   const toolFileService = new ToolFileService(db, config.TOOLS_DIR);
-  const skillService = new SkillService(db, config.SKILLS_DIR);
+  const skillService = new SkillService(db, config.SKILLS_DIR, new FsSkillStorage(config.SKILLS_DATA_DIR));
   const subagentService = new SubagentService(db);
   const documentService = new DocumentService(
     db,
@@ -760,11 +768,20 @@ export async function buildServer(deps: ServerDeps) {
     integrationService,
     workspaceService,
     profileService,
+    skillService,
+    subagentService,
+    documentService,
     eventLog,
     resolveSession: (token: string) => {
       const session = orchestrator.resolvePlatformToken(token);
       return session
-        ? { userId: session.userId, profileId: session.profileId, orgId: session.orgId }
+        ? {
+            userId: session.userId,
+            profileId: session.profileId,
+            orgId: session.orgId,
+            sessionId: session.sessionId,
+            capabilities: session.capabilities,
+          }
         : null;
     },
   });

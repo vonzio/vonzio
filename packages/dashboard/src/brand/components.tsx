@@ -87,10 +87,22 @@ export function Wordmark({ size = 28, color }: { size?: number; color?: string }
   return (
     <svg height={size} viewBox="0 0 240 64" aria-label="vonzio" role="img">
       <text x="0" y="48" fontFamily="'DM Sans', system-ui, sans-serif" fontSize="56" fontWeight="700" letterSpacing="-1.5">
-        <tspan fill="#FF5722">v</tspan>
-        <tspan fill={ink}>onzio</tspan>
+        <tspan fill={ink}>v</tspan>
+        <tspan fill="#FF5722">o</tspan>
+        <tspan fill={ink}>nzio</tspan>
       </text>
     </svg>
+  );
+}
+
+/** Inline text wordmark — "vonzio" with the first "o" in sodium. The canonical
+ *  brand treatment for running text (chat header, CLI, etc.). Inherits font size
+ *  from its parent; pass `style` to set weight/color of the non-accent letters. */
+export function WordmarkText({ style }: { style?: CSSProperties }) {
+  return (
+    <span style={{ color: "var(--vz-ink)", ...style }}>
+      v<span style={{ color: "var(--vz-sodium)" }}>o</span>nzio
+    </span>
   );
 }
 

@@ -3,7 +3,7 @@
  * Extracted from Playground.tsx to avoid duplication.
  */
 import { useState, useEffect, useMemo, useRef } from "react";
-import { ChevronDown, ChevronRight, Loader2, Copy, Check, Trash2, FileText, FilePlus, FileEdit, Eye, Search, FolderSearch, Wrench, GitBranch, Download, Terminal, MessageCircleQuestion, Maximize2, Minimize2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Copy, Check, Trash2, FileText, FilePlus, FileEdit, Search, FolderSearch, Wrench, GitBranch, Download, Terminal, MessageCircleQuestion, Maximize2, Minimize2, Globe, Image as ImageIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -585,16 +585,17 @@ function TableHeader({ headers, sortCol, sortAsc, onSort, className }: {
   className?: string;
 }) {
   return (
-    <thead className={`sticky top-0 bg-gray-50 z-10 ${className ?? ""}`}>
+    <thead className={`sticky top-0 z-10 ${className ?? ""}`} style={{ background: "var(--vz-mute)" }}>
       <tr>
         {headers.map((h, i) => (
           <th
             key={i}
             onClick={() => onSort(i)}
-            className="px-3 py-1.5 text-left text-gray-500 font-medium cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap border-b border-gray-200"
+            className="px-3 py-1.5 text-left font-medium cursor-pointer select-none whitespace-nowrap"
+            style={{ color: "var(--vz-muted)", borderBottom: "1px solid var(--vz-border)" }}
           >
             {h}
-            {sortCol === i && <span className="ml-1 text-gray-400">{sortAsc ? "↑" : "↓"}</span>}
+            {sortCol === i && <span className="ml-1" style={{ color: "var(--vz-muted-2)" }}>{sortAsc ? "↑" : "↓"}</span>}
           </th>
         ))}
       </tr>
@@ -713,8 +714,8 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
 
   return (
     <div>
-      <div className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 border-b border-gray-100">
-        <span className="text-[10px] text-gray-400 mr-auto">{infoText}</span>
+      <div className="flex items-center gap-1.5 px-3 py-1" style={{ background: "var(--vz-mute)", borderBottom: "1px solid var(--vz-border)" }}>
+        <span className="text-[10px] mr-auto" style={{ color: "var(--vz-muted-2)" }}>{infoText}</span>
         {toolButtons()}
         <button onClick={() => setFullscreen(true)} className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer" title="Enlarge">
           <Maximize2 className="w-3 h-3" />
@@ -725,9 +726,9 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
           <TableHeader headers={table.headers} sortCol={sortCol} sortAsc={sortAsc} onSort={handleSort} />
           <tbody>
             {visible.map((row, i) => (
-              <tr key={i} className="border-t border-gray-100 hover:bg-blue-50/30">
+              <tr key={i} style={{ borderTop: "1px solid var(--vz-border)" }}>
                 {row.map((cell, j) => (
-                  <td key={j} className="px-3 py-1 text-gray-700 whitespace-nowrap">{cell}</td>
+                  <td key={j} className="px-3 py-1 whitespace-nowrap" style={{ color: "var(--vz-ink-2)" }}>{cell}</td>
                 ))}
               </tr>
             ))}
@@ -737,7 +738,8 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
       {truncated && (
         <button
           onClick={() => setShowAll(true)}
-          className="w-full py-1.5 text-[10px] text-blue-500 hover:text-blue-700 hover:bg-blue-50 cursor-pointer transition-colors border-t border-gray-100"
+          className="w-full py-1.5 text-[10px] cursor-pointer transition-colors"
+          style={{ color: "var(--vz-sodium)", borderTop: "1px solid var(--vz-border)" }}
         >
           Show all {table.rows.length} rows (showing first {PAGE_SIZE_INLINE})
         </button>
@@ -759,9 +761,9 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
                 <TableHeader headers={table.headers} sortCol={sortCol} sortAsc={sortAsc} onSort={handleSort} />
                 <tbody>
                   {fullVisible.map((row, i) => (
-                    <tr key={i} className="border-t border-gray-100 hover:bg-blue-50/30">
+                    <tr key={i} style={{ borderTop: "1px solid var(--vz-border)" }}>
                       {row.map((cell, j) => (
-                        <td key={j} className="px-3 py-2 text-gray-700 whitespace-nowrap">{cell}</td>
+                        <td key={j} className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--vz-ink-2)" }}>{cell}</td>
                       ))}
                     </tr>
                   ))}
@@ -778,21 +780,24 @@ export function TableView({ table, title }: { table: ParsedTable; title?: string
 
 /** Toggle bar for raw/table view, shown when CSV is detected */
 function RawTableToggle({ view, onToggle }: { view: "raw" | "table"; onToggle: () => void }) {
+  const tab = (active: boolean) => ({
+    background: active ? "var(--vz-card)" : "transparent",
+    color: active ? "var(--vz-ink)" : "var(--vz-muted)",
+    fontWeight: active ? 500 : 400,
+  });
   return (
-    <div className="flex rounded-md border border-gray-200 overflow-hidden">
+    <div className="flex rounded-md overflow-hidden" style={{ border: "1px solid var(--vz-border)" }}>
       <button
         onClick={view === "table" ? onToggle : undefined}
-        className={`px-2 py-0.5 text-[10px] cursor-pointer transition-colors ${
-          view === "raw" ? "bg-white text-gray-700 font-medium" : "bg-gray-100 text-gray-400 hover:text-gray-600"
-        }`}
+        className="px-2 py-0.5 text-[10px] cursor-pointer transition-colors"
+        style={tab(view === "raw")}
       >
         Raw
       </button>
       <button
         onClick={view === "raw" ? onToggle : undefined}
-        className={`px-2 py-0.5 text-[10px] cursor-pointer transition-colors ${
-          view === "table" ? "bg-white text-gray-700 font-medium" : "bg-gray-100 text-gray-400 hover:text-gray-600"
-        }`}
+        className="px-2 py-0.5 text-[10px] cursor-pointer transition-colors"
+        style={tab(view === "table")}
       >
         Table
       </button>
@@ -829,7 +834,7 @@ function BashRenderer({ input, output }: { input?: Record<string, unknown>; outp
       {command && (
         <div
           className="px-3 py-1.5 font-mono overflow-x-auto"
-          style={{ background: "var(--vz-graphite)", color: "var(--vz-ink-2)" }}
+          style={{ background: "var(--vz-mute)", color: "var(--vz-ink)", borderBottom: "1px solid var(--vz-border)" }}
         >
           <span className="select-none" style={{ color: "var(--vz-sodium)" }}>$ </span>{displayCmd}
         </div>
@@ -875,9 +880,30 @@ function BashRenderer({ input, output }: { input?: Record<string, unknown>; outp
   );
 }
 
+/** Detect an image-file Read result and pull out a usable data URL. */
+function readImageData(output?: string, fileName?: string): string | null {
+  if (!output) return null;
+  try {
+    const parsed = JSON.parse(output);
+    if (parsed?.type !== "image") return null;
+    const b64 = parsed?.file?.base64 ?? parsed?.base64;
+    if (typeof b64 !== "string" || !b64) return null;
+    if (b64.startsWith("data:")) return b64;
+    const ext = (fileName?.split(".").pop() ?? "").toLowerCase();
+    const mime = ext === "png" ? "image/png"
+      : ext === "gif" ? "image/gif"
+      : ext === "webp" ? "image/webp"
+      : ext === "svg" ? "image/svg+xml"
+      : "image/jpeg";
+    return `data:${mime};base64,${b64}`;
+  } catch { return null; }
+}
+
 function ReadRenderer({ input, output }: { input?: Record<string, unknown>; output?: string }) {
   const filePath = (input?.file_path ?? "") as string;
   const fileName = filePath.split("/").pop() ?? filePath;
+
+  const imageData = useMemo(() => readImageData(output, fileName), [output, fileName]);
 
   let content = output ?? "";
   try {
@@ -888,6 +914,28 @@ function ReadRenderer({ input, output }: { input?: Record<string, unknown>; outp
       content = parsed.content;
     }
   } catch { /* use raw */ }
+
+  if (imageData) {
+    return (
+      <div>
+        <div
+          className="flex items-center gap-2 px-3 py-1.5"
+          style={{ background: "var(--vz-mute)", borderBottom: "1px solid var(--vz-border)" }}
+        >
+          <ImageIcon className="w-3 h-3" style={{ color: "var(--vz-muted-2)" }} />
+          <span className="font-mono" style={{ color: "var(--vz-ink)" }}>{fileName}</span>
+          <span className="font-mono text-[10px] truncate" style={{ color: "var(--vz-muted-2)" }}>{filePath}</span>
+        </div>
+        <div className="p-3" style={{ background: "var(--vz-mute)" }}>
+          <img
+            src={imageData}
+            alt={fileName}
+            style={{ maxWidth: "100%", maxHeight: 360, borderRadius: "var(--vz-radius-sm)", border: "1px solid var(--vz-border)" }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   const isCSVFile = /\.(csv|tsv)$/i.test(fileName);
   const table = useMemo(() => isCSVFile ? detectCSV(content) : null, [content, isCSVFile]);
@@ -916,6 +964,61 @@ function ReadRenderer({ input, output }: { input?: Record<string, unknown>; outp
             {content.length > 800 ? content.slice(0, 800) + `\n... (${content.length} chars)` : content}
           </pre>
         )
+      )}
+    </div>
+  );
+}
+
+// ─── Web Search / Fetch Renderer ─────────────────────────────────────
+
+function WebSearchRenderer({ input, output }: { input?: Record<string, unknown>; output?: string }) {
+  const query = (input?.query ?? input?.url ?? "") as string;
+  let results: string[] = [];
+  let durationSeconds: number | undefined;
+  if (output) {
+    try {
+      const parsed = JSON.parse(output);
+      const raw = parsed?.results ?? parsed?.content;
+      if (Array.isArray(raw)) {
+        results = raw.map((r) => typeof r === "string" ? r : (r?.title ?? r?.text ?? r?.url ?? JSON.stringify(r)));
+      } else if (typeof raw === "string") {
+        results = [raw];
+      }
+      if (typeof parsed?.durationSeconds === "number") durationSeconds = parsed.durationSeconds;
+    } catch { /* fall back to empty */ }
+  }
+
+  return (
+    <div>
+      {query && (
+        <div
+          className="flex items-center gap-2 px-3 py-1.5"
+          style={{ background: "var(--vz-mute)", borderBottom: "1px solid var(--vz-border)" }}
+        >
+          <Search className="w-3 h-3 shrink-0" style={{ color: "var(--vz-muted-2)" }} />
+          <span className="font-mono truncate" style={{ color: "var(--vz-ink)" }}>{query}</span>
+          {typeof durationSeconds === "number" && (
+            <span className="ml-auto font-mono text-[10px] shrink-0" style={{ color: "var(--vz-muted-2)" }}>
+              {durationSeconds.toFixed(1)}s
+            </span>
+          )}
+        </div>
+      )}
+      {results.length > 0 ? (
+        <ol style={{ margin: 0, padding: "6px 0" }}>
+          {results.map((r, i) => (
+            <li
+              key={i}
+              className="flex gap-2 px-3 py-1"
+              style={{ listStyle: "none", color: "var(--vz-ink-2)", fontSize: 12 }}
+            >
+              <span className="font-mono shrink-0" style={{ color: "var(--vz-muted-2)" }}>{i + 1}.</span>
+              <span>{r}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="px-3 py-2" style={{ color: "var(--vz-muted)", fontSize: 12 }}>No results.</div>
       )}
     </div>
   );
@@ -1189,8 +1292,17 @@ function writeAdapter(props: ToolRendererProps) {
   if (props.output) {
     try { parsedOutput = JSON.parse(props.output); } catch { /* raw text */ }
   }
-  if (!parsedOutput) return <DefaultRenderer input={props.input} output={props.output} />;
-  return <WriteRenderer output={parsedOutput} containerId={props.containerId} />;
+  // Fall back to the tool input when output is missing or non-JSON — the
+  // input already carries file_path + content, enough for a clean render.
+  const out = parsedOutput ?? (props.input?.file_path
+    ? { type: "create", filePath: props.input.file_path, content: props.input.content }
+    : null);
+  if (!out) return <DefaultRenderer input={props.input} output={props.output} />;
+  return <WriteRenderer output={out} containerId={props.containerId} />;
+}
+
+function webSearchAdapter(props: ToolRendererProps) {
+  return <WebSearchRenderer input={props.input} output={props.output} />;
 }
 
 function bashAdapter(props: ToolRendererProps) {
@@ -1226,6 +1338,7 @@ const TOOL_RENDERERS: Record<string, ToolRendererConfig> = {
   Write: {
     component: writeAdapter,
     summary: (input) => (input?.file_path as string)?.split("/").pop() ?? null,
+    autoExpand: true,
   },
   Bash: {
     component: bashAdapter,
@@ -1239,6 +1352,8 @@ const TOOL_RENDERERS: Record<string, ToolRendererConfig> = {
   Read: {
     component: readAdapter,
     summary: (input) => (input?.file_path as string)?.split("/").pop() ?? null,
+    // Collapse text reads; auto-open image reads (the thumbnail is the point).
+    autoExpand: (_input, output) => !!readImageData(output, undefined),
   },
   Glob: {
     component: defaultAdapter,
@@ -1257,6 +1372,14 @@ const TOOL_RENDERERS: Record<string, ToolRendererConfig> = {
     component: csvTableAdapter,
     summary: (input) => (input?.title as string) ?? "table",
     autoExpand: true,
+  },
+  WebSearch: {
+    component: webSearchAdapter,
+    summary: (input) => (input?.query as string) ?? null,
+  },
+  WebFetch: {
+    component: webSearchAdapter,
+    summary: (input) => (input?.url as string) ?? (input?.query as string) ?? null,
   },
   TodoWrite: { component: defaultAdapter, hidden: true },
   AskUserQuestion: { component: defaultAdapter, hidden: true },
@@ -1280,7 +1403,7 @@ function toolIcon(tool: string): React.ComponentType<{ size?: number; className?
     case "Glob": return FolderSearch;
     case "Mermaid": return GitBranch;
     case "WebFetch":
-    case "WebSearch": return Eye;
+    case "WebSearch": return Globe;
     default: return Wrench;
   }
 }

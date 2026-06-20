@@ -213,13 +213,13 @@ OAuth integrations (GitHub, Google, Slack, etc.) require their client id/secret 
 
 ### Customizing the system prompt and tools
 
-The default agent **system prompt** (`config/system-prompt.md`) and the **example tool** (`tools/example-weather.js`) are baked into the server image, so a pull-based install runs without them on disk. To customize without rebuilding, drop your own copies next to the compose files and bind-mount them over the baked-in defaults — add this to a small override file (e.g. `docker/docker-compose.override.yml`):
+The default agent **system prompt** (`config/vonzio.md`) and the **example tool** (`tools/example-weather.js`) are baked into the server image, so a pull-based install runs without them on disk. (The legacy name `config/system-prompt.md` still works as a fallback.) To customize without rebuilding, drop your own copies next to the compose files and bind-mount them over the baked-in defaults — add this to a small override file (e.g. `docker/docker-compose.override.yml`):
 
 ```yaml
 services:
   server:
     volumes:
-      - ./config:/app/config   # your system-prompt.md
+      - ./config:/app/config   # your vonzio.md
       - ./tools:/app/tools      # your tool .js files (TOOLS_DIR=/app/tools)
 ```
 

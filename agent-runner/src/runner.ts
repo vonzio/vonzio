@@ -107,8 +107,11 @@ export async function runTask(payload: TaskPayload): Promise<void> {
     }
   }
 
-  // Always load project settings (CLAUDE.md, skills, hooks from /workspace/.claude/)
-  options.settingSources = ["project"];
+  // Load project settings (CLAUDE.md, hooks from /workspace/.claude/) AND user
+  // settings (~/.claude/) so personal-scope skills mounted at
+  // ~/.claude/skills/<name>/ are discovered — that's the conventional path
+  // real-world skills reference (~/.claude/skills/<name>/scripts/...).
+  options.settingSources = ["user", "project"];
 
   if (payload.has_skills) {
     // Ensure Skill tool is allowed when skills are configured

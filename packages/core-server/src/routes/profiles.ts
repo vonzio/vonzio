@@ -197,6 +197,32 @@ export const profileRoutes = fp(
       },
     );
 
+    // Mark this profile as the caller's default agent (clears the flag on
+    // their others — at most one default per user). Used by the new-chat
+    // picker preselection and "Set as default" UI.
+    server.post<{ Params: { id: string } }>(
+      "/v1/profiles/:id/default",
+      {
+        schema: {
+          summary: "Set this profile as the user's default agent",
+          tags: ["Profiles"],
+          params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+        },
+      },
+      async (request, reply) => {
+        const profile = await profileService.get(request.params.id);
+        if (!profile || !isOwnerOrAdmin(request.user!, profile.user_id ?? null)
+          || !(await visibleInActiveOrg(request.user!.id, request.params.id))) {
+          return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
+        }
+        const ok = await profileService.setDefault(request.params.id, request.user!.id);
+        if (!ok) {
+          return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
+        }
+        return { ok: true, id: request.params.id };
+      },
+    );
+
     server.delete<{ Params: { id: string } }>(
       "/v1/profiles/:id",
       {

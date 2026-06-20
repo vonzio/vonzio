@@ -24,6 +24,7 @@ import {
   StatusBar,
   DropdownMenu,
   Avatar,
+  WordmarkText,
   type Crumb,
   type StatusChip,
   type MenuItem,
@@ -111,7 +112,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const railContent = (
     <Rail>
-      <RailBrand>vonzio</RailBrand>
+      <RailBrand><WordmarkText /></RailBrand>
       {primaryItems.length > 0 && (
         <RailGroup label="Work">{primaryItems.map(renderNavItem)}</RailGroup>
       )}

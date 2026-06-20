@@ -43,6 +43,13 @@ type TaskUpdate = Partial<typeof schema.tasks.$inferInsert>;
  *  agent detaches. Tuned for typical back-to-back task cadence. */
 const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
 
+// Appended to the system prompt when the platform-control MCP is wired in, so
+// the agent reliably distinguishes Vonzio platform objects from its own runtime.
+// Mirrors PLATFORM_MCP_INSTRUCTIONS in mcp/platform-mcp.ts (which goes out via
+// the MCP initialize handshake); kept here too because the system prompt is
+// guaranteed to reach the model.
+const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- LEARNING SKILLS: when you work out a non-trivial, repeatable procedure, save it as a skill with create_skill (bundle helper scripts via files) so future runs reuse it. skill_list first to avoid duplicates; improve an existing one with skill_update rather than duplicating. This is how you improve over time.\n- PREREQUISITES: reading Gmail or sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
+
 /** Short, user-safe error string for surfacing a cause in events/logs. */
 function errMsg(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e);
@@ -186,7 +193,7 @@ export class Orchestrator extends EventEmitter {
   private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private gmailTokens = new Map<string, { userId: string }>();
-  private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
+  private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] }>();
   // Per-task tokens for plugin-contributed MCP servers (ctx.mcpRegistry).
   private pluginMcpTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private log: Logger;
@@ -222,7 +229,7 @@ export class Orchestrator extends EventEmitter {
     this.gmailTokens.delete(token);
   }
 
-  resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null } | undefined {
+  resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] } | undefined {
     return this.platformTokens.get(token);
   }
 
@@ -1172,7 +1179,13 @@ export class Orchestrator extends EventEmitter {
     // Platform MCP: inject server for agent-initiated platform operations (playbooks, tasks)
     if (this.deps.config.internalServerUrl && userId) {
       const platformToken = `platform_${nanoid()}`;
-      this.platformTokens.set(platformToken, { userId, profileId: profile.id, orgId: taskOrgId });
+      this.platformTokens.set(platformToken, {
+        userId,
+        profileId: profile.id,
+        orgId: taskOrgId,
+        sessionId: task.session_id ?? task.id,
+        capabilities: profile.platform_capabilities ?? [],
+      });
       mcpTokensToClean.push({ type: "platform", token: platformToken });
       const platformMcpUrl = `${this.deps.config.internalServerUrl}/mcp/platform`;
       nonSdkServers.push({
@@ -1217,10 +1230,19 @@ export class Orchestrator extends EventEmitter {
     const resolvedMaxTurns = task.max_turns ?? profile.max_turns ?? this.deps.config.maxTurns;
     const presence = await this.resolvePresence(task.session_id);
     const presenceSection = buildPresenceSection(presence);
-    const systemPrompt = this.buildSystemPrompt(
+    let systemPrompt = this.buildSystemPrompt(
       task, containerId, containerName, sdkToolNames, nonSdkServers,
       memorySection, resolvedMaxTurns, presenceSection,
     );
+    // When the platform-control MCP ("vonzio") is wired in, bake a short primer
+    // into the system prompt (guaranteed-read) so the agent doesn't conflate
+    // Vonzio nouns with its own runtime — e.g. answering "how many workspaces
+    // do I have" by inspecting its container instead of calling workspace_list.
+    // The MCP server also sends this via initialize.instructions; this is the
+    // belt-and-suspenders copy.
+    if (nonSdkServers.some((s) => s.name === "vonzio")) {
+      systemPrompt += PLATFORM_MCP_PRIMER;
+    }
     this.emit("task:system_prompt", task.id, task.session_id, systemPrompt);
 
     // Resolve subagents from profile's agent_ids
@@ -1229,14 +1251,34 @@ export class Orchestrator extends EventEmitter {
       ? await this.deps.subagentService.resolveAgents(agentIds)
       : undefined;
 
-    // Resolve and write skills into container
+    // Resolve and mount skills into the agent's personal scope
+    // (~/.claude/skills/<name>/), so real-world skills that reference
+    // ~/.claude/skills/<name>/scripts/... resolve unmodified. Bundle skills
+    // (SKILL.md + scripts/assets) ship as a zip and are unpacked in-container;
+    // single-file skills just write SKILL.md. agent-runner loads the "user"
+    // setting scope so the SDK discovers them.
     const skillIds = profile.skill_ids ?? [];
     let hasSkills = false;
     if (skillIds.length > 0) {
       const resolvedSkills = await this.deps.skillService.resolveSkills(skillIds);
       for (const skill of resolvedSkills) {
-        const skillPath = `/workspace/.claude/skills/${skill.name}/SKILL.md`;
-        await this.drainExec(containerId, ["sh", "-c", `mkdir -p /workspace/.claude/skills/${skill.name} && cat > ${skillPath}`], skill.content);
+        // Sanitized at upload time, but guard the shell interpolation anyway.
+        const safe = skill.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+        const dir = `"$HOME/.claude/skills/${safe}"`;
+        if (skill.archive) {
+          // Stream the zip in (base64) and unpack it into the skill dir.
+          await this.drainExec(
+            containerId,
+            ["sh", "-c", `mkdir -p ${dir} && base64 -d > /tmp/${safe}.zip && unzip -o -q /tmp/${safe}.zip -d ${dir} && rm -f /tmp/${safe}.zip`],
+            skill.archive.toString("base64"),
+          );
+        } else {
+          await this.drainExec(
+            containerId,
+            ["sh", "-c", `mkdir -p ${dir} && cat > ${dir}/SKILL.md`],
+            skill.content,
+          );
+        }
       }
       hasSkills = resolvedSkills.length > 0;
     }
@@ -1793,11 +1835,15 @@ export class Orchestrator extends EventEmitter {
     if (this.systemPromptTemplate) return this.systemPromptTemplate;
 
     const thisDir = typeof __dirname !== "undefined" ? __dirname : resolve(fileURLToPath(import.meta.url), "..");
-    const candidates = [
-      join(process.cwd(), "config", "system-prompt.md"),
-      resolve(thisDir, "../../../../config/system-prompt.md"),
-      "/app/config/system-prompt.md", // Docker path
+    // `vonzio.md` is the current operator base-prompt filename; `system-prompt.md`
+    // is kept as a fallback so existing self-hoster config/ volume mounts that
+    // still carry the old name keep working.
+    const bases = [
+      join(process.cwd(), "config"),
+      resolve(thisDir, "../../../../config"),
+      "/app/config", // Docker path
     ];
+    const candidates = bases.flatMap((b) => [join(b, "vonzio.md"), join(b, "system-prompt.md")]);
 
     for (const candidate of candidates) {
       try {

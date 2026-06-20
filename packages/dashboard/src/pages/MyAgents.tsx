@@ -2,17 +2,17 @@
  * Profiles — agent configuration library.
  * Tabs: Profiles (primary), Tools, Skills, Subagents.
  */
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import {
-  Bot, Plus, Trash2, Pencil, Key as KeyIcon, Wrench, BookOpen, Copy, Sparkles,
+  Bot, Plus, Trash2, Pencil, Key as KeyIcon, Wrench, BookOpen, Copy, Sparkles, Star, Upload,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi.js";
 import { slugify } from "../lib/utils.js";
 import {
-  fetchProfiles, deleteProfile,
+  fetchProfiles, deleteProfile, setDefaultProfile,
   fetchUserTools, createUserTool, deleteUserTool,
-  fetchUserSkills, createUserSkill, deleteUserSkill,
+  fetchUserSkills, createUserSkill, deleteUserSkill, uploadSkillFile,
   fetchUserAgents, createUserAgent, deleteUserAgent,
   type ProfileSummary,
 } from "../api/client.js";
@@ -101,6 +101,11 @@ function ProfileSection() {
     catch (e) { setError(e instanceof Error ? e.message : "Delete failed"); }
   };
 
+  const handleSetDefault = async (id: string) => {
+    try { await setDefaultProfile(id); refetch(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Couldn't set default"); }
+  };
+
   // Materialized team agents have user_id === current user but
   // `team_owned: true`. Split them out so the "Your profiles" section
   // doesn't include rows the member can't edit. Server already
@@ -175,6 +180,7 @@ function ProfileSection() {
               onEdit={() => navigate(`/agents/${p.id}/edit`)}
               onDuplicate={() => navigate(`/agents/new?from=${p.id}`)}
               onDelete={ownProfiles.length > 1 ? () => setConfirmDeleteId(p.id) : undefined}
+              onSetDefault={() => handleSetDefault(p.id)}
             />
           ))}
         </div>
@@ -240,6 +246,7 @@ function ProfileCard({
   onEdit,
   onDuplicate,
   onDelete,
+  onSetDefault,
 }: {
   profile: ProfileSummary;
   shared?: boolean;
@@ -249,6 +256,7 @@ function ProfileCard({
   onEdit?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
+  onSetDefault?: () => void;
 }) {
   const toolCount = profile.default_tools?.length ?? 0;
   const hasKey = !!profile.api_key_id;
@@ -266,6 +274,11 @@ function ProfileCard({
             <span style={{ fontWeight: 600, fontSize: 15, color: "var(--vz-ink)", letterSpacing: "-0.01em" }}>
               {profile.name}
             </span>
+            {profile.is_default && (
+              <span title="Default agent" style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "var(--vz-sodium)", fontSize: 11.5, fontWeight: 600 }}>
+                <Star size={12} fill="currentColor" /> default
+              </span>
+            )}
             {teamOwned && <Pill tone="accent">team</Pill>}
             {shared && <Pill tone="info">shared</Pill>}
             {hasKey && !shared && !teamOwned && (
@@ -281,6 +294,11 @@ function ProfileCard({
           )}
         </div>
         <div className="vz-card__actions-revealed" onClick={(e) => e.stopPropagation()}>
+          {onSetDefault && !profile.is_default && (
+            <button type="button" className="vz-action-btn" title="Set as default agent" onClick={onSetDefault}>
+              <Star size={13} />
+            </button>
+          )}
           {onEdit && (
             <button type="button" className="vz-action-btn" title="Edit" onClick={onEdit}>
               <Pencil size={13} />
@@ -464,6 +482,8 @@ function SkillSection() {
   const [skillName, setSkillName] = useState("");
   const [skillDesc, setSkillDesc] = useState("");
   const [skillContent, setSkillContent] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const handleCreate = async () => {
     if (!skillName || !skillContent) return;
@@ -474,6 +494,20 @@ function SkillSection() {
       setShowForm(false);
       refetch();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  };
+
+  const handleUpload = async (file: File) => {
+    setUploading(true);
+    setError("");
+    try {
+      await uploadSkillFile(file);
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to upload skill");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -541,6 +575,20 @@ function SkillSection() {
       onErrorDismiss={() => setError("")}
       onAdd={() => setShowForm(true)}
       addLabel="New skill"
+      extraActions={
+        <>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".zip,.md,.markdown"
+            style={{ display: "none" }}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); }}
+          />
+          <Button size="sm" variant="ghost" icon={<Upload size={14} />} disabled={uploading} onClick={() => fileRef.current?.click()}>
+            {uploading ? "Uploading…" : "Upload .zip / .md"}
+          </Button>
+        </>
+      }
       loading={loading}
       yours={yours}
       bundled={bundled}
@@ -767,6 +815,7 @@ function CatalogLayout({
   onErrorDismiss,
   onAdd,
   addLabel,
+  extraActions,
   loading,
   yours,
   bundled,
@@ -784,6 +833,7 @@ function CatalogLayout({
   onErrorDismiss: () => void;
   onAdd: () => void;
   addLabel: string;
+  extraActions?: ReactNode;
   loading: boolean;
   yours: Record<string, unknown>[];
   bundled: Record<string, unknown>[];
@@ -809,13 +859,23 @@ function CatalogLayout({
         rows={yours}
         rowKey={(t) => t.id as string}
         loading={loading}
-        actions={<Button size="sm" icon={<Plus size={14} />} onClick={onAdd}>{addLabel}</Button>}
+        actions={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            {extraActions}
+            <Button size="sm" icon={<Plus size={14} />} onClick={onAdd}>{addLabel}</Button>
+          </span>
+        }
         emptyState={
           <EmptyState
             icon={emptyIcon}
             title={emptyTitle}
             description={emptyDescription}
-            action={<Button size="sm" icon={<Plus size={14} />} onClick={onAdd}>{addLabel}</Button>}
+            action={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {extraActions}
+                <Button size="sm" icon={<Plus size={14} />} onClick={onAdd}>{addLabel}</Button>
+              </span>
+            }
           />
         }
       />

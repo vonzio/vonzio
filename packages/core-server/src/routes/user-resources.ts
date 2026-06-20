@@ -6,7 +6,38 @@
 import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
+
+/** Starter prompt suggestions shown on the new-chat screen. Baked into the
+ *  image at config/prompt-suggestions.json (and overridable via a volume mount,
+ *  same pattern as config/system-prompt.md). Read once, cached for the process. */
+interface PromptSuggestion { id: string; label: string; icon?: string; prompt: string }
+let __suggestionsCache: PromptSuggestion[] | null = null;
+function loadPromptSuggestions(): PromptSuggestion[] {
+  if (__suggestionsCache) return __suggestionsCache;
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(process.cwd(), "config", "prompt-suggestions.json"),
+    resolve(thisDir, "../../../../config/prompt-suggestions.json"),
+    "/app/config/prompt-suggestions.json", // Docker path
+  ];
+  for (const path of candidates) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf-8"));
+      if (Array.isArray(parsed)) {
+        __suggestionsCache = parsed.filter(
+          (s): s is PromptSuggestion => !!s && typeof s.id === "string" && typeof s.prompt === "string",
+        );
+        return __suggestionsCache;
+      }
+    } catch { /* try next candidate */ }
+  }
+  __suggestionsCache = [];
+  return __suggestionsCache;
+}
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import type { DrizzleDB } from "../db/index.js";
@@ -22,6 +53,7 @@ function canAccess(user: { id: string; role: string }, resourceUserId: string | 
 }
 import type { ToolFileService } from "../services/tool-file-service.js";
 import type { SkillService } from "../services/skill-service.js";
+import { BundleError } from "../services/skill-service.js";
 import type { SubagentService } from "../services/subagent-service.js";
 import type { GitProviderService } from "../services/git-provider-service.js";
 import type { ApiKeyService } from "../services/api-key-service.js";
@@ -65,6 +97,13 @@ export const userResourceRoutes = fp(
       if (!profile) return null;
       return canAccess(user, profile.user_id) ? profile : null;
     };
+
+    // ─── Prompt suggestions (new-chat starter chips) ────────
+    // Served from config/prompt-suggestions.json (baked into the image,
+    // overridable via volume mount). Curated + global; no per-user data.
+    server.get("/v1/prompt-suggestions", async () => {
+      return { suggestions: loadPromptSuggestions() };
+    });
 
     // ─── Tools ──────────────────────────────────────────────
     server.get("/v1/tools", async (request) => {
@@ -114,6 +153,34 @@ export const userResourceRoutes = fp(
       }, request.user!.id);
       return reply.code(201).send(skill);
     });
+
+    // Bundle upload: a zip (SKILL.md + scripts/assets) as base64 JSON. ~70MB
+    // body cap = 50MB bundle * 1.34 base64 + slack, matching the documents path.
+    server.post<{ Body: { archive_b64?: string } }>(
+      "/v1/skills/upload",
+      { bodyLimit: 70 * 1024 * 1024 },
+      async (request, reply) => {
+        const archive_b64 = request.body?.archive_b64;
+        if (!archive_b64) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "archive_b64 is required"));
+        }
+        let buf: Buffer;
+        try {
+          buf = Buffer.from(archive_b64, "base64");
+        } catch {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "archive_b64 is not valid base64"));
+        }
+        try {
+          const skill = await skillService.uploadBundle(buf, request.user!.id);
+          return reply.code(201).send(skill);
+        } catch (err) {
+          if (err instanceof BundleError) {
+            return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, err.message));
+          }
+          throw err;
+        }
+      },
+    );
 
     server.delete<{ Params: { id: string } }>("/v1/skills/:id", async (request, reply) => {
       const rows = await db.select().from(schema.skills).where(eq(schema.skills.id, request.params.id));

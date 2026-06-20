@@ -1,12 +1,12 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot } from "lucide-react";
+import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot, Gamepad2, BarChart3, Search, Rocket, Globe } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
 import { useApi } from "../hooks/useApi.js";
 import { useIsMobile, useIsNarrow } from "../hooks/use-mobile.js";
-import { fetchProfiles, type ProfileSummary } from "../api/client.js";
+import { fetchProfiles, fetchUserAnthropicKeys, updateProfile, fetchPromptSuggestions, type ProfileSummary, type UserAnthropicKey, type PromptSuggestion } from "../api/client.js";
 import { WorkspaceSidebar } from "../components/WorkspaceSidebar.js";
 import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
@@ -75,6 +75,14 @@ function isServablePreviewTarget(url: string): boolean {
   const ext = last.slice(dot + 1).toLowerCase();
   return !NON_SERVABLE_PREVIEW_EXT.has(ext);
 }
+
+// Minimal built-in starters — only used if config/prompt-suggestions.json is
+// missing/unreachable, so the new-chat strip is never empty.
+const SUGGESTION_FALLBACK: PromptSuggestion[] = [
+  { id: "landing", label: "Build a landing page", icon: "code", prompt: "Build me a responsive landing page with a hero section, features grid, and a contact form." },
+  { id: "data", label: "Analyze some data", icon: "chart", prompt: "Help me analyze a dataset. I'll share the file with you." },
+  { id: "script", label: "Write a script", icon: "message", prompt: "Write a Python script that automates a common task. What kind of task should we automate?" },
+];
 
 // ─── Component ──────────────────────────────────────────────────────
 
@@ -319,13 +327,13 @@ export function Workspace() {
     navigate("/w", { replace: true });
   }, [routeId, workspacesLoading, activeWorkspace, activeWorkspaceId, navigate]);
   // Resolve activeProfile in this order: real workspace owner → user's
-  // empty-state pick from AgentPicker → first profile. The middle case
-  // matters so the ModelPicker (and the rest of the composer chrome) shows
-  // models for the profile the user just picked, not whatever happens to
-  // sit at profiles[0].
+  // empty-state pick from AgentPicker → the user's default agent → first
+  // profile. The middle cases matter so the ModelPicker (and the rest of the
+  // composer chrome) shows models for the profile the user picked / defaulted.
   const activeProfile =
     profiles?.find((p) => p.id === activeWorkspace?.profile_id) ??
     profiles?.find((p) => p.id === selectedProfileId) ??
+    profiles?.find((p) => p.is_default) ??
     profiles?.[0];
   const profileName = activeProfile?.name ?? "Default";
 
@@ -336,7 +344,7 @@ export function Workspace() {
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
-  const defaultProfileId = profiles?.[0]?.id ?? "";
+  const defaultProfileId = (profiles?.find((p) => p.is_default) ?? profiles?.[0])?.id ?? "";
 
   // Pick up a draft / chosen agent handed off from the Home launcher (it stashes
   // these then navigates to /w). Apply once on a fresh new-chat mount, then clear.
@@ -357,6 +365,29 @@ export function Workspace() {
   // `profiles` is undefined mid-fetch, which would otherwise flash the
   // add-key CTA + disable the composer for users who DO have a key.
   const keyMissing = profiles !== undefined && !hasApiKey;
+
+  // Keys the user can actually use (own + shared/admin-granted). When the
+  // active agent has no key but the user HAS an accessible one (e.g. an admin
+  // shared a key with them), we offer a one-click "use this key" instead of
+  // forcing them to add their own — the shared key is already usable.
+  const { data: availableApiKeys } = useApi<UserAnthropicKey[]>(() => fetchUserAnthropicKeys());
+  const attachableKey: UserAnthropicKey | undefined =
+    keyMissing && activeProfile && !activeProfile.team_owned
+      ? (availableApiKeys ?? [])[0]
+      : undefined;
+  const [attaching, setAttaching] = useState(false);
+  const attachKey = async () => {
+    if (!activeProfile || !attachableKey) return;
+    setAttaching(true);
+    try {
+      // The server attaches the key and auto-picks a provider-appropriate model
+      // for a model-less agent (ProfileService.update), so no model needed here.
+      await updateProfile(activeProfile.id, { api_key_id: attachableKey.id });
+      await refetchProfiles();
+    } finally {
+      setAttaching(false);
+    }
+  };
 
   // Derive the preview URL pattern from the template the server publishes
   // (e.g. "https://{container_id}-{port}.app.vonz.io" in prod,
@@ -592,6 +623,22 @@ export function Workspace() {
     setTimeout(() => inputRef.current?.focus(), 100);
   }
 
+  // ⌘K / Ctrl+K → new task. (⌘N can't be used — browsers reserve it for "new
+  // window" and a page can't preventDefault it.) Ref keeps the handler fresh
+  // without re-binding the listener every render.
+  const handleCreateRef = useRef(handleCreate);
+  handleCreateRef.current = handleCreate;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        handleCreateRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // ─── Send message ────────────────────────────────────────────────
   async function handleSend() {
     const text = input.trim();
@@ -666,11 +713,32 @@ export function Workspace() {
           : null;
 
   // ─── Suggestion chips ────────────────────────────────────────────
-  const suggestions = [
-    { icon: <Code className="w-4 h-4" />, label: "Build a landing page", prompt: "Build me a responsive landing page with a hero section, features grid, and a contact form." },
-    { icon: <Sparkles className="w-4 h-4" />, label: "Analyze some data", prompt: "Help me analyze a dataset. I'll share the file with you." },
-    { icon: <MessageSquare className="w-4 h-4" />, label: "Write a script", prompt: "Write a Python script that automates a common task. What kind of task should we automate?" },
-  ];
+  // Curated starters come from config/prompt-suggestions.json (baked into the
+  // image, overridable via volume mount). Fall back to a minimal built-in set
+  // if the config is missing/unreachable so the strip is never empty.
+  const { data: suggestionData } = useApi<{ suggestions: PromptSuggestion[] }>(() => fetchPromptSuggestions());
+  const suggestionIcon = (key?: string) => {
+    switch (key) {
+      case "code": return <Code className="w-4 h-4" />;
+      case "message": return <MessageSquare className="w-4 h-4" />;
+      case "game": return <Gamepad2 className="w-4 h-4" />;
+      case "chart": return <BarChart3 className="w-4 h-4" />;
+      case "search": return <Search className="w-4 h-4" />;
+      case "rocket": return <Rocket className="w-4 h-4" />;
+      case "globe": return <Globe className="w-4 h-4" />;
+      default: return <Sparkles className="w-4 h-4" />;
+    }
+  };
+  // Show a rotating subset so the strip feels fresh + hints at the range without
+  // clutter. Shuffle once per fetch (not per render) via useMemo keyed on data.
+  const suggestions = useMemo(() => {
+    const pool = suggestionData?.suggestions?.length ? suggestionData.suggestions : SUGGESTION_FALLBACK;
+    return [...pool]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 4)
+      .map((s) => ({ icon: suggestionIcon(s.icon), label: s.label, prompt: s.prompt }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestionData]);
 
   function handleSuggestion(prompt: string) {
     setInputWithDraft(prompt);
@@ -798,19 +866,30 @@ export function Workspace() {
                       </svg>
                       <div className="text-center">
                         <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--vz-ink)" }}>
-                          {keyMissing ? "Add an API key to get started" : "How can I help?"}
+                          {!keyMissing ? "How can I help?"
+                            : attachableKey ? "Use your shared key to get started"
+                            : "Add an API key to get started"}
                         </h2>
                         <p className="text-sm text-muted-foreground">
-                          {keyMissing
-                            ? "You'll need a provider key before you can chat — it takes a few seconds."
-                            : ((profiles?.length ?? 0) > 1 ? "Select an agent and start a conversation" : "Start a conversation")}
+                          {!keyMissing
+                            ? ((profiles?.length ?? 0) > 1 ? "Select an agent and start a conversation" : "Start a conversation")
+                            : attachableKey
+                              ? `“${attachableKey.name}” is shared with you — attach it to your agent to start chatting.`
+                              : "You'll need a provider key before you can chat — it takes a few seconds."}
                         </p>
                       </div>
                       {keyMissing && (
-                        <Button onClick={() => reopenOnboarding()}>
-                          <Key className="w-4 h-4 mr-1.5" />
-                          Add API key
-                        </Button>
+                        attachableKey ? (
+                          <Button onClick={attachKey} disabled={attaching}>
+                            <Key className="w-4 h-4 mr-1.5" />
+                            {attaching ? "Setting up…" : `Use ${attachableKey.name}`}
+                          </Button>
+                        ) : (
+                          <Button onClick={() => reopenOnboarding()}>
+                            <Key className="w-4 h-4 mr-1.5" />
+                            Add API key
+                          </Button>
+                        )
                       )}
                       {/* Launcher: pick an agent to start with (cards), or start
                           from a template. The composer below stays the fast path
@@ -974,10 +1053,15 @@ export function Workspace() {
                       }}
                     >
                       <Key className="w-4 h-4 shrink-0" />
-                      <span className="flex-1">No API key configured — add one to continue this conversation.</span>
+                      <span className="flex-1">
+                        {attachableKey
+                          ? `“${attachableKey.name}” is shared with you — attach it to this agent to continue.`
+                          : "No API key configured — add one to continue this conversation."}
+                      </span>
                       <button
                         type="button"
-                        onClick={() => reopenOnboarding()}
+                        onClick={attachableKey ? attachKey : () => reopenOnboarding()}
+                        disabled={attaching}
                         style={{
                           background: "var(--vz-sodium)", color: "#fff",
                           padding: "5px 12px", borderRadius: "var(--vz-radius-sm)",
@@ -985,7 +1069,7 @@ export function Workspace() {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        Add API key
+                        {attachableKey ? (attaching ? "Setting up…" : `Use ${attachableKey.name}`) : "Add API key"}
                       </button>
                     </div>
                   </div>

@@ -32,6 +32,64 @@ describe("ProfileService", () => {
     expect(profile.default_tools).toEqual(["Read", "Grep"]);
   });
 
+  describe("default agent (is_default)", () => {
+    it("marks a user's first agent as default, subsequent ones not", async () => {
+      const a = await profileService.create({ name: "first" }, "u_mark");
+      const b = await profileService.create({ name: "second" }, "u_mark");
+      expect(a.is_default).toBe(true);
+      expect(b.is_default).toBe(false);
+    });
+
+    it("setDefault moves the flag (at most one default per user)", async () => {
+      const a = await profileService.create({ name: "a" }, "u_move");
+      const b = await profileService.create({ name: "b" }, "u_move");
+
+      const ok = await profileService.setDefault(b.id, "u_move");
+      expect(ok).toBe(true);
+      expect((await profileService.get(a.id))!.is_default).toBe(false);
+      expect((await profileService.get(b.id))!.is_default).toBe(true);
+    });
+
+    it("setDefault refuses a profile the user doesn't own", async () => {
+      const a = await profileService.create({ name: "a" }, "u_owner");
+      const ok = await profileService.setDefault(a.id, "u_intruder");
+      expect(ok).toBe(false);
+      expect((await profileService.get(a.id))!.is_default).toBe(true); // unchanged
+    });
+
+    it("defaults are independent per user", async () => {
+      const u1 = await profileService.create({ name: "u1a" }, "u_indep_1");
+      const u2 = await profileService.create({ name: "u2a" }, "u_indep_2");
+      expect(u1.is_default).toBe(true);
+      expect(u2.is_default).toBe(true); // each user's first is their own default
+    });
+  });
+
+  describe("auto model selection on key attach", () => {
+    it("picks a model for an ollama key when none is given", async () => {
+      profileService.setDefaultModelResolver(async () => "auto-model-x");
+      const key = await apiKeyService.create({ name: "oll", provider: "ollama", api_key: "sk-o" }, "u_mdl");
+      const created = await profileService.create({ name: "a", api_key_id: key.id }, "u_mdl");
+      expect(created.model).toBe("auto-model-x");
+    });
+
+    it("does NOT auto-pick for anthropic keys (SDK default stays)", async () => {
+      profileService.setDefaultModelResolver(async () => "auto-model-x");
+      const key = await apiKeyService.create({ name: "anth", provider: "api_key", api_key: "sk-ant-test" }, "u_mdl2");
+      const created = await profileService.create({ name: "b", api_key_id: key.id }, "u_mdl2");
+      expect(created.model).toBeUndefined();
+    });
+
+    it("picks a model when attaching a key to a model-less agent (update)", async () => {
+      profileService.setDefaultModelResolver(async () => "auto-model-y");
+      const p = await profileService.create({ name: "keyless" }, "u_mdl3");
+      expect(p.model).toBeUndefined();
+      const key = await apiKeyService.create({ name: "oll3", provider: "ollama", api_key: "sk-o3" }, "u_mdl3");
+      const updated = await profileService.update(p.id, { api_key_id: key.id }, "user");
+      expect(updated!.model).toBe("auto-model-y");
+    });
+  });
+
   it("creates a profile linked to an API key", async () => {
     const key = await apiKeyService.create({
       name: "test-key",

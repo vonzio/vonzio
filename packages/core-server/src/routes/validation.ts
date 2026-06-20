@@ -90,6 +90,7 @@ export const createProfileSchema = z.object({
   mcp_servers: z.array(mcpServerSchema).optional(),
   agent_ids: z.array(z.string()).optional(),
   skill_ids: z.array(z.string()).optional(),
+  platform_capabilities: z.array(z.string()).optional(),
   claude_md: z.string().optional(),
   git_provider_id: z.string().optional(),
   git_provider_ids: z.array(z.string()).optional(),

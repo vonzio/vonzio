@@ -691,6 +691,46 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS documents_session_id_idx ON documents (session_id)`);
     },
   },
+  {
+    version: 27,
+    description: "Add profiles.is_default: the user's default agent (preselected in the new-chat picker). At most one per user, enforced in ProfileService.",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false`);
+      // Backfill: mark each user's earliest profile as their default so existing
+      // accounts get one without manual action. user_id NULL (shared) excluded.
+      await handle.db.execute(sql`
+        UPDATE profiles SET is_default = true
+        WHERE id IN (
+          SELECT DISTINCT ON (user_id) id FROM profiles
+          WHERE user_id IS NOT NULL
+          ORDER BY user_id, created_at ASC
+        )
+      `);
+    },
+  },
+  {
+    version: 28,
+    description: "Replace 'star' with 'pin': migrate starred workspaces to pinned (pinned now means top-group + always-on, exempt from the idle sweeper).",
+    up: async (handle) => {
+      await handle.db.execute(sql`UPDATE workspaces SET pinned = true WHERE starred = true AND pinned = false`);
+    },
+  },
+  {
+    version: 29,
+    description: "Skills bundle support: archive_key (zip in SkillStorage), size_bytes, manifest (file list). NULL = legacy single-file skill.",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE skills ADD COLUMN IF NOT EXISTS archive_key TEXT`);
+      await handle.db.execute(sql`ALTER TABLE skills ADD COLUMN IF NOT EXISTS size_bytes INTEGER`);
+      await handle.db.execute(sql`ALTER TABLE skills ADD COLUMN IF NOT EXISTS manifest JSONB`);
+    },
+  },
+  {
+    version: 30,
+    description: "Platform MCP capability gating: profiles.platform_capabilities (opt-in groups for gated agent-facing platform tools).",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS platform_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    },
+  },
 ];
 
 /**

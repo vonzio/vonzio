@@ -43,6 +43,10 @@ const configSchema = z.object({
   // Tools
   TOOLS_DIR: z.string().default("/app/tools"),
   SKILLS_DIR: z.string().default("/app/skills"),
+  // Writable store for uploaded skill bundles (zip archives). Defaults under the
+  // existing persistent data volume (vonzio-data:/app/data) so no extra mount is
+  // needed. Distinct from the read-only built-in catalog (SKILLS_DIR).
+  SKILLS_DATA_DIR: z.string().default("/app/data/skills"),
 
   // Event log (session replay)
   EVENT_LOG_DIR: z.string().default("./data/events"),
