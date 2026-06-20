@@ -96,6 +96,12 @@ const PLATFORM_MCP_INSTRUCTIONS = `These "vonzio" tools control the Vonzio platf
 - SKILL = a reusable playbook in the user's library (\`skill_list\`, \`create_skill\`). SUBAGENT = a delegate template (\`subagent_*\`). KNOWLEDGE = reference docs mounted at /knowledge (\`knowledge_*\`).
 - PLAYBOOK = a scheduled/repeatable automation; TASK = a single agent run.
 
+Scheduling & recurring work: when the user asks for anything recurring or time-based — "every day at 2pm…", "remind me…", "each Monday…", "keep checking…" — CREATE A PLAYBOOK with a cron schedule (\`playbook_create\`). Do NOT just perform the action once; the user wants it to repeat. Put the recurring instructions in the playbook's prompt.
+
+Notifying the user: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the \`notify_user\` tool — it routes to the user's configured channel automatically (omit the channel for their default). Don't assume a specific channel.
+
+Prerequisites: anything that reads Gmail or sends to Slack/Telegram needs that integration connected. You CANNOT connect integrations yourself — first call \`integration_list\` to check; if the needed channel is missing, tell the user to connect it in Settings before you schedule the work.
+
 Rule of thumb: questions about the user's account, history, agents, automations, or "my workspaces/chats" → use these tools. Questions about the files/code in front of you → use your normal filesystem tools (Read/Bash/etc.). Some tools are gated and only appear when the user has enabled them for this agent.`;
 
 interface ToolDef {
