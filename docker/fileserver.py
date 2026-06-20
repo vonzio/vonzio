@@ -1,10 +1,14 @@
 """Vonzio file server — serves files from /workspace/ (port 8000).
 
 Directory listing is disabled for security (defense in depth).
-Files are served by exact path only.
+Files are served by exact path only. Hidden files/dirs (anything whose path has
+a dot-prefixed component — .env, .git/, .claude/, .npmrc, …) are refused: the
+whole /workspace tree is reachable here, and on a public_preview workspace this
+endpoint is unauthenticated, so secrets/config must not be fetchable by path.
 """
 
 import os
+from urllib.parse import urlparse, unquote
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -12,6 +16,15 @@ class StyledHandler(SimpleHTTPRequestHandler):
     def list_directory(self, path):
         self.send_error(403, "Directory listing is disabled")
         return None
+
+    def send_head(self):
+        # Refuse any request touching a hidden component (dotfile/dotdir).
+        # send_head backs both GET and HEAD, so this covers both.
+        parts = unquote(urlparse(self.path).path).split("/")
+        if any(seg.startswith(".") for seg in parts if seg):
+            self.send_error(404, "Not found")
+            return None
+        return super().send_head()
 
     def log_message(self, format, *args):
         pass
