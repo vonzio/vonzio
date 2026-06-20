@@ -102,12 +102,43 @@ function makeUpstreamReq(method, fullUrl, headers, cb) {
   return lib.request(fullUrl, { method, headers: hdrs }, cb);
 }
 
-const server = http.createServer((req, res) => {
-  const apiKey = req.headers["x-api-key"] || "";
-  const headers = { ...req.headers, authorization: `Bearer ${apiKey}`, host: hostname };
-  delete headers["x-api-key"];
+/**
+ * Ollama's Anthropic-compatible /v1/messages rejects an image block nested
+ * inside a tool_result ("Input should be a valid string") — unlike the real
+ * Anthropic API, which the Claude Agent SDK targets (its Read tool returns an
+ * image as tool_result content). Relocate any such image OUT of the tool_result
+ * (leaving a text placeholder) and append it to the SAME user message as a
+ * normal image block, which Ollama accepts. Returns true if anything changed.
+ */
+function relocateToolResultImages(body) {
+  if (!body || !Array.isArray(body.messages)) return false;
+  let changed = false;
+  for (const msg of body.messages) {
+    if (!msg || msg.role !== "user" || !Array.isArray(msg.content)) continue;
+    const relocated = [];
+    for (const block of msg.content) {
+      if (!block || block.type !== "tool_result" || !Array.isArray(block.content)) continue;
+      const images = block.content.filter((b) => b && b.type === "image");
+      if (images.length === 0) continue;
+      const text = block.content.filter((b) => b && b.type === "text").map((b) => b.text).join("\n");
+      block.content = (text ? text + "\n" : "") + `[${images.length} image(s) from this tool result are attached below]`;
+      relocated.push(...images);
+      changed = true;
+    }
+    if (relocated.length > 0) {
+      msg.content.push({ type: "text", text: "Image(s) from the tool result above:" }, ...relocated);
+    }
+  }
+  return changed;
+}
 
-  const proxyReq = makeUpstreamReq(req.method, `${TARGET}${req.url}`, headers, (proxyRes) => {
+function forward(req, res, headers, bodyBuf) {
+  const hdrs = { ...headers };
+  if (bodyBuf != null) {
+    hdrs["content-length"] = Buffer.byteLength(bodyBuf);
+    delete hdrs["transfer-encoding"];
+  }
+  const proxyReq = makeUpstreamReq(req.method, `${TARGET}${req.url}`, hdrs, (proxyRes) => {
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     proxyRes.pipe(res);
   });
@@ -115,7 +146,33 @@ const server = http.createServer((req, res) => {
     res.writeHead(502);
     res.end(JSON.stringify({ error: e.message }));
   });
-  req.pipe(proxyReq);
+  if (bodyBuf != null) { proxyReq.end(bodyBuf); } else { req.pipe(proxyReq); }
+}
+
+const server = http.createServer((req, res) => {
+  const apiKey = req.headers["x-api-key"] || "";
+  const headers = { ...req.headers, authorization: `Bearer ${apiKey}`, host: hostname };
+  delete headers["x-api-key"];
+
+  // Only the messages endpoint needs body rewriting; everything else streams
+  // through untouched (the original dumb-proxy behavior).
+  const isMessages = req.method === "POST" && typeof req.url === "string" && req.url.startsWith("/v1/messages");
+  if (!isMessages) {
+    forward(req, res, headers, null);
+    return;
+  }
+
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("error", () => { res.writeHead(502); res.end(JSON.stringify({ error: "request stream error" })); });
+  req.on("end", () => {
+    let bodyBuf = Buffer.concat(chunks);
+    try {
+      const json = JSON.parse(bodyBuf.toString("utf8"));
+      if (relocateToolResultImages(json)) bodyBuf = Buffer.from(JSON.stringify(json), "utf8");
+    } catch { /* not JSON / unparsable — forward original bytes unchanged */ }
+    forward(req, res, headers, bodyBuf);
+  });
 });
 
 server.on("error", (e) => {

@@ -16,6 +16,29 @@ export async function runTask(payload: TaskPayload): Promise<void> {
     permissionMode: "bypassPermissions",
     // Hooks to capture tool results and intercept AskUserQuestion
     hooks: {
+      // Guard image reads on models that can't accept image input. Without this
+      // a non-vision model hard-fails the whole turn ("does not support image
+      // input") the moment Read returns an image. Deny with a helpful reason so
+      // the agent keeps going and extracts what it needs another way.
+      ...(payload.supports_images === false ? {
+        PreToolUse: [{
+          hooks: [async (input: Record<string, unknown>) => {
+            if (input.tool_name !== "Read") return {};
+            const path = (input.tool_input as { file_path?: string } | undefined)?.file_path ?? "";
+            if (!/\.(png|jpe?g|gif|webp|bmp|tiff?|svg)$/i.test(path)) return {};
+            return {
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason:
+                  "This model can't view images, so reading an image file would fail the turn. " +
+                  "Don't Read image files — describe or use them via another route (e.g. the tool " +
+                  "that produced them, OCR, or by inspecting page DOM/text instead of a screenshot).",
+              },
+            };
+          }],
+        }],
+      } : {}),
       PostToolUse: [{
         hooks: [async (input: Record<string, unknown>) => {
           const toolName = input.tool_name as string;

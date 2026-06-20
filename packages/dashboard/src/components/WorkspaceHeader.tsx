@@ -66,6 +66,10 @@ function exportAsMarkdown(messages: ChatMessage[], workspaceName: string) {
   URL.revokeObjectURL(url);
 }
 
+function fmtTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
+}
+
 export function WorkspaceHeader({
   name, sessionId, status, connected, streaming,
   panelOpen, onTogglePanel, onToggleSidebar, onRename,
@@ -95,6 +99,12 @@ export function WorkspaceHeader({
   }
 
   const statusLabel = connected ? status : "disconnected";
+
+  // Running session token/cost total (sum of per-turn usage on assistant messages).
+  const sessionUsage = messages.reduce(
+    (a, m) => m.usage ? { in: a.in + m.usage.input_tokens, out: a.out + m.usage.output_tokens, cost: a.cost + m.usage.cost_usd } : a,
+    { in: 0, out: 0, cost: 0 },
+  );
 
   return (
     <div
@@ -183,6 +193,18 @@ export function WorkspaceHeader({
             ? <Wifi className="w-3.5 h-3.5" />
             : <WifiOff className="w-3.5 h-3.5" />}
         </span>
+
+        {(sessionUsage.in > 0 || sessionUsage.out > 0) && (
+          <span
+            className="vz-wsh-usage hidden sm:inline-flex items-center gap-1.5"
+            title={`Session total — input ${sessionUsage.in.toLocaleString()} · output ${sessionUsage.out.toLocaleString()} tokens${sessionUsage.cost > 0 ? ` · $${sessionUsage.cost.toFixed(sessionUsage.cost < 0.01 ? 4 : 2)}` : ""}`}
+            style={{ fontFamily: "var(--vz-font-mono)", fontSize: 10.5, color: "var(--vz-muted-2)", letterSpacing: "0.03em" }}
+          >
+            <span>↑ {fmtTokens(sessionUsage.in)}</span>
+            <span>↓ {fmtTokens(sessionUsage.out)}</span>
+            {sessionUsage.cost > 0 && <span>· ${sessionUsage.cost < 0.01 ? sessionUsage.cost.toFixed(4) : sessionUsage.cost.toFixed(2)}</span>}
+          </span>
+        )}
 
         {attachedTunnel && (
           <span title={`Agent traffic routed via VPN tunnel "${attachedTunnel.name}"`} style={{ display: "inline-flex" }}>

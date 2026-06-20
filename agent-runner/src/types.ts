@@ -34,6 +34,9 @@ export interface TaskPayload {
   system_prompt?: string;
   agents?: Record<string, { description: string; prompt: string; tools?: string[]; model?: string }>;
   has_skills?: boolean;
+  /** Whether the effective model accepts image input. When false, the runner
+   *  blocks image Reads so a non-vision model degrades instead of hard-failing. */
+  supports_images?: boolean;
   model?: string;
   effort?: string;
   attachments?: Attachment[];

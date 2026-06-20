@@ -50,6 +50,10 @@ export function AnthropicKeySection() {
   const [isSharedKey, setIsSharedKey] = useState(false);
   const [sharedWith, setSharedWith] = useState<string[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // A key the user can SEE but not edit (team/org credential, or a key another
+  // user shared with them). Clicking such a row opens this read-only info modal
+  // instead of silently doing nothing.
+  const [infoKey, setInfoKey] = useState<AnthropicKeyInfo | null>(null);
 
   const [allUsers, setAllUsers] = useState<Array<{ id: string; name: string; email: string }>>([]);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
@@ -256,7 +260,7 @@ export function AnthropicKeySection() {
         columns={cols}
         rows={keys ?? []}
         rowKey={(k) => k.id}
-        onRowClick={(k) => { if (!isTeamKey(k) && (isAdmin || k.user_id === currentUser.id)) openEditor(k); }}
+        onRowClick={(k) => { if (!isTeamKey(k) && (isAdmin || k.user_id === currentUser.id)) openEditor(k); else setInfoKey(k); }}
         loading={loading}
         actions={<Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Add key</Button>}
         emptyState={
@@ -451,6 +455,36 @@ export function AnthropicKeySection() {
           </>
         }
       />
+
+      <Modal
+        open={!!infoKey}
+        onClose={() => setInfoKey(null)}
+        title={infoKey ? infoKey.name : "Key"}
+        footer={<Button size="sm" onClick={() => setInfoKey(null)}>Close</Button>}
+      >
+        {infoKey && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <SubLabel>Provider</SubLabel>
+              <span style={{ fontSize: 13, color: "var(--vz-ink-3)" }}>
+                {providerInfoByProvider(infoKey.provider as ProfileProvider).label}
+              </span>
+            </div>
+            <div style={{ fontSize: 13, color: "var(--vz-muted)", lineHeight: 1.5 }}>
+              {isTeamKey(infoKey) ? (
+                <>This is an <strong>organization credential</strong> shared across your team — it can't be edited here. Manage it in <strong>Settings → Organization → Credentials</strong>. Your agents can use it as-is.</>
+              ) : (() => {
+                // Only name the owner when it resolves to an actual name (admin
+                // context — userNames is admin-only). Never surface a raw user id.
+                const ownerName = infoKey.user_id ? userNames[infoKey.user_id] : undefined;
+                return (
+                  <>This key is <strong>shared with you</strong>{ownerName ? <> by <strong>{ownerName}</strong></> : null}. Your agents can use it, but only its owner can edit or delete it.</>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+      </Modal>
     </>
   );
 }

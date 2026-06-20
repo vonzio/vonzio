@@ -58,11 +58,17 @@ const PREVIEW_FILE_ROOT = "/workspace";
  * segments and rejects anything that resolves outside the workspace root.
  * Returns the safe absolute path, or null if the path escapes confinement.
  */
-function confineToWorkspace(filePath: string): string | null {
-  // Treat the request path as relative to /workspace. Leading slashes are
-  // stripped so an absolute-looking input can't jump the root.
-  const rel = filePath.replace(/^\/+/, "");
-  const resolved = posixPath.normalize(posixPath.join(PREVIEW_FILE_ROOT, rel));
+export function confineToWorkspace(filePath: string): string | null {
+  // Callers send BOTH absolute paths already under /workspace (the file viewer,
+  // tool file_paths like /workspace/output/x.png) AND relative ones. Accept an
+  // absolute path as-is; treat a relative one as rooted at /workspace. Either
+  // way, normalize `.`/`..` and then confine: anything resolving outside
+  // /workspace (traversal, or a foreign absolute path) is rejected. The earlier
+  // "strip leading / then join" form double-prefixed absolute inputs
+  // (/workspace/x → /workspace/workspace/x), breaking every file open.
+  const resolved = posixPath.normalize(
+    filePath.startsWith("/") ? filePath : posixPath.join(PREVIEW_FILE_ROOT, filePath),
+  );
   if (resolved !== PREVIEW_FILE_ROOT && !resolved.startsWith(`${PREVIEW_FILE_ROOT}/`)) {
     return null;
   }

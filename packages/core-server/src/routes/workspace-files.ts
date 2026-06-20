@@ -32,7 +32,7 @@ export const workspaceFilesRoutes = fp(
 
       // Confine listing to /workspace — otherwise `find` could enumerate any
       // directory in the container (e.g. `/`, `/etc`) for the owner.
-      const reqPath = request.query.path ?? "/workspace/output/";
+      const reqPath = request.query.path ?? "/workspace/";
       if (reqPath.includes("..") || !(reqPath === "/workspace" || reqPath.startsWith("/workspace/"))) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "path must be within /workspace"));
       }
@@ -74,7 +74,7 @@ export const workspaceFilesRoutes = fp(
       // Target directory inside the container. The client sends the folder the
       // user is currently viewing as a `dest` field (ordered before the files).
       // Sanitize hard: confine to /workspace/ and strip any traversal.
-      let destDir = "/workspace/output";
+      let destDir = "/workspace";
 
       for await (const part of parts) {
         if (part.type === "field" && part.fieldname === "dest") {
@@ -85,7 +85,7 @@ export const workspaceFilesRoutes = fp(
             .replace(/\/$/, "");
           destDir = cleaned === "/workspace" || cleaned.startsWith("/workspace/")
             ? (cleaned || "/workspace")
-            : "/workspace/output";
+            : "/workspace";
           continue;
         }
         if (part.type !== "file" || !part.filename) continue;
@@ -213,8 +213,8 @@ export const workspaceFilesRoutes = fp(
       if (!filePath || filePath.includes("..")) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Invalid file path"));
       }
-      // Ensure path is within /workspace/output/
-      const safePath = filePath.startsWith("/workspace/output/") ? filePath : `/workspace/output/${filePath}`;
+      // Ensure path is within /workspace/
+      const safePath = filePath.startsWith("/workspace/") ? filePath : `/workspace/${filePath}`;
 
       const cmd = ["rm", "-f", safePath];
       for await (const _ of containerManager.execInContainer(workspace.container_id, cmd)) {

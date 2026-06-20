@@ -11,6 +11,11 @@ import { useOptionalUser } from "../contexts/UserContext.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { WordmarkText } from "../brand/components.js";
 
+/** Compact token count: 1234 → "1.2k", 980 → "980". */
+function formatTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
+}
+
 function formatClockTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
@@ -747,6 +752,17 @@ export function MessageList({
                   })}
                 </div>
               ) : null}
+              {msg.usage && (msg.usage.input_tokens > 0 || msg.usage.output_tokens > 0) && (
+                <div
+                  className="flex items-center gap-2 mt-2"
+                  style={{ fontSize: 10.5, fontFamily: "var(--vz-font-mono)", color: "var(--vz-muted-2)", letterSpacing: "0.03em" }}
+                  title={`Input ${msg.usage.input_tokens.toLocaleString()} · Output ${msg.usage.output_tokens.toLocaleString()} tokens`}
+                >
+                  <span>↑ {formatTokens(msg.usage.input_tokens)}</span>
+                  <span>↓ {formatTokens(msg.usage.output_tokens)}</span>
+                  {msg.usage.cost_usd > 0 && <span>· ${msg.usage.cost_usd < 0.01 ? msg.usage.cost_usd.toFixed(4) : msg.usage.cost_usd.toFixed(2)}</span>}
+                </div>
+              )}
             </MsgRow>
           );
         }

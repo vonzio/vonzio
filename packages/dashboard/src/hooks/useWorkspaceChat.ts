@@ -52,6 +52,11 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
   // window where a brand-new session has been requested but its id hasn't
   // propagated back into the `sessionId` prop yet.
   const startingSessionRef = useRef(false);
+  // The id of a session WE just created via startSession(). The sessionId-change
+  // effect uses it to SKIP resuming that session — it has no server history and
+  // is already represented by the optimistic state (incl. attached image
+  // previews the server doesn't echo back), which a replay would wipe.
+  const freshSessionRef = useRef<string | null>(null);
   const currentSessionIdRef = useRef(sessionId);
   // Keep the ref in sync with the prop, but never let a transient null prop
   // (an empty "New Workspace" before its session id propagates) clobber a
@@ -367,6 +372,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           break;
         }
         const resultText = msg.result_text as string | undefined;
+        const usage = msg.usage as { input_tokens: number; output_tokens: number; cost_usd: number } | undefined;
         // Dedup: when this turn's text already rendered as a "text" event
         // (replay path), appending result_text again duplicates the final
         // paragraph — both strings come through the same signing pipeline,
@@ -376,7 +382,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         lastTextEventRef.current = null;
         if (resultText && !streamBufferRef.current && !alreadyRendered) {
           // No streaming bubble — fresh assistant message (e.g. replay path).
-          setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: resultText, timestamp: new Date() }]);
+          setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: resultText, timestamp: new Date(), usage }]);
           onAssistantMessageRef.current?.(resultText);
         } else if (streamBufferRef.current) {
           // Replace the streamed bubble's content with the server's polished
@@ -392,12 +398,12 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
               const idx = prev.findIndex((m) => m.id === targetId);
               if (idx !== -1) {
                 const copy = prev.slice();
-                copy[idx] = { ...copy[idx], content: finalText };
+                copy[idx] = { ...copy[idx], content: finalText, usage };
                 return copy;
               }
             }
             // Fallback: streaming bubble disappeared (clear/replay). Append.
-            return [...prev, { id: nextId(), role: "assistant", content: finalText, timestamp: new Date() }];
+            return [...prev, { id: nextId(), role: "assistant", content: finalText, timestamp: new Date(), usage }];
           });
           onAssistantMessageRef.current?.(finalText);
         }
@@ -416,7 +422,10 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         // guard — but ONLY when WE initiated the start (startingSessionRef). The
         // WS is shared, so a foreign/background session.ready must not repoint
         // our ref and let that session's events leak into the open timeline.
-        if (sid && startingSessionRef.current) currentSessionIdRef.current = sid;
+        if (sid && startingSessionRef.current) {
+          currentSessionIdRef.current = sid;
+          freshSessionRef.current = sid; // we created it → don't resume/replay it
+        }
         if (msg.container_id && msg.container_id !== "pending") {
           const cid = msg.container_id as string;
           setContainerId(cid);
@@ -551,17 +560,23 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     if (sessionId === prevSessionIdRef.current) return;
     prevSessionIdRef.current = sessionId;
 
+    // A session we just created has no history and is already represented by the
+    // optimistic state we're about to add; resuming it triggers a replay that
+    // wipes that state (e.g. the attached image preview the server doesn't echo).
+    const isFresh = sessionId != null && sessionId === freshSessionRef.current;
+    freshSessionRef.current = null;
+
     // Clear old state
-    setMessages([]);
     setStreaming(false);
     setContainerId(null);
     setPendingQuestion(null);
     setAgentStatus({ state: "idle" });
     streamBufferRef.current = "";
     suppressNextAssistantRef.current = false;
+    if (!isFresh) setMessages([]);
 
-    // Resume the new session on the existing WS
-    if (sessionId && wsRef.current?.readyState === 1) {
+    // Resume the new session on the existing WS — but not one we just created.
+    if (!isFresh && sessionId && wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({
         type: "session.resume",
         session_id: sessionId,

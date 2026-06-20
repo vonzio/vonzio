@@ -21,10 +21,22 @@ export function OllamaModelPicker({ apiKeyId, value, onChange }: Props) {
     let cancelled = false;
     setLoading(true);
     fetchOllamaModels(apiKeyId)
-      .then((res) => { if (!cancelled) setModels(res.models); })
+      .then((res) => {
+        if (cancelled) return;
+        setModels(res.models);
+        // Self-heal a stale cross-provider model (e.g. a claude-* id left over
+        // from a previous key): once the real list loads, if the current value
+        // isn't a valid model for THIS key, reset to the first available one.
+        // Only when the list actually loaded (non-empty) so a transient
+        // empty/errored fetch never clobbers a valid selection.
+        if (value && res.models.length > 0 && !res.models.some((m) => m.id === value)) {
+          onChange(res.models[0].id);
+        }
+      })
       .catch(() => { if (!cancelled) setModels([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKeyId]);
 
   const sortedModels = [...models].sort((a, b) => a.name.localeCompare(b.name));

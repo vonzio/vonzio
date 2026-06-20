@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { FastifyReply } from "fastify";
-import { buildCsp, serveDashboardIndex, NONCE_PLACEHOLDER } from "./dashboard-csp.js";
+import { buildCsp, serveDashboardIndex, previewFrameSrc, NONCE_PLACEHOLDER } from "./dashboard-csp.js";
 
 function mockReply() {
   const headers: Record<string, string> = {};
@@ -39,6 +39,21 @@ describe("buildCsp", () => {
     expect(csp).toContain("base-uri 'self'");
     expect(csp).toContain("font-src 'self' https://fonts.gstatic.com");
     expect(csp).toContain("https://fonts.googleapis.com");
+  });
+
+  it("frame-src defaults to 'self' but admits preview subdomains when given", () => {
+    expect(buildCsp("x")).toContain("frame-src 'self'");
+    const csp = buildCsp("x", "'none'", previewFrameSrc("vonz.localhost"));
+    expect(csp).toContain("frame-src 'self' http://*.vonz.localhost https://*.vonz.localhost");
+  });
+});
+
+describe("previewFrameSrc", () => {
+  it("is 'self' when no preview domain (path mode / unset)", () => {
+    expect(previewFrameSrc()).toBe("'self'");
+  });
+  it("adds both schemes of the wildcard preview domain", () => {
+    expect(previewFrameSrc("app.vonz.io")).toBe("'self' http://*.app.vonz.io https://*.app.vonz.io");
   });
 });
 

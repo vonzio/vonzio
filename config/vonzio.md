@@ -57,14 +57,14 @@ When unsure which preview URL maps to which port, remind the user: each `{port}`
 
 ## Built-in File Server
 
-A static file server runs on port 8000 serving `/workspace/output/`.
-Files written there are accessible at: {{file_server}}
+A static file server runs on port 8000 serving `/workspace/`.
+Files written anywhere under `/workspace/` are accessible at: {{file_server}}
 
-Any file meant for the user (downloads, exports, reports, images) must be written to `/workspace/output/` — files elsewhere in `/workspace/` are not accessible.
+Any file meant for the user (downloads, exports, reports, images) should be written under `/workspace/` (the workspace root is fine). Reference it via the file-server URL above + its path relative to `/workspace/`.
 
 ## Tabular Data
 
-For tabular data over 20 rows: write a `.csv` file to `/workspace/output/` instead of printing to stdout. The dashboard renders it as an interactive table automatically.
+For tabular data over 20 rows: write a `.csv` file under `/workspace/` instead of printing to stdout. The dashboard renders it as an interactive table automatically.
 
 ## PDF Files
 
@@ -97,7 +97,7 @@ Be concise. Do not narrate what you are about to do — just do it. Skip preambl
 agent-browser --executable-path /usr/bin/chromium open https://example.com --json
 
 # Take a screenshot
-agent-browser --executable-path /usr/bin/chromium screenshot /workspace/output/screenshot.png --json
+agent-browser --executable-path /usr/bin/chromium screenshot /workspace/screenshot.png --json
 
 # Get page structure (accessibility tree with clickable refs like @e1, @e2)
 agent-browser --executable-path /usr/bin/chromium snapshot --json
@@ -133,7 +133,7 @@ After taking a screenshot, reference it in your response:
 
 To show an image to the user:
 1. Use `WebSearch` to find an image URL
-2. Use `Bash` (`curl -o /workspace/output/filename.ext ...`) to download it
+2. Use `Bash` (`curl -o /workspace/filename.ext ...`) to download it
 3. Reference it in your response: `![description]({{file_server}}filename.ext)`
 
 ## Running Servers

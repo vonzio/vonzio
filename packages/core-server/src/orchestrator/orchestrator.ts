@@ -1362,6 +1362,19 @@ export class Orchestrator extends EventEmitter {
     const model = resolveTaskModel(task, workspace, profile);
     const effort = task.effort ?? profile.effort;
 
+    // Whether the effective model can accept image input. Claude (api_key /
+    // claude_subscription) is vision-capable; OpenAI we can't introspect so we
+    // assume yes (image_url usually works); Ollama varies per model — query its
+    // capabilities. Drives the agent-runner's image-read guard so a non-vision
+    // model degrades gracefully instead of hard-failing on an image. Fail-open.
+    let supportsImages = true;
+    if (profile.resolved_provider === "ollama" && profile.resolved_api_key && model) {
+      try {
+        const { fetchOllamaModelCapabilities } = await import("../services/ollama-service.js");
+        supportsImages = (await fetchOllamaModelCapabilities(profile.resolved_api_key, model)).includes("vision");
+      } catch { supportsImages = true; }
+    }
+
     // Context replay: when the SDK can't carry context into this turn,
     // reconstruct the conversation from EventLog and prefix it to the
     // user's prompt. Two trigger conditions, same plumbing:
@@ -1485,6 +1498,7 @@ export class Orchestrator extends EventEmitter {
         : systemPrompt,
       agents: subagents,
       has_skills: hasSkills,
+      supports_images: supportsImages,
     };
 
     let result: TaskResult | null = null;

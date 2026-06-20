@@ -12,6 +12,12 @@ export function PreviewTab({ url, refreshTrigger = 0, isPublic = false, onToggle
   const [loadError, setLoadError] = useState(false);
   const [manualRefresh, setManualRefresh] = useState(0);
   const iframeKey = `${url}-${refreshTrigger}-${manualRefresh}`;
+  // Chrome renders PDFs via its built-in plugin viewer, which a `sandbox`d
+  // iframe blocks ("This page has been blocked by Chrome") — there's no sandbox
+  // token that re-enables it. Drop the sandbox for PDF previews; the content is
+  // still cross-origin-isolated by same-origin policy. App previews keep the
+  // sandbox (untrusted dev-server HTML/JS).
+  const isPdf = !!url && /\.pdf(?:$|[?#])/i.test(url);
 
   useEffect(() => {
     setLoadError(false);
@@ -109,7 +115,7 @@ export function PreviewTab({ url, refreshTrigger = 0, isPublic = false, onToggle
           key={iframeKey}
           src={url}
           className="flex-1 w-full border-0"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          sandbox={isPdf ? undefined : "allow-scripts allow-same-origin allow-forms allow-popups"}
           title="Preview"
           onError={() => setLoadError(true)}
           onLoad={(e) => {

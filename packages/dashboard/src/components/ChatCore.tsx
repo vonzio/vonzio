@@ -23,6 +23,8 @@ export interface ChatMessage {
   timestamp: Date;
   images?: string[]; // base64 data URLs for display
   files?: Array<{ name: string; type: "image" | "document" }>; // all attachment metadata
+  /** Per-turn token usage + cost, attached to the assistant message on turn.done. */
+  usage?: { input_tokens: number; output_tokens: number; cost_usd: number };
   /** Acceptance criteria attached to a goal-mode user turn — rendered under
    *  the user bubble and persisted so they survive a refresh. */
   acceptanceCriteria?: string[];

@@ -265,12 +265,18 @@ export class ProfileService {
     const updates: Record<string, unknown> = {};
     if (input.api_key_id !== undefined && (input.api_key_id || null) !== (existing[0].api_key_id ?? null)) {
       await this.validateApiKeyAccess(input.api_key_id || null, existing[0].user_id, userRole);
-      // Attaching a key to a model-less agent (e.g. accepting a shared key):
-      // pick a provider-appropriate model so it's runnable, unless the caller
-      // is also setting one.
-      if (input.model === undefined && !existing[0].model && input.api_key_id) {
-        const picked = await this.pickDefaultModel(null, input.api_key_id);
-        if (picked) updates.model = picked;
+      // On a key change, a model that belonged to the old key's provider can be
+      // stale (e.g. a claude-* model left on a now-Ollama agent). When the
+      // caller isn't explicitly setting a model, re-pick if the agent is
+      // model-less OR the provider changed: ollama/openai → a real default,
+      // anthropic / no key → null (the SDK picks a valid Claude default). This
+      // keeps profile.model from ever mismatching the linked key.
+      if (input.model === undefined && this.apiKeyService) {
+        const oldProvider = existing[0].api_key_id ? (await this.apiKeyService.get(existing[0].api_key_id))?.provider : undefined;
+        const newProvider = input.api_key_id ? (await this.apiKeyService.get(input.api_key_id))?.provider : undefined;
+        if (!existing[0].model || oldProvider !== newProvider) {
+          updates.model = input.api_key_id ? await this.pickDefaultModel(null, input.api_key_id) : null;
+        }
       }
     }
     if (input.name !== undefined) updates.name = input.name;
