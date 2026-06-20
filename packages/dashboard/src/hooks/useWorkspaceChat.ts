@@ -372,6 +372,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           break;
         }
         const resultText = msg.result_text as string | undefined;
+        const usage = msg.usage as { input_tokens: number; output_tokens: number; cost_usd: number } | undefined;
         // Dedup: when this turn's text already rendered as a "text" event
         // (replay path), appending result_text again duplicates the final
         // paragraph — both strings come through the same signing pipeline,
@@ -381,7 +382,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         lastTextEventRef.current = null;
         if (resultText && !streamBufferRef.current && !alreadyRendered) {
           // No streaming bubble — fresh assistant message (e.g. replay path).
-          setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: resultText, timestamp: new Date() }]);
+          setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: resultText, timestamp: new Date(), usage }]);
           onAssistantMessageRef.current?.(resultText);
         } else if (streamBufferRef.current) {
           // Replace the streamed bubble's content with the server's polished
@@ -397,12 +398,12 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
               const idx = prev.findIndex((m) => m.id === targetId);
               if (idx !== -1) {
                 const copy = prev.slice();
-                copy[idx] = { ...copy[idx], content: finalText };
+                copy[idx] = { ...copy[idx], content: finalText, usage };
                 return copy;
               }
             }
             // Fallback: streaming bubble disappeared (clear/replay). Append.
-            return [...prev, { id: nextId(), role: "assistant", content: finalText, timestamp: new Date() }];
+            return [...prev, { id: nextId(), role: "assistant", content: finalText, timestamp: new Date(), usage }];
           });
           onAssistantMessageRef.current?.(finalText);
         }

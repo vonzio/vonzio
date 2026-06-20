@@ -137,20 +137,27 @@ export function setupWsHandler(
     relayToSubscribers(taskId, sessionId, { type: "goal_stop", task_id: taskId, session_id: sessionId, ...info });
   });
 
-  orchestrator.on("task:done", async (taskId: string, sessionId: string | undefined, result?: { text: string }) => {
+  orchestrator.on("task:done", async (taskId: string, sessionId: string | undefined, result?: { text: string; input_tokens?: number; output_tokens?: number; cost_usd?: number }) => {
     if (sessionId) {
       const rawText = result?.text;
+      // Per-turn usage for the dashboard (in/out tokens + cost). Persisted in the
+      // log too so it survives replay/reload. Some providers (ollama/openai-compat)
+      // may report 0 — the UI hides the footer when both token counts are 0.
+      const usage = {
+        input_tokens: result?.input_tokens ?? 0,
+        output_tokens: result?.output_tokens ?? 0,
+        cost_usd: result?.cost_usd ?? 0,
+      };
       // Persist the RAW result text synchronously *before* awaiting the
       // image-signing roundtrip. Order matters: any follow-up event (next
       // turn, replay request) reading the log must see this turn.done
-      // already written. We sign for broadcast separately — replay also
-      // signs on read, so the log doesn't need to carry tokens.
-      eventLog.append(sessionId, "turn.done", { type: "turn.done", session_id: sessionId, result_text: rawText });
+      // already written.
+      eventLog.append(sessionId, "turn.done", { type: "turn.done", session_id: sessionId, result_text: rawText, usage });
 
       const signedText = rawText
         ? await imageRewriterService.signImagesIn(sessionId, rawText).catch(() => rawText)
         : rawText;
-      const msg = { type: "turn.done", session_id: sessionId, result_text: signedText };
+      const msg = { type: "turn.done", session_id: sessionId, result_text: signedText, usage };
       connectionManager.sendToSession(sessionId, msg);
 
       // Auto-generate workspace title if name looks auto-generated (async, non-blocking)
