@@ -43,6 +43,13 @@ type TaskUpdate = Partial<typeof schema.tasks.$inferInsert>;
  *  agent detaches. Tuned for typical back-to-back task cadence. */
 const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
 
+// Appended to the system prompt when the platform-control MCP is wired in, so
+// the agent reliably distinguishes Vonzio platform objects from its own runtime.
+// Mirrors PLATFORM_MCP_INSTRUCTIONS in mcp/platform-mcp.ts (which goes out via
+// the MCP initialize handshake); kept here too because the system prompt is
+// guaranteed to reach the model.
+const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled automation; a TASK is a single run.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
+
 /** Short, user-safe error string for surfacing a cause in events/logs. */
 function errMsg(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e);
@@ -1223,10 +1230,19 @@ export class Orchestrator extends EventEmitter {
     const resolvedMaxTurns = task.max_turns ?? profile.max_turns ?? this.deps.config.maxTurns;
     const presence = await this.resolvePresence(task.session_id);
     const presenceSection = buildPresenceSection(presence);
-    const systemPrompt = this.buildSystemPrompt(
+    let systemPrompt = this.buildSystemPrompt(
       task, containerId, containerName, sdkToolNames, nonSdkServers,
       memorySection, resolvedMaxTurns, presenceSection,
     );
+    // When the platform-control MCP ("vonzio") is wired in, bake a short primer
+    // into the system prompt (guaranteed-read) so the agent doesn't conflate
+    // Vonzio nouns with its own runtime — e.g. answering "how many workspaces
+    // do I have" by inspecting its container instead of calling workspace_list.
+    // The MCP server also sends this via initialize.instructions; this is the
+    // belt-and-suspenders copy.
+    if (nonSdkServers.some((s) => s.name === "vonzio")) {
+      systemPrompt += PLATFORM_MCP_PRIMER;
+    }
     this.emit("task:system_prompt", task.id, task.session_id, systemPrompt);
 
     // Resolve subagents from profile's agent_ids
