@@ -27,7 +27,7 @@ export const NONCE_PLACEHOLDER = "__VONZIO_NONCE__";
  * shiki/mermaid — which CSP otherwise blocks). `style-src`/`font-src` admit the
  * Google Fonts the built `index.html` references; everything else is `'self'`.
  */
-export function buildCsp(nonce: string, frameAncestors = "'none'"): string {
+export function buildCsp(nonce: string, frameAncestors = "'none'", frameSrc = "'self'"): string {
   return [
     "default-src 'self'",
     `script-src 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'`,
@@ -36,10 +36,26 @@ export function buildCsp(nonce: string, frameAncestors = "'none'"): string {
     "img-src 'self' data: blob:",
     "connect-src 'self'",
     "worker-src 'self' blob:",
+    // The dashboard embeds workspace previews (dev servers, the port-8000 file
+    // server) in an iframe. In hostname preview mode those are cross-origin
+    // subdomains, so without an explicit frame-src they'd fall back to
+    // default-src 'self' and Chrome blocks the iframe ("blocked by Chrome").
+    `frame-src ${frameSrc}`,
     `frame-ancestors ${frameAncestors}`,
     "object-src 'none'",
     "base-uri 'self'",
   ].join("; ");
+}
+
+/**
+ * frame-src value for the dashboard: `'self'` plus the workspace-preview
+ * subdomains when running in hostname preview mode. Path-mode previews are
+ * same-origin and covered by `'self'`. Allows both schemes so http (local
+ * vonz.localhost) and https (prod app.vonz.io) work from one build.
+ */
+export function previewFrameSrc(previewDomain?: string): string {
+  if (!previewDomain) return "'self'";
+  return `'self' http://*.${previewDomain} https://*.${previewDomain}`;
 }
 
 /**
@@ -61,7 +77,7 @@ export function widgetFrameAncestors(allowedOrigins: string[]): string {
  * CSP: this keeps frame-ancestors/object-src/base-uri lockdown and only relaxes
  * script-src to `'self'`.
  */
-export function buildBaselineCsp(frameAncestors = "'none'"): string {
+export function buildBaselineCsp(frameAncestors = "'none'", frameSrc = "'self'"): string {
   return [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
@@ -70,6 +86,7 @@ export function buildBaselineCsp(frameAncestors = "'none'"): string {
     "img-src 'self' data: blob:",
     "connect-src 'self'",
     "worker-src 'self' blob:",
+    `frame-src ${frameSrc}`,
     `frame-ancestors ${frameAncestors}`,
     "object-src 'none'",
     "base-uri 'self'",
@@ -86,14 +103,15 @@ export function serveDashboardIndex(
   reply: FastifyReply,
   template: string,
   frameAncestors = "'none'",
+  frameSrc = "'self'",
 ): FastifyReply {
   reply.header("cache-control", "no-cache");
   reply.type("text/html");
   if (!template.includes(NONCE_PLACEHOLDER)) {
-    reply.header("content-security-policy", buildBaselineCsp(frameAncestors));
+    reply.header("content-security-policy", buildBaselineCsp(frameAncestors, frameSrc));
     return reply.send(template);
   }
   const nonce = randomBytes(16).toString("base64url");
-  reply.header("content-security-policy", buildCsp(nonce, frameAncestors));
+  reply.header("content-security-policy", buildCsp(nonce, frameAncestors, frameSrc));
   return reply.send(template.split(NONCE_PLACEHOLDER).join(nonce));
 }
