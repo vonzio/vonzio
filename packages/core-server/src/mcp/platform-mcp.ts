@@ -85,6 +85,19 @@ function toolResult(text: string, isError = false) {
   return { content: [{ type: "text", text }], ...(isError && { isError: true }) };
 }
 
+// Surfaced to the model at connect time (MCP `initialize.instructions`). Frames
+// what these tools are FOR and disambiguates Vonzio's nouns from the agent's own
+// runtime — the recurring confusion was an agent treating "workspace" as its own
+// container/CWD instead of a Vonzio chat session it can inspect via these tools.
+const PLATFORM_MCP_INSTRUCTIONS = `These "vonzio" tools control the Vonzio platform you run on — they operate on the USER'S ACCOUNT, not on the machine you're executing in. Don't confuse platform objects with your own runtime:
+
+- WORKSPACE = a Vonzio chat session (one per conversation), each backed by its own container. It is NOT your current working directory or the container you're running in. To answer "how many workspaces/chats do I have", call \`workspace_list\` — do NOT inspect the filesystem, run \`ls\`, or look at your own container.
+- AGENT (a.k.a. profile) = a saved configuration (model, tools, skills, prompt). "Agents" here means these saved configs, via \`profile_list\`/\`profile_*\` — not subprocesses.
+- SKILL = a reusable playbook in the user's library (\`skill_list\`, \`create_skill\`). SUBAGENT = a delegate template (\`subagent_*\`). KNOWLEDGE = reference docs mounted at /knowledge (\`knowledge_*\`).
+- PLAYBOOK = a scheduled/repeatable automation; TASK = a single agent run.
+
+Rule of thumb: questions about the user's account, history, agents, automations, or "my workspaces/chats" → use these tools. Questions about the files/code in front of you → use your normal filesystem tools (Read/Bash/etc.). Some tools are gated and only appear when the user has enabled them for this agent.`;
+
 interface ToolDef {
   name: string;
   description: string;
@@ -218,7 +231,7 @@ const TOOL_DEFINITIONS: ToolDef[] = [
   {
     name: "workspace_list",
     description:
-      "List the caller's Vonzio workspaces. Each workspace is a long-lived chat session backed by a container. Use this to see active sessions, what model they're running, and whether they have a model override.",
+      "List the user's Vonzio workspaces (chat sessions on their account). THIS is how you answer \"how many workspaces/chats do I have\", \"list my sessions\", etc. — do not inspect the filesystem or your own container. Each workspace is a long-lived chat backed by its own container; returns status, model, and overrides.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1353,6 +1366,7 @@ export const platformMcpPlugin = fp(
               protocolVersion: "2024-11-05",
               capabilities: { tools: {} },
               serverInfo: { name: "vonzio-platform", version: "1.0.0" },
+              instructions: PLATFORM_MCP_INSTRUCTIONS,
             }),
           );
 
