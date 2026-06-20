@@ -52,6 +52,11 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
   // window where a brand-new session has been requested but its id hasn't
   // propagated back into the `sessionId` prop yet.
   const startingSessionRef = useRef(false);
+  // The id of a session WE just created via startSession(). The sessionId-change
+  // effect uses it to SKIP resuming that session — it has no server history and
+  // is already represented by the optimistic state (incl. attached image
+  // previews the server doesn't echo back), which a replay would wipe.
+  const freshSessionRef = useRef<string | null>(null);
   const currentSessionIdRef = useRef(sessionId);
   // Keep the ref in sync with the prop, but never let a transient null prop
   // (an empty "New Workspace" before its session id propagates) clobber a
@@ -416,7 +421,10 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         // guard — but ONLY when WE initiated the start (startingSessionRef). The
         // WS is shared, so a foreign/background session.ready must not repoint
         // our ref and let that session's events leak into the open timeline.
-        if (sid && startingSessionRef.current) currentSessionIdRef.current = sid;
+        if (sid && startingSessionRef.current) {
+          currentSessionIdRef.current = sid;
+          freshSessionRef.current = sid; // we created it → don't resume/replay it
+        }
         if (msg.container_id && msg.container_id !== "pending") {
           const cid = msg.container_id as string;
           setContainerId(cid);
@@ -551,17 +559,23 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     if (sessionId === prevSessionIdRef.current) return;
     prevSessionIdRef.current = sessionId;
 
+    // A session we just created has no history and is already represented by the
+    // optimistic state we're about to add; resuming it triggers a replay that
+    // wipes that state (e.g. the attached image preview the server doesn't echo).
+    const isFresh = sessionId != null && sessionId === freshSessionRef.current;
+    freshSessionRef.current = null;
+
     // Clear old state
-    setMessages([]);
     setStreaming(false);
     setContainerId(null);
     setPendingQuestion(null);
     setAgentStatus({ state: "idle" });
     streamBufferRef.current = "";
     suppressNextAssistantRef.current = false;
+    if (!isFresh) setMessages([]);
 
-    // Resume the new session on the existing WS
-    if (sessionId && wsRef.current?.readyState === 1) {
+    // Resume the new session on the existing WS — but not one we just created.
+    if (!isFresh && sessionId && wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({
         type: "session.resume",
         session_id: sessionId,
