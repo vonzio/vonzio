@@ -12,7 +12,7 @@ import { slugify } from "../lib/utils.js";
 import {
   fetchProfiles, deleteProfile, setDefaultProfile,
   fetchUserTools, createUserTool, deleteUserTool,
-  fetchUserSkills, createUserSkill, deleteUserSkill, uploadSkillBundle,
+  fetchUserSkills, createUserSkill, deleteUserSkill, uploadSkillFile,
   fetchUserAgents, createUserAgent, deleteUserAgent,
   type ProfileSummary,
 } from "../api/client.js";
@@ -500,7 +500,7 @@ function SkillSection() {
     setUploading(true);
     setError("");
     try {
-      await uploadSkillBundle(file);
+      await uploadSkillFile(file);
       refetch();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to upload skill");
@@ -580,12 +580,12 @@ function SkillSection() {
           <input
             ref={fileRef}
             type="file"
-            accept=".zip"
+            accept=".zip,.md,.markdown"
             style={{ display: "none" }}
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); }}
           />
           <Button size="sm" variant="ghost" icon={<Upload size={14} />} disabled={uploading} onClick={() => fileRef.current?.click()}>
-            {uploading ? "Uploading…" : "Upload .zip"}
+            {uploading ? "Uploading…" : "Upload .zip / .md"}
           </Button>
         </>
       }

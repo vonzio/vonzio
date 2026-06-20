@@ -30,7 +30,7 @@ import {
 import { ErrorBanner } from "./MyAgents.js";
 import {
   createProfile, updateProfile,
-  fetchUserSkills, fetchUserAgents, createUserAgent, createUserSkill, uploadSkillBundle,
+  fetchUserSkills, fetchUserAgents, createUserAgent, createUserSkill, uploadSkillFile,
   fetchUserGitProviders, type GitProviderInfo,
   fetchUserAnthropicKeys, type UserAnthropicKey,
   fetchWorkspaces, fetchAgentTemplates,
@@ -420,7 +420,7 @@ export function EditAgent() {
     setUploadingSkill(true);
     setError("");
     try {
-      const created = (await uploadSkillBundle(file)) as { id?: string };
+      const created = (await uploadSkillFile(file)) as { id?: string };
       if (created?.id) setSkillIds((prev) => prev.includes(created.id!) ? prev : [...prev, created.id!]);
       await refetchSkills();
     } catch (e) {
@@ -661,7 +661,7 @@ export function EditAgent() {
                     <input
                       ref={skillFileRef}
                       type="file"
-                      accept=".zip"
+                      accept=".zip,.md,.markdown"
                       className="hidden"
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadSkill(f); }}
                     />
@@ -672,7 +672,7 @@ export function EditAgent() {
                       disabled={uploadingSkill}
                       onClick={() => skillFileRef.current?.click()}
                     >
-                      {uploadingSkill ? "Uploading…" : "Upload .zip"}
+                      {uploadingSkill ? "Uploading…" : "Upload .zip / .md"}
                     </Button>
                     <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => setNewSkillOpen(true)}>
                       New skill

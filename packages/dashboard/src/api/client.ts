@@ -407,6 +407,36 @@ export function deleteUserSkill(id: string): Promise<{ status: string }> {
   return request(`/skills/${id}`, { method: "DELETE" });
 }
 
+/**
+ * Upload a skill from a file: a .zip bundle (SKILL.md + scripts/assets) or a
+ * lone .md / SKILL.md (saved as a single-file skill). Dispatches by extension.
+ */
+export async function uploadSkillFile(file: File): Promise<Record<string, unknown>> {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".zip")) return uploadSkillBundle(file);
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    const text = await file.text();
+    const { name, description } = parseSkillFrontmatter(text);
+    // Frontmatter name wins; else the filename (minus extension), unless it's
+    // literally SKILL.md (a folderless export) in which case fall back to "skill".
+    const base = file.name.replace(/\.(md|markdown)$/i, "");
+    const resolvedName = name || (base.toLowerCase() === "skill" ? "skill" : base);
+    return createUserSkill({ name: resolvedName, description, content: text }) as Promise<Record<string, unknown>>;
+  }
+  throw new Error("Unsupported file — upload a .zip bundle or a .md skill file.");
+}
+
+/** Pull `name`/`description` out of a SKILL.md YAML frontmatter block. */
+function parseSkillFrontmatter(text: string): { name: string; description: string } {
+  const fm = text.match(/^---\n([\s\S]*?)\n---/);
+  const grab = (key: string) => {
+    if (!fm) return "";
+    const m = fm[1].match(new RegExp(`^${key}:\\s*["']?(.+?)["']?\\s*$`, "m"));
+    return m ? m[1].trim() : "";
+  };
+  return { name: grab("name"), description: grab("description") };
+}
+
 /** Upload a skill bundle (.zip with SKILL.md + scripts/assets) as base64 JSON. */
 export async function uploadSkillBundle(file: File): Promise<Record<string, unknown>> {
   const buf = await file.arrayBuffer();
