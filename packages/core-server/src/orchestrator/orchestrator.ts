@@ -48,7 +48,7 @@ const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
 // Mirrors PLATFORM_MCP_INSTRUCTIONS in mcp/platform-mcp.ts (which goes out via
 // the MCP initialize handshake); kept here too because the system prompt is
 // guaranteed to reach the model.
-const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- PREREQUISITES: reading Gmail or sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
+const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- LEARNING SKILLS: when you work out a non-trivial, repeatable procedure, save it as a skill with create_skill (bundle helper scripts via files) so future runs reuse it. skill_list first to avoid duplicates; improve an existing one with skill_update rather than duplicating. This is how you improve over time.\n- PREREQUISITES: reading Gmail or sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
 
 /** Short, user-safe error string for surfacing a cause in events/logs. */
 function errMsg(e: unknown): string {
@@ -1835,11 +1835,15 @@ export class Orchestrator extends EventEmitter {
     if (this.systemPromptTemplate) return this.systemPromptTemplate;
 
     const thisDir = typeof __dirname !== "undefined" ? __dirname : resolve(fileURLToPath(import.meta.url), "..");
-    const candidates = [
-      join(process.cwd(), "config", "system-prompt.md"),
-      resolve(thisDir, "../../../../config/system-prompt.md"),
-      "/app/config/system-prompt.md", // Docker path
+    // `vonzio.md` is the current operator base-prompt filename; `system-prompt.md`
+    // is kept as a fallback so existing self-hoster config/ volume mounts that
+    // still carry the old name keep working.
+    const bases = [
+      join(process.cwd(), "config"),
+      resolve(thisDir, "../../../../config"),
+      "/app/config", // Docker path
     ];
+    const candidates = bases.flatMap((b) => [join(b, "vonzio.md"), join(b, "system-prompt.md")]);
 
     for (const candidate of candidates) {
       try {

@@ -100,6 +100,8 @@ Scheduling & recurring work: when the user asks for anything recurring or time-b
 
 Notifying the user: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the \`notify_user\` tool — it routes to the user's configured channel automatically (omit the channel for their default). Don't assume a specific channel.
 
+Learning skills: when you work out a non-trivial, repeatable procedure, SAVE IT AS A SKILL with \`create_skill\` so future runs reuse it (bundle helper scripts via \`files\`). First \`skill_list\` to avoid duplicates — if a related skill exists, improve it with \`skill_update\` instead of making a new one. This is how you get better over time.
+
 Prerequisites: anything that reads Gmail or sends to Slack/Telegram needs that integration connected. You CANNOT connect integrations yourself — first call \`integration_list\` to check; if the needed channel is missing, tell the user to connect it in Settings before you schedule the work.
 
 Rule of thumb: questions about the user's account, history, agents, automations, or "my workspaces/chats" → use these tools. Questions about the files/code in front of you → use your normal filesystem tools (Read/Bash/etc.). Some tools are gated and only appear when the user has enabled them for this agent.`;
@@ -429,6 +431,19 @@ const TOOL_DEFINITIONS: ToolDef[] = [
     name: "skill_list",
     description: "List the skills in your library (uploaded + bundled).",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "skill_update",
+    description: "Refine an existing skill you own: update its description and/or its SKILL.md body. Use this to improve a skill after you learn something (an edge case, a better step). Bundled (read-only) skills can't be updated.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        description: { type: "string", description: "New one-line description (optional)" },
+        body: { type: "string", description: "New SKILL.md body, replacing the current one (optional)" },
+      },
+      required: ["id"],
+    },
   },
   {
     name: "skill_delete",
@@ -1155,6 +1170,19 @@ async function handleToolCall(
       const skills = await skillService.list(userId);
       if (skills.length === 0) return toolResult("No skills.");
       return toolResult(skills.map((s) => `${s.id} — ${s.name}${s.source === "filesystem" ? " [bundled]" : ""}: ${s.description}`).join("\n"));
+    }
+
+    case "skill_update": {
+      const id = args.id as string;
+      if (!id) return toolResult("Missing required parameter: id", true);
+      const patch: { description?: string; content?: string } = {};
+      if (typeof args.description === "string") patch.description = args.description;
+      if (typeof args.body === "string") patch.content = args.body;
+      if (Object.keys(patch).length === 0) return toolResult("Nothing to update — provide description and/or body.", true);
+      const updated = await skillService.update(id, patch, userId);
+      if (!updated) return toolResult("Skill not found, not owned, or read-only (bundled).", true);
+      audit("skill_update", { id, fields: Object.keys(patch) });
+      return toolResult(`Updated skill ${updated.name} (${id}).`);
     }
 
     case "skill_delete": {

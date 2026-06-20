@@ -132,6 +132,43 @@ export class SkillService {
     return this.mapRow(row);
   }
 
+  /**
+   * Update an owned skill's name/description/body. For bundle skills, a changed
+   * body rewrites the SKILL.md inside the stored archive so the mounted skill
+   * reflects it. Returns null if not found / not owned / read-only (filesystem).
+   */
+  async update(
+    id: string,
+    patch: { name?: string; description?: string; content?: string },
+    userId?: string,
+  ): Promise<Skill | null> {
+    if (id.startsWith("fs_")) return null;
+    const rows = await this.db.select().from(schema.skills).where(eq(schema.skills.id, id));
+    if (rows.length === 0) return null;
+    const existing = rows[0];
+    if (userId && existing.user_id && existing.user_id !== userId) return null;
+
+    const updates: Partial<typeof schema.skills.$inferInsert> = { updated_at: new Date().toISOString() };
+    if (patch.name !== undefined) updates.name = patch.name;
+    if (patch.description !== undefined) updates.description = patch.description;
+    if (patch.content !== undefined) updates.content = patch.content;
+
+    // Bundle skill: rewrite SKILL.md inside the archive and refresh size.
+    if (patch.content !== undefined && existing.archive_key) {
+      try {
+        const buf = await this.storage.get(existing.archive_key);
+        const zip = new AdmZip(buf);
+        zip.deleteFile("SKILL.md");
+        zip.addFile("SKILL.md", Buffer.from(patch.content, "utf-8"));
+        await this.storage.put(existing.archive_key, zip.toBuffer());
+        updates.size_bytes = zip.getEntries().reduce((n, e) => n + (e.isDirectory ? 0 : e.header.size), 0);
+      } catch { /* archive missing — DB content still updates */ }
+    }
+
+    await this.db.update(schema.skills).set(updates).where(eq(schema.skills.id, id));
+    return this.mapRow({ ...existing, ...updates });
+  }
+
   async delete(id: string): Promise<boolean> {
     if (id.startsWith("fs_")) return false;
     const existing = await this.get(id);
