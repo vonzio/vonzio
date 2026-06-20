@@ -473,9 +473,14 @@ export function AnthropicKeySection() {
             <div style={{ fontSize: 13, color: "var(--vz-muted)", lineHeight: 1.5 }}>
               {isTeamKey(infoKey) ? (
                 <>This is an <strong>organization credential</strong> shared across your team — it can't be edited here. Manage it in <strong>Settings → Organization → Credentials</strong>. Your agents can use it as-is.</>
-              ) : (
-                <>This key is owned by <strong>{ownerLabel(infoKey)}</strong> and shared with you. Your agents can use it, but only its owner can edit or delete it.</>
-              )}
+              ) : (() => {
+                // Only name the owner when it resolves to an actual name (admin
+                // context — userNames is admin-only). Never surface a raw user id.
+                const ownerName = infoKey.user_id ? userNames[infoKey.user_id] : undefined;
+                return (
+                  <>This key is <strong>shared with you</strong>{ownerName ? <> by <strong>{ownerName}</strong></> : null}. Your agents can use it, but only its owner can edit or delete it.</>
+                );
+              })()}
             </div>
           </div>
         )}
