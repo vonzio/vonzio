@@ -5,7 +5,7 @@ Files are served by exact path only.
 """
 
 import os
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
 class StyledHandler(SimpleHTTPRequestHandler):
@@ -19,4 +19,11 @@ class StyledHandler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.chdir("/workspace")
-    HTTPServer(("0.0.0.0", 8000), StyledHandler).serve_forever()
+    # ThreadingHTTPServer (not the single-threaded HTTPServer): a PDF viewer
+    # issues range requests over multiple connections, and any slow/cancelled
+    # client (BrokenPipe mid-transfer) would otherwise block the one handler
+    # thread and wedge the whole server — connections pile up ESTABLISHED and
+    # every later request hangs. One thread per connection isolates that.
+    server = ThreadingHTTPServer(("0.0.0.0", 8000), StyledHandler)
+    server.daemon_threads = True
+    server.serve_forever()
