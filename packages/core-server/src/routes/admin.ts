@@ -8,6 +8,7 @@ import { schema } from "../db/index.js";
 import { ErrorCodes, errorResponse, ValidationError } from "../errors.js";
 import { ProfileService } from "../services/profile-service.js";
 import { ApiKeyService } from "../services/api-key-service.js";
+import { getActiveOrgId } from "../lib/active-org.js";
 import { ToolFileService } from "../services/tool-file-service.js";
 import { SkillService } from "../services/skill-service.js";
 import { SubagentService } from "../services/subagent-service.js";
@@ -200,7 +201,15 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
       }
       const isShared = (request.body as Record<string, unknown>).shared === true;
       const cleanBaseUrl = provider === "openai" ? base_url?.trim() || null : null;
-      const key = await apiKeyService.create({ name, provider, api_key, base_url: cleanBaseUrl, allowed_user_ids }, isShared ? undefined : request.user!.id);
+      // A shared key keeps its creator as owner so it stays editable and isn't
+      // misread as an org/team credential. Sharing is expressed via the
+      // api_key_users junction (allowed_user_ids). The legacy ownerless
+      // "shared with everyone" form (user_id NULL) only applies in OSS, where
+      // there is no active org — in SaaS every key carries an org_id, and an
+      // ownerless+org_id row collides with the org-credential materialization
+      // (org_id set + user_id NULL), orphaning the key out of any UI.
+      const ownerId = isShared && !getActiveOrgId() ? undefined : request.user!.id;
+      const key = await apiKeyService.create({ name, provider, api_key, base_url: cleanBaseUrl, allowed_user_ids }, ownerId);
 
       // Validate key if provided
       let validation: { valid: boolean; error?: string } | undefined;
