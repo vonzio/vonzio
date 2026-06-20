@@ -527,11 +527,13 @@ export class SessionRegistry {
     for (const [id, session] of entries) {
       // Pinned ("always-on") sessions are fully exempt from the sweeper: no
       // idle-pause, no idle-destroy, and no absolute expiry. Keep their TTL
-      // pushed forward so the displayed expiry reflects "alive" and the
-      // expiry path below can never trip, and keep them marked active. They
-      // stay running until the user unpins or deletes them.
+      // pushed forward so the displayed expiry reflects "alive" and the expiry
+      // path below can never trip. They stay until the user unpins or deletes.
       if (session.pinned) {
-        if (session.status === "idle") session.status = "active";
+        // Only un-idle a session that actually has a live container — don't
+        // paint a paused/reaped (container-less) session as a fake "active"
+        // zombie. It still isn't destroyed/expired; it just keeps its status.
+        if (session.status === "idle" && session.container_id) session.status = "active";
         const horizon = now + this.config.maxLifetimeSecs * 1000;
         // Only write when the stored expiry has drifted past the halfway mark
         // to avoid a DB write on every 30s tick.

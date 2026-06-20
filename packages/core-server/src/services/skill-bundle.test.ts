@@ -61,4 +61,15 @@ describe("repackBundle", () => {
   it("throws on a non-zip buffer", () => {
     expect(() => repackBundle(Buffer.from("not a zip"))).toThrow(BundleError);
   });
+
+  it("rejects a zip-slip path-traversal entry", () => {
+    const zip = new AdmZip();
+    zip.addFile("SKILL.md", Buffer.from(SKILL_MD));
+    zip.addFile("placeholder.sh", Buffer.from("pwned"));
+    // adm-zip sanitizes `..` on addFile, so force a traversal name onto the
+    // entry to simulate a hand-crafted malicious archive.
+    const evil = zip.getEntries().find((e) => e.entryName.endsWith("placeholder.sh"))!;
+    evil.entryName = "../evil.sh";
+    expect(() => repackBundle(zip.toBuffer())).toThrow(BundleError);
+  });
 });

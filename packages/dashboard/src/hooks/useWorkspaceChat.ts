@@ -413,9 +413,10 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         const sid = msg.session_id as string;
         // Adopt the new id immediately so this session's own tokens/tools (which
         // arrive before the `sessionId` prop round-trips) pass the cross-session
-        // guard. startingSessionRef stays true until the prop catches up, so the
-        // render-time sync above won't null this back out in the meantime.
-        if (sid) currentSessionIdRef.current = sid;
+        // guard — but ONLY when WE initiated the start (startingSessionRef). The
+        // WS is shared, so a foreign/background session.ready must not repoint
+        // our ref and let that session's events leak into the open timeline.
+        if (sid && startingSessionRef.current) currentSessionIdRef.current = sid;
         if (msg.container_id && msg.container_id !== "pending") {
           const cid = msg.container_id as string;
           setContainerId(cid);

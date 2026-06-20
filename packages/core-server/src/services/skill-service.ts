@@ -325,12 +325,18 @@ export function repackBundle(zipBuffer: Buffer): {
   for (const e of rooted) {
     const rel = e.entryName.slice(prefix.length);
     if (!rel) continue;
-    const data = e.getData();
-    totalBytes += data.length;
+    // Zip-slip guard: reject absolute paths or any `..` segment so a crafted
+    // entry can't escape ~/.claude/skills/<name>/ when unpacked in-container.
+    if (rel.startsWith("/") || rel.split("/").some((seg) => seg === "..")) {
+      throw new BundleError(`Unsafe path in archive: ${e.entryName}`);
+    }
+    // Zip-bomb guard: check the declared uncompressed size BEFORE inflating, so
+    // a highly-compressed entry can't OOM the server via getData().
+    totalBytes += e.header.size;
     if (totalBytes > MAX_BUNDLE_BYTES) {
       throw new BundleError(`Skill bundle exceeds the ${Math.round(MAX_BUNDLE_BYTES / 1024 / 1024)}MB limit.`);
     }
-    out.addFile(rel, data);
+    out.addFile(rel, e.getData());
     manifest.push(rel);
   }
 

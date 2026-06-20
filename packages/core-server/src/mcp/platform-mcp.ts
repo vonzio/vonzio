@@ -794,6 +794,14 @@ async function handleToolCall(
       const prompt = args.prompt as string;
       if (!prompt) return toolResult("Missing required parameter: prompt", true);
 
+      // If targeting an existing workspace, it must belong to the caller —
+      // otherwise an agent could inject a task into another user's/tenant's
+      // session via session_id smuggling.
+      if (typeof args.session_id === "string" && args.session_id) {
+        const owned = requireOwnedWorkspace(args);
+        if ("error" in owned) return owned.error;
+      }
+
       const input: SubmitTaskInput = {
         prompt,
         profile_id: profileId,
@@ -1294,6 +1302,12 @@ async function handleToolCall(
     case "playbook_run_cancel": {
       const runId = args.run_id as string;
       if (!runId) return toolResult("Missing required parameter: run_id", true);
+      // Authorize: the run must belong to a playbook the caller owns, else an
+      // agent could cancel another tenant's run by guessing/learning a run id.
+      const run = await playbookService.getRun(runId);
+      if (!run) return toolResult("Run not found", true);
+      const parent = await playbookService.get(run.playbook_id, { userId, orgId: scopedOrgId });
+      if (!parent) return toolResult("Run not found", true);
       const ok = chainRunner.cancelRun(runId);
       audit("playbook_run_cancel", { run_id: runId });
       return toolResult(ok ? `Requested cancellation of run ${runId}.` : `Run ${runId} is not active.`);
@@ -1316,13 +1330,18 @@ async function handleToolCall(
     case "profile_create": {
       const name = (args.name as string)?.trim();
       if (!name) return toolResult("Missing required parameter: name", true);
+      const ownSkillIds = async (ids: unknown) => {
+        if (!Array.isArray(ids)) return undefined;
+        const accessible = new Set((await skillService.list(userId)).map((s) => s.id));
+        return (ids as string[]).filter((id) => accessible.has(id));
+      };
       const created = await profileService.create({
         name,
         model: (args.model as string) || undefined,
         api_key_id: (args.api_key_id as string) || undefined,
         claude_md: (args.claude_md as string) || undefined,
         default_tools: Array.isArray(args.default_tools) ? (args.default_tools as string[]) : undefined,
-        skill_ids: Array.isArray(args.skill_ids) ? (args.skill_ids as string[]) : undefined,
+        skill_ids: await ownSkillIds(args.skill_ids),
       }, userId);
       audit("profile_create", { id: created.id, name: created.name });
       return toolResult(`Agent created.\nID: ${created.id}\nName: ${created.name}`);
@@ -1338,7 +1357,11 @@ async function handleToolCall(
         if (typeof args[k] === "string") updates[k] = args[k];
       }
       if (Array.isArray(args.default_tools)) updates.default_tools = args.default_tools;
-      if (Array.isArray(args.skill_ids)) updates.skill_ids = args.skill_ids;
+      if (Array.isArray(args.skill_ids)) {
+        // Only attach skills the caller can actually access.
+        const accessible = new Set((await skillService.list(userId)).map((s) => s.id));
+        updates.skill_ids = (args.skill_ids as string[]).filter((sid) => accessible.has(sid));
+      }
       const updated = await profileService.update(id, updates);
       audit("profile_update", { id, fields: Object.keys(updates) });
       return toolResult(updated ? `Agent ${id} updated.` : "Agent not found", !updated);
