@@ -962,6 +962,25 @@ export function Workspace() {
                     profileId={activeWorkspace?.profile_id}
                     sessionId={activeWorkspaceId}
                   />
+                  {/* Live status flows inline at the end of the transcript so it
+                      reads as the agent's next step and moves down as output
+                      arrives (rather than floating in a fixed gutter). */}
+                  {statusLabel && !chat.pendingQuestion && (
+                    <div className="flex pt-1">
+                      <div
+                        className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs"
+                        style={{
+                          background: "var(--vz-card)",
+                          border: "1px solid var(--vz-border)",
+                          color: "var(--vz-muted)",
+                          boxShadow: "var(--vz-shadow-sm)",
+                        }}
+                      >
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--vz-sodium)" }} />
+                        {statusLabel}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1011,28 +1030,6 @@ export function Workspace() {
                     : "transparent",
               }}
             >
-            {/* Agent status indicator */}
-            {statusLabel && !chat.pendingQuestion && (
-              <div className="px-0 pb-2" style={{ pointerEvents: "none" }}>
-                {/* Compact, auto-width pill (not a full-width bar) so it doesn't
-                    cover the last messages while the agent works. */}
-                <div className="max-w-3xl mx-auto flex">
-                  <div
-                    className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs"
-                    style={{
-                      pointerEvents: "auto",
-                      background: "var(--vz-card)",
-                      border: "1px solid var(--vz-border)",
-                      color: "var(--vz-muted)",
-                      boxShadow: "var(--vz-shadow-sm)",
-                    }}
-                  >
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--vz-sodium)" }} />
-                    {statusLabel}
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Bottom-area precedence: no-key guidance → pending question →
                 composer. The composer is never shown without a key — a
