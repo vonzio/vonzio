@@ -1,9 +1,9 @@
 #!/bin/bash
 # Agent container entrypoint:
-# 1. Start a static file server on port 8000 serving /workspace/output/
+# 1. Start a static file server on port 8000 serving /workspace/
 # 2. Keep container alive (agent runner is invoked via docker exec)
 
-mkdir -p /workspace/output
+mkdir -p /workspace
 
 # Start styled file server in the background
 python3 /app/fileserver.py > /tmp/fileserver.log 2>&1 &

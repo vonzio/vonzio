@@ -116,7 +116,7 @@ RUN git config --system credential.helper /app/git-credential-helper.sh
 # agent image (the supported extension point) rather than handing the LLM
 # root-equivalent power — see docs/HARDENING.md.
 RUN useradd -m -s /bin/bash agent && \
-    mkdir -p /workspace/output
+    mkdir -p /workspace
 
 RUN mkdir -p /home/agent/.npm-global && chown agent:agent /home/agent/.npm-global
 

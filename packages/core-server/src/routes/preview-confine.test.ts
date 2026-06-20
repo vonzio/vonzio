@@ -4,12 +4,12 @@ import { confineToWorkspace } from "./preview.js";
 describe("confineToWorkspace", () => {
   it("accepts an absolute path already under /workspace (the file viewer / tool paths)", () => {
     expect(confineToWorkspace("/workspace/build_resume.py")).toBe("/workspace/build_resume.py");
-    expect(confineToWorkspace("/workspace/output/cover.png")).toBe("/workspace/output/cover.png");
+    expect(confineToWorkspace("/workspace/sub/cover.png")).toBe("/workspace/sub/cover.png");
   });
 
   it("roots a relative path at /workspace", () => {
     expect(confineToWorkspace("build_resume.py")).toBe("/workspace/build_resume.py");
-    expect(confineToWorkspace("output/cover.png")).toBe("/workspace/output/cover.png");
+    expect(confineToWorkspace("sub/cover.png")).toBe("/workspace/sub/cover.png");
   });
 
   it("rejects traversal and foreign absolute paths", () => {

@@ -1,4 +1,4 @@
-"""Vonzio file server — serves files from /workspace/output/ (port 8000).
+"""Vonzio file server — serves files from /workspace/ (port 8000).
 
 Directory listing is disabled for security (defense in depth).
 Files are served by exact path only.
@@ -18,5 +18,5 @@ class StyledHandler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    os.chdir("/workspace/output")
+    os.chdir("/workspace")
     HTTPServer(("0.0.0.0", 8000), StyledHandler).serve_forever()
