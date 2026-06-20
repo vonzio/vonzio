@@ -212,6 +212,11 @@ export const PLATFORM_CAPABILITY_GROUPS: readonly PlatformCapabilityGroup[] = [
     label: "Delete workspaces",
     description: "Let this agent permanently delete workspaces (tears down the container and drops the conversation).",
   },
+  {
+    group: "profiles_write",
+    label: "Manage agents",
+    description: "Let this agent create, edit, and delete agents (profiles) — including changing its own configuration.",
+  },
 ] as const;
 
 /** Profile joined with its API key credentials — used by orchestrator only */

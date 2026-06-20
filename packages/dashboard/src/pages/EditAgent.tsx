@@ -59,6 +59,11 @@ const PLATFORM_CAPABILITY_GROUPS: { group: string; label: string; description: s
     label: "Delete workspaces",
     description: "Let this agent permanently delete workspaces (tears down the container and drops the conversation).",
   },
+  {
+    group: "profiles_write",
+    label: "Manage agents",
+    description: "Let this agent create, edit, and delete agents (profiles) — including changing its own configuration.",
+  },
 ];
 type TabValue = (typeof TAB_VALUES)[number];
 

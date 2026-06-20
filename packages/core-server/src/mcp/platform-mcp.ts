@@ -490,12 +490,66 @@ const TOOL_DEFINITIONS: ToolDef[] = [
     description: "Cancel an in-progress playbook run by run id.",
     inputSchema: { type: "object", properties: { run_id: { type: "string" } }, required: ["run_id"] },
   },
+  // ─── Integrations (read) ───
+  {
+    name: "integration_list",
+    description: "List the user's configured integrations (Slack, email, webhooks, etc.) — names/types/enabled only, no secrets.",
+    inputSchema: { type: "object", properties: {} },
+  },
   // ─── Gated: destructive workspace ops (opt-in via 'workspace_destructive') ───
   {
     name: "workspace_delete",
     description: "Permanently delete a workspace by session_id: tears down the container and drops the conversation. Irreversible.",
     inputSchema: { type: "object", properties: { session_id: { type: "string" } }, required: ["session_id"] },
     group: "workspace_destructive",
+  },
+  // ─── Gated: agent (profile) management (opt-in via 'profiles_write') ───
+  {
+    name: "profile_create",
+    description: "Create a new agent (profile). Returns the new profile id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        model: { type: "string", description: "Model override (optional)" },
+        api_key_id: { type: "string", description: "API key id to attach (optional)" },
+        claude_md: { type: "string", description: "System prompt / CLAUDE.md (optional)" },
+        default_tools: { type: "array", items: { type: "string" }, description: "Allowed tool names (optional)" },
+        skill_ids: { type: "array", items: { type: "string" }, description: "Skill ids to attach (optional)" },
+      },
+      required: ["name"],
+    },
+    group: "profiles_write",
+  },
+  {
+    name: "profile_update",
+    description: "Update an existing agent (profile). Only provided fields change.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        name: { type: "string" },
+        model: { type: "string" },
+        api_key_id: { type: "string" },
+        claude_md: { type: "string" },
+        default_tools: { type: "array", items: { type: "string" } },
+        skill_ids: { type: "array", items: { type: "string" } },
+      },
+      required: ["id"],
+    },
+    group: "profiles_write",
+  },
+  {
+    name: "profile_delete",
+    description: "Delete an agent (profile) by id. Fails if the agent is still in use.",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    group: "profiles_write",
+  },
+  {
+    name: "profile_set_default",
+    description: "Mark an agent (profile) as the user's default for new chats.",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    group: "profiles_write",
   },
 ];
 
@@ -546,6 +600,15 @@ async function handleToolCall(
       return { error: toolResult("Workspace not found", true) };
     }
     return { workspace: w };
+  }
+
+  // Resolve + authorize a profile by id. Same opaque "not found" for
+  // missing/not-yours/shared so existence isn't leaked, and shared (user_id
+  // null) profiles can't be mutated through the agent.
+  async function requireOwnedProfile(id: string): Promise<{ ok: true } | { error: ReturnType<typeof toolResult> }> {
+    const p = await profileService.get(id);
+    if (!p || !p.user_id || p.user_id !== userId) return { error: toolResult("Agent not found", true) };
+    return { ok: true };
   }
 
   // Coerce a JSON-RPC numeric arg to an integer in [min, max], with default.
@@ -1195,6 +1258,63 @@ async function handleToolCall(
       const ok = await workspaceService.delete(r.workspace.session_id, { orgId: scopedOrgId });
       audit("workspace_delete", { session_id: r.workspace.session_id });
       return toolResult(ok ? `Deleted workspace ${r.workspace.session_id}.` : "Workspace not found", !ok);
+    }
+
+    case "integration_list": {
+      const integrations = await integrationService.list(userId);
+      if (integrations.length === 0) return toolResult("No integrations configured.");
+      return toolResult(integrations.map((i) => `${i.id} — ${i.type}${i.enabled === false ? " [disabled]" : ""}${i.is_default ? " [default]" : ""}`).join("\n"));
+    }
+
+    case "profile_create": {
+      const name = (args.name as string)?.trim();
+      if (!name) return toolResult("Missing required parameter: name", true);
+      const created = await profileService.create({
+        name,
+        model: (args.model as string) || undefined,
+        api_key_id: (args.api_key_id as string) || undefined,
+        claude_md: (args.claude_md as string) || undefined,
+        default_tools: Array.isArray(args.default_tools) ? (args.default_tools as string[]) : undefined,
+        skill_ids: Array.isArray(args.skill_ids) ? (args.skill_ids as string[]) : undefined,
+      }, userId);
+      audit("profile_create", { id: created.id, name: created.name });
+      return toolResult(`Agent created.\nID: ${created.id}\nName: ${created.name}`);
+    }
+
+    case "profile_update": {
+      const id = args.id as string;
+      if (!id) return toolResult("Missing required parameter: id", true);
+      const owned = await requireOwnedProfile(id);
+      if ("error" in owned) return owned.error;
+      const updates: Record<string, unknown> = {};
+      for (const k of ["name", "model", "api_key_id", "claude_md"] as const) {
+        if (typeof args[k] === "string") updates[k] = args[k];
+      }
+      if (Array.isArray(args.default_tools)) updates.default_tools = args.default_tools;
+      if (Array.isArray(args.skill_ids)) updates.skill_ids = args.skill_ids;
+      const updated = await profileService.update(id, updates);
+      audit("profile_update", { id, fields: Object.keys(updates) });
+      return toolResult(updated ? `Agent ${id} updated.` : "Agent not found", !updated);
+    }
+
+    case "profile_delete": {
+      const id = args.id as string;
+      if (!id) return toolResult("Missing required parameter: id", true);
+      const owned = await requireOwnedProfile(id);
+      if ("error" in owned) return owned.error;
+      const res = await profileService.delete(id);
+      audit("profile_delete", { id, deleted: res.deleted });
+      return toolResult(res.deleted ? `Deleted agent ${id}.` : (res.error ?? "Could not delete agent."), !res.deleted);
+    }
+
+    case "profile_set_default": {
+      const id = args.id as string;
+      if (!id) return toolResult("Missing required parameter: id", true);
+      const owned = await requireOwnedProfile(id);
+      if ("error" in owned) return owned.error;
+      const ok = await profileService.setDefault(id, userId);
+      audit("profile_set_default", { id });
+      return toolResult(ok ? `Agent ${id} is now your default.` : "Could not set default", !ok);
     }
 
     default:
