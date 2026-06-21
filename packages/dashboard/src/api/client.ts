@@ -692,6 +692,14 @@ export function pruneOrphanContainers(): Promise<{ status: string; removed: stri
   return request("/pool/containers/prune", { method: "POST" });
 }
 
+// --- Device authorization (CLI login) ---
+
+/** Approve a CLI device-login code (RFC 8628). Session-authed; the server
+ *  marks the code approved and the CLI's poll then mints its token. */
+export function approveDeviceCode(userCode: string): Promise<{ status: string; client_name: string | null }> {
+  return request("/device/approve", { method: "POST", body: JSON.stringify({ user_code: userCode }) });
+}
+
 // --- Health ---
 
 export interface HealthStatus {

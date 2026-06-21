@@ -26,6 +26,9 @@ import { InMemoryTaskQueue } from "./queue/in-memory.js";
 import { SlidingWindowRateLimiter } from "./rate-limit/sliding-window.js";
 import { ConcurrencyLimiter } from "./rate-limit/concurrency-limiter.js";
 import { ContainerPool } from "./container/pool.js";
+import { DeviceService, DrizzleDeviceCodeStore } from "./services/device-service.js";
+import { createApiToken } from "./services/api-token-service.js";
+import { devicePublicRoutes, deviceApproveRoutes } from "./routes/device.js";
 import { CONTAINER_MODE_LABEL, ContainerMode } from "./container/docker-manager.js";
 import { SessionRegistry } from "./container/session-registry.js";
 import { WorkspaceProvisioner } from "./container/workspace.js";
@@ -240,6 +243,13 @@ export async function buildServer(deps: ServerDeps) {
   let loadedPlugins: LoadedPlugin[] = [];
   const memoryService = new MemoryService(db);
   const secretVaultService = new SecretVaultService(db, config.ENCRYPTION_KEY);
+  // Device-authorization flow (RFC 8628) for the CLI. Mints a normal api_token
+  // on approval so the issued token works as a bearer on /v1 + the WS.
+  const deviceService = new DeviceService(
+    new DrizzleDeviceCodeStore(db),
+    (userId, name) => createApiToken(db, { name, userId }),
+    { baseUrl: config.BETTER_AUTH_URL },
+  );
   // TelegramService kept in core only as a vestigial NotificationService
   // dep -- never called there. Will be removed when notification-service.ts
   // drops its now-unused telegramService field.
@@ -683,6 +693,7 @@ export async function buildServer(deps: ServerDeps) {
     v1.register(memoryRoutes, { memoryService });
     v1.register(playbookRoutes, { playbookService, profileService, chainRunner, playbookScheduler });
     v1.register(poolRoutes, { pool: containerPool, sessionRegistry, containerManager });
+    v1.register(deviceApproveRoutes, { deviceService });
 
     // Ollama Cloud is key-based and usable regardless of OLLAMA_ENABLED (which
     // gates local-Ollama wiring). The model-list route must always be available
@@ -724,6 +735,7 @@ export async function buildServer(deps: ServerDeps) {
   });
 
   // OAuth callbacks (no auth — browser redirect from provider)
+  server.register(devicePublicRoutes, { deviceService });
   server.register(gitOAuthCallbackRoute, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
   // Slack OAuth callback moved to @vonzio/plugin-slack.
   server.register(gmailOAuthCallbackRoute, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });

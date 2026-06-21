@@ -731,6 +731,26 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS platform_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb`);
     },
   },
+  {
+    version: 31,
+    description: "Device-authorization flow (RFC 8628) for the CLI: device_codes table.",
+    up: async (handle) => {
+      await handle.db.execute(sql`CREATE TABLE IF NOT EXISTS device_codes (
+        id TEXT PRIMARY KEY,
+        device_code TEXT NOT NULL,
+        user_code TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        user_id TEXT,
+        org_id TEXT,
+        client_name TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_polled_at TEXT
+      )`);
+      await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS device_codes_device_code_idx ON device_codes(device_code)`);
+      await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS device_codes_user_code_idx ON device_codes(user_code)`);
+    },
+  },
 ];
 
 /**
