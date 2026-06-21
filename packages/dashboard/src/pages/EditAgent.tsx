@@ -22,10 +22,10 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Plus, Upload } from "lucide-react";
+import { ArrowLeft, Plus, Upload, ShieldCheck, Globe } from "lucide-react";
 import {
   Button, Field, Input, Textarea, Select, type SelectOption,
-  Checkbox, Panel, Tabs, type TabDef, Modal, Banner,
+  Checkbox, Panel, Tabs, type TabDef, Modal, Toggle,
 } from "../brand/components.js";
 import { ErrorBanner } from "./MyAgents.js";
 import {
@@ -112,6 +112,10 @@ export function EditAgent() {
   // sessions (which keep their old network rules until restarted).
   const [initialEgressKey, setInitialEgressKey] = useState("");
   const [egressNudge, setEgressNudge] = useState<number | null>(null);
+  // Whether this server enforces egress at the network layer. When false there's
+  // no truthful per-agent control to show (domains do nothing) — we show an
+  // operator note instead of a toggle.
+  const egressEnforced = !!(window as unknown as { __VONZIO_EGRESS_ENFORCEMENT?: boolean }).__VONZIO_EGRESS_ENFORCEMENT;
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
@@ -787,24 +791,27 @@ export function EditAgent() {
 
               <Panel title="Network egress">
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  {(window as unknown as { __VONZIO_EGRESS_ENFORCEMENT?: boolean }).__VONZIO_EGRESS_ENFORCEMENT ? (
-                    <Banner>
-                      Enforced at the network layer — the agent can reach the
-                      model endpoint and the domains below; everything else is
-                      blocked (including shell commands like curl). "Allow all
-                      egress" disables the restriction.
-                    </Banner>
-                  ) : (
-                    <Banner>
-                      Advisory only — these domains are passed to the agent as
-                      guidance, not enforced at the network layer on this server.
-                      The agent (and shell commands like curl) can still reach
-                      other hosts. (Set EGRESS_ENFORCEMENT=1 to enforce.)
-                    </Banner>
-                  )}
-                  <Checkbox checked={allowAllEgress} onChange={setAllowAllEgress}>Allow all egress</Checkbox>
-                  {(
-                    <Field label="Allowed domains" hint={allowAllEgress ? "Kept, but inactive while “Allow all egress” is on — uncheck to enforce just these." : "Type a domain and press Enter or comma to add it."}>
+                  {egressEnforced ? (
+                    <>
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+                        <div style={{ display: "flex", gap: 10, minWidth: 0 }}>
+                          <ShieldCheck size={18} style={{ flexShrink: 0, marginTop: 1, color: allowAllEgress ? "var(--vz-muted-2)" : "var(--vz-ok)" }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--vz-ink)" }}>
+                              Restrict network egress{" "}
+                              <span style={{ fontWeight: 400, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)", fontSize: 11 }}>recommended</span>
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--vz-muted)", marginTop: 3, lineHeight: 1.5 }}>
+                              {allowAllEgress
+                                ? "Off — the agent can reach any host on the internet."
+                                : "On — the agent reaches only the model endpoint and the domains below; everything else is blocked (including shell commands like curl)."}
+                            </div>
+                          </div>
+                        </div>
+                        <Toggle checked={!allowAllEgress} onChange={(v) => setAllowAllEgress(!v)} aria-label="Restrict network egress" />
+                      </div>
+                      {!allowAllEgress && (
+                    <Field label="Allowed domains" hint="Type a domain and press Enter or comma to add it.">
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                         {egressDomains.map((d, i) => (
                           <span
@@ -841,6 +848,15 @@ export function EditAgent() {
                         placeholder="github.com"
                       />
                     </Field>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ display: "flex", gap: 10, fontSize: 12.5, color: "var(--vz-muted)", lineHeight: 1.5 }}>
+                      <Globe size={16} style={{ flexShrink: 0, marginTop: 1, color: "var(--vz-muted-2)" }} />
+                      <span>
+                        Network egress isn’t enforced on this server, so per-agent restrictions don’t apply — agents can reach any host. An operator can enable enforcement with <code style={{ fontFamily: "var(--vz-font-mono)" }}>EGRESS_ENFORCEMENT=1</code>.
+                      </span>
+                    </div>
                   )}
                 </div>
               </Panel>
