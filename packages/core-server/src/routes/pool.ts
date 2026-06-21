@@ -3,6 +3,7 @@ import fp from "fastify-plugin";
 import type { ContainerPool } from "../container/pool.js";
 import type { SessionRegistry } from "../container/session-registry.js";
 import type { ContainerManager } from "@vonzio/shared";
+import { CONTAINER_MODE_LABEL, ContainerMode } from "../container/docker-manager.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 
 export interface PoolRoutesOptions {
@@ -31,13 +32,27 @@ export const poolRoutes = fp(
       const containers = await opts.containerManager.listManagedContainers();
       const poolMap = opts.pool.trackedContainers;
       const sessionMap = opts.sessionRegistry.containerSessionMap;
+      // The DB is authoritative for session ownership: a container can be in a
+      // workspace row but briefly absent from the in-memory map (create/
+      // reassign window). Without this it would be mislabelled "orphan" — and
+      // an admin could prune a live container by mistake. Mirrors the reaper's
+      // keep-set. Fail closed (treat as "all owned") if the DB read errors.
+      let dbContainerIds: Set<string>;
+      try {
+        dbContainerIds = await opts.sessionRegistry.dbContainerIds();
+      } catch {
+        dbContainerIds = new Set(containers.map((c) => c.id));
+      }
 
       const enriched = containers.map((c) => {
         const poolStatus = poolMap.get(c.id);
         const sessionId = sessionMap.get(c.id);
+        const mode = c.labels?.[CONTAINER_MODE_LABEL];
 
-        let assignment: "pool-idle" | "pool-busy" | "session" | "orphan";
-        if (sessionId) {
+        let assignment: "pool-idle" | "pool-busy" | "session" | "infra" | "orphan";
+        if (mode === ContainerMode.VpnSidecar || mode === ContainerMode.EgressProxy) {
+          assignment = "infra";
+        } else if (sessionId || dbContainerIds.has(c.id)) {
           assignment = "session";
         } else if (poolStatus === "idle") {
           assignment = "pool-idle";
@@ -56,6 +71,11 @@ export const poolRoutes = fp(
       });
 
       return { containers: enriched };
+    });
+
+    server.post("/v1/pool/containers/prune", { preHandler: requireAdmin as any }, async () => {
+      const removed = await opts.pool.pruneOrphans();
+      return { status: "pruned", removed, count: removed.length };
     });
 
     server.delete<{ Params: { id: string } }>("/v1/pool/containers/:id", { preHandler: requireAdmin as any }, async (request) => {

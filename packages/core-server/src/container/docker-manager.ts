@@ -10,6 +10,24 @@ import type {
 const MANAGED_LABEL = "managed-by";
 const MANAGED_VALUE = "vonzio";
 
+/**
+ * Docker label key carrying a managed container's role, and its allowed values.
+ * The orphan reaper's skip-checks (pool.ts) and the ops container list
+ * (routes/pool.ts) depend on these matching the writers (orchestrator.ts,
+ * server.ts) exactly — keeping them as shared constants makes that a
+ * compile-time guarantee instead of a grep-time one. NB: distinct from the
+ * task-execution `mode` ("batch"|"pooled"|"session"|"stream").
+ */
+export const CONTAINER_MODE_LABEL = "vonzio-mode";
+export const ContainerMode = {
+  Session: "session",
+  Pooled: "pooled",
+  Batch: "batch",
+  VpnSidecar: "vpn-sidecar",
+  EgressProxy: "egress-proxy",
+} as const;
+export type ContainerModeValue = (typeof ContainerMode)[keyof typeof ContainerMode];
+
 export class DockerManager implements ContainerManager {
   constructor(
     private docker: Docker,

@@ -11,11 +11,20 @@ import { tmpdir } from "node:os";
 
 // --- Mock ContainerManager ---
 
+type MockEntry = {
+  status: "running" | "exited";
+  opts: ContainerCreateOptions;
+  labels: Record<string, string>;
+  createdAt: string;
+};
+
 function createMockManager(): ContainerManager & {
-  containers: Map<string, { status: "running" | "exited"; opts: ContainerCreateOptions }>;
+  containers: Map<string, MockEntry>;
   execOutputs: Map<string, string[]>;
+  /** Inject a container straight into Docker (not via the pool) for sweep tests. */
+  addExternal(id: string, opts?: { labels?: Record<string, string>; ageMs?: number; status?: "running" | "exited"; createdAt?: string }): void;
 } {
-  const containers = new Map<string, { status: "running" | "exited"; opts: ContainerCreateOptions }>();
+  const containers = new Map<string, MockEntry>();
   const execOutputs = new Map<string, string[]>();
   let nextId = 1;
 
@@ -23,9 +32,18 @@ function createMockManager(): ContainerManager & {
     containers,
     execOutputs,
 
+    addExternal(id, opts = {}) {
+      containers.set(id, {
+        status: opts.status ?? "running",
+        opts: { env: {} },
+        labels: opts.labels ?? { "vonzio-mode": "session" },
+        createdAt: opts.createdAt ?? new Date(Date.now() - (opts.ageMs ?? 0)).toISOString(),
+      });
+    },
+
     async createContainer(opts) {
       const id = `ctr_${nextId++}`;
-      containers.set(id, { status: "created" as "running", opts });
+      containers.set(id, { status: "created" as "running", opts, labels: opts.labels ?? {}, createdAt: new Date().toISOString() });
       return id;
     },
 
@@ -65,8 +83,8 @@ function createMockManager(): ContainerManager & {
       return Array.from(containers.entries()).map(([id, c]) => ({
         id,
         status: c.status === "running" ? "running" as const : "exited" as const,
-        labels: {},
-        created_at: new Date().toISOString(),
+        labels: c.labels,
+        created_at: c.createdAt,
       }));
     },
     async getContainerIp() { return "172.17.0.2"; },
@@ -196,6 +214,131 @@ describe("ContainerPool", () => {
     await pool.shutdown();
     expect(pool.totalCount).toBe(0);
     expect(manager.containers.size).toBe(0);
+  });
+});
+
+// --- Orphan reaper / prune Tests ---
+
+describe("ContainerPool orphan reaping", () => {
+  const OLD = 20 * 60 * 1000; // older than ORPHAN_MIN_AGE_MS (15 min)
+  const YOUNG = 60 * 1000;
+  let manager: ReturnType<typeof createMockManager>;
+  let pool: ContainerPool;
+
+  // Lightweight stand-in for SessionRegistry — the pool only reads
+  // containerSessionMap (in-memory map) and dbContainerIds() (DB-authoritative
+  // keep-set). Stubbing keeps these tests DB-independent so they run in CI.
+  function fakeRegistry(opts: { containerSessions?: Record<string, string>; dbIds?: string[]; dbThrows?: boolean } = {}) {
+    return {
+      get containerSessionMap() {
+        return new Map(Object.entries(opts.containerSessions ?? {}));
+      },
+      async dbContainerIds() {
+        if (opts.dbThrows) throw new Error("db down");
+        return new Set(opts.dbIds ?? []);
+      },
+    } as unknown as SessionRegistry;
+  }
+
+  function makePool() {
+    return new ContainerPool(
+      manager,
+      { minSize: 0, maxSize: 5, idleDrainSecs: 60, maxRecycles: 3, healthCheckIntervalSecs: 9999, cleanupCmd: ["true"] },
+      () => ({ env: {}, labels: { "vonzio-mode": "pooled" } }),
+    );
+  }
+
+  const sweep = (o: { reap: boolean }) =>
+    (pool as unknown as { sweepOrphans(o: { reap: boolean }): Promise<void> }).sweepOrphans(o);
+
+  beforeEach(() => {
+    manager = createMockManager();
+    pool = makePool();
+  });
+
+  it("pruneOrphans removes an old unowned session container", async () => {
+    pool.setSessionRegistry(fakeRegistry());
+    manager.addExternal("orphan_old", { labels: { "vonzio-mode": "session" }, ageMs: OLD });
+    const removed = await pool.pruneOrphans();
+    expect(removed).toEqual(["orphan_old"]);
+    expect(manager.containers.has("orphan_old")).toBe(false);
+  });
+
+  it("pruneOrphans keeps young, DB-owned, and infra containers", async () => {
+    pool.setSessionRegistry(fakeRegistry({ dbIds: ["owned_ctr"] }));
+    manager.addExternal("owned_ctr", { ageMs: OLD });          // owned in DB
+    manager.addExternal("young_orphan", { ageMs: YOUNG });     // too young
+    manager.addExternal("sidecar", { labels: { "vonzio-mode": "vpn-sidecar" }, ageMs: OLD });
+    manager.addExternal("egress", { labels: { "vonzio-mode": "egress-proxy" }, ageMs: OLD });
+
+    const removed = await pool.pruneOrphans();
+    expect(removed).toEqual([]);
+    expect(manager.containers.size).toBe(4);
+  });
+
+  it("pruneOrphans treats an in-memory session container as owned", async () => {
+    pool.setSessionRegistry(fakeRegistry({ containerSessions: { live_ctr: "sess_1" } }));
+    manager.addExternal("live_ctr", { ageMs: OLD });
+    const removed = await pool.pruneOrphans();
+    expect(removed).toEqual([]);
+  });
+
+  it("pruneOrphans fails closed when the DB read errors", async () => {
+    pool.setSessionRegistry(fakeRegistry({ dbThrows: true }));
+    manager.addExternal("orphan_old", { ageMs: OLD });
+    await expect(pool.pruneOrphans()).rejects.toThrow(/database unavailable/);
+    expect(manager.containers.has("orphan_old")).toBe(true);
+  });
+
+  it("periodic sweep needs two strikes before reaping", async () => {
+    pool.setSessionRegistry(fakeRegistry());
+    manager.addExternal("orphan_old", { ageMs: OLD });
+    // First sweep with reap:true but no prior candidate → not removed yet.
+    await sweep({ reap: true });
+    expect(manager.containers.has("orphan_old")).toBe(true);
+    // Second sweep → confirmed, removed.
+    await sweep({ reap: true });
+    expect(manager.containers.has("orphan_old")).toBe(false);
+  });
+
+  it("seeding sweep (reap:false) never removes, even on a second pass", async () => {
+    pool.setSessionRegistry(fakeRegistry());
+    manager.addExternal("orphan_old", { ageMs: OLD });
+    await sweep({ reap: false });
+    await sweep({ reap: false });
+    expect(manager.containers.has("orphan_old")).toBe(true);
+  });
+
+  it("periodic sweep never reaps a DB-owned container even across strikes", async () => {
+    pool.setSessionRegistry(fakeRegistry({ dbIds: ["owned_ctr"] }));
+    manager.addExternal("owned_ctr", { ageMs: OLD });
+    await sweep({ reap: true });
+    await sweep({ reap: true });
+    expect(manager.containers.has("owned_ctr")).toBe(true);
+  });
+
+  it("never reaps when no session registry is wired (fail closed)", async () => {
+    // pool has no setSessionRegistry call
+    manager.addExternal("orphan_old", { ageMs: OLD });
+    await sweep({ reap: true });
+    await sweep({ reap: true });
+    expect(manager.containers.has("orphan_old")).toBe(true);
+    await expect(pool.pruneOrphans()).rejects.toThrow();
+  });
+
+  it("pruneOrphans reaps an orphan with an unparseable created_at (no permanent leak)", async () => {
+    pool.setSessionRegistry(fakeRegistry());
+    manager.addExternal("orphan_badts", { createdAt: "not-a-real-date" });
+    const removed = await pool.pruneOrphans();
+    expect(removed).toEqual(["orphan_badts"]);
+  });
+
+  it("periodic sweep never reaps a too-young orphan", async () => {
+    pool.setSessionRegistry(fakeRegistry());
+    manager.addExternal("young", { ageMs: YOUNG });
+    await sweep({ reap: true });
+    await sweep({ reap: true });
+    expect(manager.containers.has("young")).toBe(true);
   });
 });
 
