@@ -407,6 +407,25 @@ export function deleteUserSkill(id: string): Promise<{ status: string }> {
   return request(`/skills/${id}`, { method: "DELETE" });
 }
 
+export interface SkillFile {
+  path: string;
+  size: number;
+  /** UTF-8 text, or null when the file is binary or over the preview cap. */
+  content: string | null;
+  binary: boolean;
+  truncated: boolean;
+}
+
+/** Read one file out of a skill bundle for inline preview. */
+export function fetchSkillFile(id: string, path: string): Promise<SkillFile> {
+  return request(`/skills/${id}/file?path=${encodeURIComponent(path)}`);
+}
+
+/** Same-origin URL for downloading one bundle file (cookie-authed via <a>). */
+export function skillFileRawUrl(id: string, path: string): string {
+  return `${BASE}/skills/${id}/file/raw?path=${encodeURIComponent(path)}`;
+}
+
 /**
  * Upload a skill from a file: a .zip bundle (SKILL.md + scripts/assets) or a
  * lone .md / SKILL.md (saved as a single-file skill). Dispatches by extension.

@@ -21,6 +21,16 @@ export interface Skill {
   updated_at: string;
 }
 
+/** A single file read out of a skill bundle, for the dashboard viewer. */
+export interface SkillFile {
+  path: string;
+  size: number;
+  /** UTF-8 text, or null when the file is binary or exceeds the preview cap. */
+  content: string | null;
+  binary: boolean;
+  truncated: boolean;
+}
+
 /** A resolved skill ready to mount: bundle (zip bytes) or single SKILL.md. */
 export interface ResolvedSkill {
   name: string;
@@ -38,6 +48,19 @@ export interface UploadSkillInput {
 
 /** Hard ceiling on a bundle's total uncompressed size. */
 const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
+
+/** Largest text file the viewer inlines; bigger ones come back truncated. */
+const MAX_PREVIEW_BYTES = 512 * 1024;
+
+/** Treat a file as binary if it has a NUL byte in its first chunk (the same
+ *  cheap heuristic git uses) — keeps non-text assets out of the text viewer. */
+function looksBinary(data: Buffer): boolean {
+  const n = Math.min(data.length, 8000);
+  for (let i = 0; i < n; i++) {
+    if (data[i] === 0) return true;
+  }
+  return false;
+}
 
 export class SkillService {
   constructor(
@@ -167,6 +190,63 @@ export class SkillService {
 
     await this.db.update(schema.skills).set(updates).where(eq(schema.skills.id, id));
     return this.mapRow({ ...existing, ...updates });
+  }
+
+  /**
+   * Load a bundle skill's archive for the viewer, enforcing ownership (owned or
+   * shared/user_id=null). Returns null if not found, not accessible, or not a
+   * bundle. The `path`, when given, must be present in the stored manifest —
+   * that's the zip-slip guard for the file routes (we only ever serve entries
+   * we recorded at upload time).
+   */
+  private async loadOwnedArchive(
+    id: string,
+    userId: string | undefined,
+    path?: string,
+  ): Promise<{ zip: AdmZip } | null> {
+    if (id.startsWith("fs_")) return null;
+    const rows = await this.db.select().from(schema.skills).where(eq(schema.skills.id, id));
+    if (rows.length === 0) return null;
+    const existing = rows[0];
+    if (userId && existing.user_id && existing.user_id !== userId) return null;
+    if (!existing.archive_key) return null;
+    if (path !== undefined && !(existing.manifest ?? []).includes(path)) return null;
+    let buf: Buffer;
+    try {
+      buf = await this.storage.get(existing.archive_key);
+    } catch {
+      return null;
+    }
+    try {
+      return { zip: new AdmZip(buf) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read one file from a bundle for inline preview (text) or a binary marker. */
+  async readBundleFile(id: string, filePath: string, userId?: string): Promise<SkillFile | null> {
+    const loaded = await this.loadOwnedArchive(id, userId, filePath);
+    if (!loaded) return null;
+    const entry = loaded.zip.getEntry(filePath);
+    if (!entry || entry.isDirectory) return null;
+    const data = entry.getData();
+    const size = data.length;
+    if (looksBinary(data)) {
+      return { path: filePath, size, content: null, binary: true, truncated: false };
+    }
+    const truncated = size > MAX_PREVIEW_BYTES;
+    const content = data.subarray(0, MAX_PREVIEW_BYTES).toString("utf-8");
+    return { path: filePath, size, content, binary: false, truncated };
+  }
+
+  /** Raw bytes of one bundle file, for download (text or binary). */
+  async readBundleFileRaw(id: string, filePath: string, userId?: string): Promise<Buffer | null> {
+    const loaded = await this.loadOwnedArchive(id, userId, filePath);
+    if (!loaded) return null;
+    const entry = loaded.zip.getEntry(filePath);
+    if (!entry || entry.isDirectory) return null;
+    return entry.getData();
   }
 
   async delete(id: string): Promise<boolean> {
