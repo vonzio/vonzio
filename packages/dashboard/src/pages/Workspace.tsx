@@ -375,6 +375,9 @@ export function Workspace() {
     keyMissing && activeProfile && !activeProfile.team_owned
       ? (availableApiKeys ?? [])[0]
       : undefined;
+  // Distinguish a key the user OWNS from one merely shared with them, so the
+  // empty-state copy doesn't tell an owner their own key is "shared with you".
+  const attachableKeyOwned = !!attachableKey && attachableKey.user_id === currentUser.id;
   const [attaching, setAttaching] = useState(false);
   const attachKey = async () => {
     if (!activeProfile || !attachableKey) return;
@@ -867,14 +870,16 @@ export function Workspace() {
                       <div className="text-center">
                         <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--vz-ink)" }}>
                           {!keyMissing ? "How can I help?"
-                            : attachableKey ? "Use your shared key to get started"
+                            : attachableKey ? (attachableKeyOwned ? "Attach a key to get started" : "Use your shared key to get started")
                             : "Add an API key to get started"}
                         </h2>
                         <p className="text-sm text-muted-foreground">
                           {!keyMissing
                             ? ((profiles?.length ?? 0) > 1 ? "Select an agent and start a conversation" : "Start a conversation")
                             : attachableKey
-                              ? `“${attachableKey.name}” is shared with you — attach it to your agent to start chatting.`
+                              ? (attachableKeyOwned
+                                  ? `“${attachableKey.name}” isn’t attached to this agent yet — attach it to start chatting.`
+                                  : `“${attachableKey.name}” is shared with you — attach it to your agent to start chatting.`)
                               : "You'll need a provider key before you can chat — it takes a few seconds."}
                         </p>
                       </div>
@@ -1052,7 +1057,9 @@ export function Workspace() {
                       <Key className="w-4 h-4 shrink-0" />
                       <span className="flex-1">
                         {attachableKey
-                          ? `“${attachableKey.name}” is shared with you — attach it to this agent to continue.`
+                          ? (attachableKeyOwned
+                              ? `“${attachableKey.name}” isn’t attached to this agent — attach it to continue.`
+                              : `“${attachableKey.name}” is shared with you — attach it to this agent to continue.`)
                           : "No API key configured — add one to continue this conversation."}
                       </span>
                       <button

@@ -13,7 +13,7 @@ import {
   validateUserAnthropicKey,
 } from "../../../api/client.js";
 import {
-  Button, Field, Input, Select, Checkbox, Toggle,
+  Button, Field, Input, Select, Checkbox,
   Badge, Modal, EmptyState, DataTable,
   type DataColumn, type SelectOption,
 } from "../../../brand/components.js";
@@ -47,7 +47,6 @@ export function AnthropicKeySection() {
   // "Test connection" result for the add/edit dialog (validate without saving).
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ valid: boolean; error?: string } | null>(null);
-  const [isSharedKey, setIsSharedKey] = useState(false);
   const [sharedWith, setSharedWith] = useState<string[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   // A key the user can SEE but not edit (team/org credential, or a key another
@@ -71,7 +70,7 @@ export function AnthropicKeySection() {
     }).catch(() => {});
   }, [isAdmin]);
 
-  const resetForm = () => { setKeyName(""); setProvider("api_key"); setApiKey(""); setBaseUrl(""); setShowAdvanced(false); setTestResult(null); setIsSharedKey(false); setShowForm(false); };
+  const resetForm = () => { setKeyName(""); setProvider("api_key"); setApiKey(""); setBaseUrl(""); setShowAdvanced(false); setTestResult(null); setShowForm(false); };
 
   const openEditor = (k: AnthropicKeyInfo) => {
     setEditingKey(k); setKeyName(k.name); setProvider(k.provider as typeof provider);
@@ -106,8 +105,10 @@ export function AnthropicKeySection() {
         api_key: apiKey,
       };
       if (provider === "openai") body.base_url = baseUrl.trim() || null;
+      // The created key is always owned by its creator. Sharing is a separate,
+      // explicit step: per-user in the editor (OSS) or via Org → Credentials
+      // (SaaS) — there is no "create as shared" shortcut anymore.
       if (isAdmin) {
-        body.shared = isSharedKey;
         await createAnthropicKey(body as Parameters<typeof createAnthropicKey>[0]);
       } else {
         await createUserAnthropicKey(body as Parameters<typeof createUserAnthropicKey>[0]);
@@ -324,11 +325,6 @@ export function AnthropicKeySection() {
               </span>
             )}
           </div>
-          {isAdmin && (
-            <Toggle checked={isSharedKey} onChange={setIsSharedKey}>
-              Shared key — available to users you grant access to
-            </Toggle>
-          )}
         </div>
       </Modal>
 
