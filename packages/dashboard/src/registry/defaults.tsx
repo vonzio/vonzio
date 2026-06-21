@@ -18,6 +18,7 @@ import Memories from "../pages/Memories.js";
 import { Settings } from "../pages/Settings.js";
 import { Admin } from "../pages/Admin.js";
 import { Operations } from "../pages/Operations.js";
+import { Device } from "../pages/Device.js";
 import { AccountSection } from "../pages/settings/sections/Account.js";
 import { AnthropicKeySection } from "../pages/settings/sections/AnthropicKey.js";
 import { SecretSection } from "../pages/settings/sections/Secret.js";
@@ -123,6 +124,7 @@ export function registerDefaults(): void {
   registerRoute({ id: "playbooks", path: "/playbooks", element: <Playbooks />, layout: "shell", order: 30 });
   registerRoute({ id: "memories", path: "/memories", element: <Memories />, layout: "shell", order: 40 });
   registerRoute({ id: "settings", path: "/settings", element: <Settings />, layout: "shell", order: 50 });
+  registerRoute({ id: "device", path: "/device", element: <Device />, layout: "shell", order: 52 });
   registerRoute({ id: "ops", path: "/ops", element: <Operations />, layout: "shell", entitlement: "admin", order: 60 });
   registerRoute({ id: "admin", path: "/admin", element: <Admin />, layout: "shell", entitlement: "admin_multitenant", order: 70 });
 

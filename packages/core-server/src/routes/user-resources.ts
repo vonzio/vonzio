@@ -5,11 +5,10 @@
  */
 import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
-import { randomBytes } from "node:crypto";
+import { createApiToken } from "../services/api-token-service.js";
 import { readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import bcrypt from "bcrypt";
 
 /** Starter prompt suggestions shown on the new-chat screen. Baked into the
  *  image at config/prompt-suggestions.json (and overridable via a volume mount,
@@ -38,7 +37,6 @@ function loadPromptSuggestions(): PromptSuggestion[] {
   __suggestionsCache = [];
   return __suggestionsCache;
 }
-import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import type { DrizzleDB } from "../db/index.js";
 import { schema } from "../db/index.js";
@@ -562,15 +560,13 @@ export const userResourceRoutes = fp(
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "name is required"));
       }
       // Empty allowed_profile_ids = access to all user's profiles
-      const token = `rc_${randomBytes(24).toString("hex")}`;
-      const hash = await bcrypt.hash(token, 10);
-      const id = `key_${nanoid()}`;
-      await db.insert(schema.apiTokens).values({
-        id, name, key_hash: hash, user_id: request.user!.id,
-        allowed_profile_ids: allowed_profile_ids ?? [], rate_limit_rpm: rate_limit_rpm ?? 60,
-        created_at: new Date().toISOString(), last_used_at: null,
+      const { id, token } = await createApiToken(db, {
+        name,
+        userId: request.user!.id,
+        allowedProfileIds: allowed_profile_ids,
+        rateLimitRpm: rate_limit_rpm,
       });
-      return reply.code(201).send({ id, name, caller_key: token, allowed_profile_ids });
+      return reply.code(201).send({ id, name, caller_key: token, allowed_profile_ids: allowed_profile_ids ?? [] });
     });
 
     server.patch<{

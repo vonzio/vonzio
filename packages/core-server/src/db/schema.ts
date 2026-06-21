@@ -184,6 +184,31 @@ export const apiTokens = pgTable(
   (table) => [index("api_tokens_key_hash_idx").on(table.key_hash)],
 );
 
+// RFC 8628 device-authorization flow (the `vonzio` CLI's `login`). A `pending`
+// row is created by POST /device/code; the logged-in user approves it (sets
+// user_id + status=approved) via POST /v1/device/approve; the CLI's poll
+// (POST /device/token) then mints an api_token, returns it, and marks the row
+// `consumed` (single-use). org_id mirrors the SaaS pattern (null in OSS).
+export const deviceCodes = pgTable(
+  "device_codes",
+  {
+    id: text("id").primaryKey(),
+    device_code: text("device_code").notNull(),
+    user_code: text("user_code").notNull(),
+    status: text("status").notNull().default("pending"), // pending | approved | consumed | denied
+    user_id: text("user_id"),
+    org_id: text("org_id"),
+    client_name: text("client_name"),
+    expires_at: text("expires_at").notNull(),
+    created_at: text("created_at").notNull(),
+    last_polled_at: text("last_polled_at"),
+  },
+  (table) => [
+    index("device_codes_device_code_idx").on(table.device_code),
+    index("device_codes_user_code_idx").on(table.user_code),
+  ],
+);
+
 export const taskLogs = pgTable(
   "task_logs",
   {
