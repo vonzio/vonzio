@@ -13,6 +13,7 @@ import {
   type DataColumn,
 } from "../../../brand/components.js";
 import { ErrorBanner, SubLabel } from "./_shared.js";
+import { IntegrationRow } from "./Integration.js";
 
 // ───────────────────────────────────────────────────────────────────
 // Git providers
@@ -32,24 +33,25 @@ export function GitSection() {
   const [oauthStatus, setOauthStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauth = params.get("oauth");
-    // Git + Integration sections both render under the Integrations
-    // tab (via IntegrationsAndGitSection). Each owns one useEffect
-    // watching ?oauth=success; without a discriminator, whichever
-    // mounts first claims every OAuth callback and clears the URL.
-    // The git OAuth callback redirects with hash=#git; slack / gmail /
-    // others redirect with hash=#integrations -- the hash check keeps
-    // Git.tsx from misclaiming the others.
-    if (window.location.hash !== "#git") return;
+    // Git + Integration sections both render under the Integrations tab and
+    // both watch ?oauth=success. The callback carries ?source=git so each
+    // section claims only its own redirect (Integration.tsx skips source=git).
+    // The redirect targets the real #integrations tab; an earlier version used
+    // hash=#git, which isn't a registered tab and bounced the user to Account.
+    if (params.get("source") !== "git") return;
     if (oauth === "success") {
       setOauthStatus({ type: "success", message: "Git provider connected" });
+      setManageOpen(true); // surface the freshly connected provider
       refetch();
       window.history.replaceState({}, "", window.location.pathname + window.location.hash);
     } else if (oauth === "error") {
       setOauthStatus({ type: "error", message: params.get("message") ?? "OAuth connection failed" });
+      setManageOpen(true); // the error banner lives in the modal — open it so it's seen
       window.history.replaceState({}, "", window.location.pathname + window.location.hash);
     }
   }, []);
@@ -137,8 +139,44 @@ export function GitSection() {
     },
   ];
 
+  const providerCount = providers?.length ?? 0;
+
   return (
     <>
+      <div
+        style={{
+          fontSize: 11, color: "var(--vz-muted-2)", letterSpacing: "0.05em",
+          textTransform: "uppercase", fontFamily: "var(--vz-font-mono)", margin: "0 0 8px",
+        }}
+      >
+        Code &amp; git
+      </div>
+      <Card style={{ padding: 0 }}>
+        <IntegrationRow
+          badgeBg="#1F2328"
+          badgeChar={<GitBranch size={15} />}
+          name="Git providers"
+          value={providerCount > 0
+            ? `${providerCount} connected · ${[...new Set((providers ?? []).map((p) => p.type))].join(", ")}`
+            : "Not connected"}
+          connected={providerCount > 0}
+          available
+          actions={<Button size="sm" onClick={() => setManageOpen(true)}>{providerCount > 0 ? "Manage" : "Connect"}</Button>}
+          isLast
+        />
+      </Card>
+
+      <Modal
+        open={manageOpen}
+        onClose={() => setManageOpen(false)}
+        size="lg"
+        // While a sub-modal (add/edit token, delete confirm) is stacked on top,
+        // suppress this modal's own Escape/scrim close so Escape dismisses only
+        // the topmost dialog instead of collapsing the whole stack.
+        dismissable={!showForm && !confirmDeleteId}
+        title="Git providers"
+        description="Connect a provider so agents can clone and push your repositories. OAuth is recommended; personal access tokens also work."
+      >
       {oauthStatus && (
         <div
           style={{
@@ -178,6 +216,9 @@ export function GitSection() {
               </Button>
             )}
           </div>
+          <div style={{ fontSize: 11.5, color: "var(--vz-muted-2)", marginTop: 10, lineHeight: 1.5 }}>
+            OAuth grants access to every repository your account can reach (including org repos). For least privilege, skip OAuth and add a fine-grained personal access token scoped to specific repos.
+          </div>
         </Card>
       )}
 
@@ -198,6 +239,7 @@ export function GitSection() {
           />
         }
       />
+      </Modal>
 
       <Modal
         open={showForm}

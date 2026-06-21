@@ -52,6 +52,11 @@ export function IntegrationSection() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauth = params.get("oauth");
+    // Git providers share the Integrations tab but own their own callback
+    // (?source=git, handled in Git.tsx). Without this guard the git callback's
+    // ?oauth=success falls through to the gmail/slack inference below and shows
+    // a bogus "Slack connected" banner.
+    if (params.get("source") === "git") return;
     if (oauth === "success") {
       const msg = params.get("message");
       const label = msg === "gmail_connected" ? "Gmail" : "Slack";
@@ -401,11 +406,11 @@ export function IntegrationSection() {
   );
 }
 
-function IntegrationRow({
+export function IntegrationRow({
   badgeBg, badgeChar, name, value, isDefault, connected, available, actions, testResult, isLast,
 }: {
   badgeBg: string;
-  badgeChar: string;
+  badgeChar: ReactNode;
   name: string;
   value: ReactNode;
   isDefault?: boolean;
