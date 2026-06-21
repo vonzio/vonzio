@@ -139,11 +139,11 @@ export const gitOAuthCallbackRoute = fp(
         const { code, state, error: oauthError } = request.query;
 
         if (oauthError) {
-          return reply.redirect(`/settings?oauth=error&message=${encodeURIComponent(oauthError)}#git`);
+          return reply.redirect(`/settings?oauth=error&message=${encodeURIComponent(oauthError)}&source=git#integrations`);
         }
 
         if (!code || !state) {
-          return reply.redirect("/settings?oauth=error&message=missing_params#git");
+          return reply.redirect("/settings?oauth=error&message=missing_params&source=git#integrations");
         }
 
         // Decrypt and validate state
@@ -151,23 +151,23 @@ export const gitOAuthCallbackRoute = fp(
         try {
           stateData = JSON.parse(decrypt(state, encryptionKey));
         } catch {
-          return reply.redirect("/settings?oauth=error&message=invalid_state#git");
+          return reply.redirect("/settings?oauth=error&message=invalid_state&source=git#integrations");
         }
 
         const returnPath = safeReturnPath(stateData.returnPath);
 
         // Check expiry (5 minutes)
         if (Date.now() - stateData.ts > 5 * 60 * 1000) {
-          return reply.redirect(`${returnPath}?oauth=error&message=expired#git`);
+          return reply.redirect(`${returnPath}?oauth=error&message=expired&source=git#integrations`);
         }
 
         if (stateData.provider !== provider) {
-          return reply.redirect(`${returnPath}?oauth=error&message=provider_mismatch#git`);
+          return reply.redirect(`${returnPath}?oauth=error&message=provider_mismatch&source=git#integrations`);
         }
 
         const providerConfig = getProviderConfig(config, provider);
         if (!providerConfig) {
-          return reply.redirect(`${returnPath}?oauth=error&message=not_configured#git`);
+          return reply.redirect(`${returnPath}?oauth=error&message=not_configured&source=git#integrations`);
         }
 
         try {
@@ -187,11 +187,11 @@ export const gitOAuthCallbackRoute = fp(
             userId: stateData.userId,
           });
 
-          return reply.redirect(`${returnPath}?oauth=success#git`);
+          return reply.redirect(`${returnPath}?oauth=success&source=git#integrations`);
         } catch (err) {
           server.log.error({ err, provider }, "OAuth token exchange failed");
           const message = err instanceof Error ? err.message : "exchange_failed";
-          return reply.redirect(`${returnPath}?oauth=error&message=${encodeURIComponent(message)}#git`);
+          return reply.redirect(`${returnPath}?oauth=error&message=${encodeURIComponent(message)}&source=git#integrations`);
         }
       },
     );
