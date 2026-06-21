@@ -26,6 +26,7 @@ import { InMemoryTaskQueue } from "./queue/in-memory.js";
 import { SlidingWindowRateLimiter } from "./rate-limit/sliding-window.js";
 import { ConcurrencyLimiter } from "./rate-limit/concurrency-limiter.js";
 import { ContainerPool } from "./container/pool.js";
+import { CONTAINER_MODE_LABEL, ContainerMode } from "./container/docker-manager.js";
 import { SessionRegistry } from "./container/session-registry.js";
 import { WorkspaceProvisioner } from "./container/workspace.js";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
@@ -157,7 +158,7 @@ export async function buildServer(deps: ServerDeps) {
     },
     () => ({
       env: { ANTHROPIC_API_KEY: "__pool_placeholder__" },
-      labels: { "vonzio-mode": "pooled" },
+      labels: { [CONTAINER_MODE_LABEL]: ContainerMode.Pooled },
       cpus: config.CONTAINER_CPU_LIMIT_BATCH,
       memory: config.CONTAINER_MEMORY_LIMIT_BATCH,
     }),

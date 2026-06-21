@@ -656,7 +656,7 @@ export interface ContainerInfo {
   status: "running" | "exited" | "created";
   labels: Record<string, string>;
   created_at: string;
-  assignment: "pool-idle" | "pool-busy" | "session" | "orphan";
+  assignment: "pool-idle" | "pool-busy" | "session" | "infra" | "orphan";
   session_id: string | null;
   pool_status: "idle" | "busy" | null;
 }
@@ -667,6 +667,10 @@ export function fetchContainers(): Promise<{ containers: ContainerInfo[] }> {
 
 export function removeContainer(id: string): Promise<{ status: string }> {
   return request(`/pool/containers/${id}`, { method: "DELETE" });
+}
+
+export function pruneOrphanContainers(): Promise<{ status: string; removed: string[]; count: number }> {
+  return request("/pool/containers/prune", { method: "POST" });
 }
 
 // --- Health ---

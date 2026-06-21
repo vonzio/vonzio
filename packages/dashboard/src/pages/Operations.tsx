@@ -6,7 +6,7 @@ import {
 import { useApi } from "../hooks/useApi.js";
 import {
   fetchHealth, fetchContainers, fetchTasks, fetchWorkspaces, fetchPoolStatus,
-  fetchWorkspaceEvents, removeContainer, cancelTask, deleteWorkspace,
+  fetchWorkspaceEvents, removeContainer, pruneOrphanContainers, cancelTask, deleteWorkspace,
   type HealthStatus, type ContainerInfo, type TaskSummary, type WorkspaceSummary,
   type PoolStatus, type SessionEvent,
 } from "../api/client.js";
@@ -132,11 +132,24 @@ export function OperationsContent() {
   const tasks = usePolling<{ tasks: TaskSummary[]; total: number }>(() => fetchTasks({ limit: 500 }), 10000);
 
   const [error, setError] = useState("");
+  const [pruning, setPruning] = useState(false);
 
   const handleRemoveContainer = async (id: string) => {
     if (!window.confirm("Remove this container?")) return;
     try { await removeContainer(id); containers.refetch(); }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  };
+  const handlePruneOrphans = async (orphanCount: number) => {
+    if (!window.confirm(`Prune ${orphanCount} orphaned container${orphanCount === 1 ? "" : "s"}? This force-removes containers older than 15 min with no live session. Active sessions are never touched.`)) return;
+    setPruning(true);
+    try {
+      const r = await pruneOrphanContainers();
+      containers.refetch();
+      setError("");
+      if (r.count === 0) window.alert("No orphans were eligible to prune (all younger than 15 min or still owned by a session).");
+    }
+    catch (e) { setError(e instanceof Error ? e.message : "Prune failed"); }
+    finally { setPruning(false); }
   };
   const handleCancelTask = async (id: string) => {
     if (!window.confirm("Cancel this task?")) return;
@@ -168,10 +181,13 @@ export function OperationsContent() {
   const sessionStatuses = [...new Set(allSessions.map((s) => s.status))].sort();
   const taskStatuses = [...new Set(allTasks.map((t) => t.status))].sort();
 
+  const allContainers = containers.data?.containers ?? [];
+  const orphanCount = allContainers.filter((c) => c.assignment === "orphan").length;
+
   const tabDefs = [
     { value: "sessions", label: `Sessions (${allSessions.length})` },
     { value: "tasks", label: `Tasks (${allTasks.length})` },
-    { value: "containers", label: `Containers (${containers.data?.containers.length ?? 0})` },
+    { value: "containers", label: containers.data ? `Containers (${allContainers.length})` : "Containers (…)" },
   ];
 
   const sessionChips: ChipDef[] = [
@@ -318,7 +334,8 @@ export function OperationsContent() {
           c.assignment === "session" ? "ok"
             : c.assignment === "pool-idle" ? "info"
               : c.assignment === "pool-busy" ? "warn"
-                : undefined
+                : c.assignment === "orphan" ? "fail"
+                  : undefined
         }>
           {c.assignment}
         </Pill>
@@ -486,9 +503,32 @@ export function OperationsContent() {
           title="Containers"
           count={containers.data?.containers.length}
           columns={containerCols}
-          rows={containers.data?.containers ?? []}
+          rows={allContainers}
           rowKey={(c) => c.id}
           loading={containers.loading}
+          actions={
+            <button
+              type="button"
+              onClick={() => handlePruneOrphans(orphanCount)}
+              disabled={pruning || orphanCount === 0}
+              title={orphanCount === 0 ? "No orphaned containers" : `Force-remove ${orphanCount} orphaned container(s)`}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "6px 10px",
+                background: "none",
+                border: `1px solid ${orphanCount > 0 ? "var(--vz-fail)" : "var(--vz-border)"}`,
+                borderRadius: "var(--vz-radius-md)",
+                color: orphanCount > 0 ? "var(--vz-fail)" : "var(--vz-muted-2)",
+                cursor: pruning || orphanCount === 0 ? "not-allowed" : "pointer",
+                opacity: pruning || orphanCount === 0 ? 0.6 : 1,
+                fontSize: 12,
+                fontFamily: "var(--vz-font-mono)",
+                letterSpacing: "0.04em",
+              }}
+            >
+              <Trash2 size={12} /> {pruning ? "pruning…" : `prune orphans (${orphanCount})`}
+            </button>
+          }
           emptyState={<EmptyState icon={<Server size={20} />} title="No containers" />}
         />
       )}

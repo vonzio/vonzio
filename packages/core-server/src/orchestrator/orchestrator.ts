@@ -16,6 +16,7 @@ import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
+import { CONTAINER_MODE_LABEL, ContainerMode } from "../container/docker-manager.js";
 import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
@@ -414,7 +415,7 @@ export class Orchestrator extends EventEmitter {
   private async cleanupOrphanedVpnSidecars(): Promise<void> {
     try {
       const all = await this.deps.containerManager.listManagedContainers();
-      const orphans = all.filter((c) => c.labels["vonzio-mode"] === "vpn-sidecar");
+      const orphans = all.filter((c) => c.labels[CONTAINER_MODE_LABEL] === ContainerMode.VpnSidecar);
       if (orphans.length === 0) return;
       for (const o of orphans) {
         try {
@@ -567,7 +568,7 @@ export class Orchestrator extends EventEmitter {
         memory: this.deps.config.containerMemoryBatch,
         networkMode: egress?.networkMode ?? vpn?.networkMode,
         labels: {
-          "vonzio-mode": "batch",
+          [CONTAINER_MODE_LABEL]: ContainerMode.Batch,
           "vonzio-task-id": task.id,
         },
       });
@@ -690,7 +691,11 @@ export class Orchestrator extends EventEmitter {
           await this.runSetupCommands(containerId, profile.setup_commands, env);
         }
       } else {
-        // Dead container, no volumes — create fresh
+        // Dead container, no volumes — create fresh. Remove the old one first:
+        // getContainerStatus reporting non-running can be stale/transient (proxy
+        // hiccup), so the old container may actually still be up. Without this,
+        // reassigning leaves it running but unreferenced — a leaked duplicate.
+        await this.safeRemoveContainer(session.container_id);
         containerId = await this.createSessionContainer(task.session_id, profile, env);
         await this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
         session.container_id = containerId;
@@ -1022,7 +1027,7 @@ export class Orchestrator extends EventEmitter {
       memory: this.deps.config.containerMemorySession,
       networkMode: egress?.networkMode ?? vpn?.networkMode,
       labels: {
-        "vonzio-mode": "session",
+        [CONTAINER_MODE_LABEL]: ContainerMode.Session,
         "vonzio-session-id": sessionId,
       },
     });
@@ -1636,6 +1641,7 @@ export class Orchestrator extends EventEmitter {
     if (!session) return null;
 
     // Already has a running container
+    const staleContainerId = session.container_id;
     if (session.container_id) {
       try {
         const status = await this.deps.containerManager.getContainerStatus(session.container_id);
@@ -1645,6 +1651,14 @@ export class Orchestrator extends EventEmitter {
           return session.container_id;
         }
       } catch { /* container gone */ }
+    }
+
+    // Falling through to create a fresh container. Remove the stale one first:
+    // getContainerStatus reporting non-running (or throwing) can be transient,
+    // so it may still be running — reassigning without removing it leaks a
+    // duplicate.
+    if (staleContainerId) {
+      await this.safeRemoveContainer(staleContainerId);
     }
 
     // Build env from profile credentials
@@ -2132,7 +2146,7 @@ export class Orchestrator extends EventEmitter {
     const network = cfg.egressProxyNetwork || "vonzio-egress";
 
     const running = (await this.deps.containerManager.listManagedContainers())
-      .some((c) => c.labels["vonzio-mode"] === "egress-proxy" && c.status === "running");
+      .some((c) => c.labels[CONTAINER_MODE_LABEL] === ContainerMode.EgressProxy && c.status === "running");
     if (!running) {
       throw new Error(
         "EGRESS_ENFORCEMENT is on but the egress-proxy service is not running. " +
@@ -2338,7 +2352,7 @@ export class Orchestrator extends EventEmitter {
       capAdd: ["NET_ADMIN"],
       devices,
       labels: {
-        "vonzio-mode": "vpn-sidecar",
+        [CONTAINER_MODE_LABEL]: ContainerMode.VpnSidecar,
         "vonzio-vpn-tunnel-id": tunnel.id,
         "vonzio-vpn-tunnel-type": tunnel.type,
       },
