@@ -191,6 +191,42 @@ export const userResourceRoutes = fp(
       return { status: "deleted" };
     });
 
+    // Bundle file preview (text inline, or a binary marker) for the dashboard
+    // skill viewer. Ownership + manifest membership are enforced in the service.
+    server.get<{ Params: { id: string }; Querystring: { path?: string } }>(
+      "/v1/skills/:id/file",
+      async (request, reply) => {
+        const filePath = request.query.path;
+        if (!filePath) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "path query param is required"));
+        }
+        const file = await skillService.readBundleFile(request.params.id, filePath, request.user!.id);
+        if (!file) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "File not found"));
+        return file;
+      },
+    );
+
+    // Raw bytes of one bundle file, for download (text or binary asset).
+    server.get<{ Params: { id: string }; Querystring: { path?: string } }>(
+      "/v1/skills/:id/file/raw",
+      async (request, reply) => {
+        const filePath = request.query.path;
+        if (!filePath) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "path query param is required"));
+        }
+        const bytes = await skillService.readBundleFileRaw(request.params.id, filePath, request.user!.id);
+        if (!bytes) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "File not found"));
+        // Strip quotes and CR/LF so a crafted bundle filename can't inject a
+        // header. (Names already passed repackBundle's path validation, but a
+        // basename can still carry other control chars.)
+        const base = (filePath.split("/").pop() || "file").replace(/["\r\n]/g, "");
+        return reply
+          .type("application/octet-stream")
+          .header("content-disposition", `attachment; filename="${base}"`)
+          .send(bytes);
+      },
+    );
+
     // ─── Documents (per-agent knowledge) ────────────────────
     // Mounted read-only into every container the profile spawns at /knowledge;
     // the agent reads them on the fly with Read/Grep/Glob.

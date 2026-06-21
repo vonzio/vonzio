@@ -5,16 +5,18 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import {
   Bot, Plus, Trash2, Pencil, Key as KeyIcon, Wrench, BookOpen, Copy, Sparkles, Star, Upload,
+  Eye, Download, FileText,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi.js";
-import { slugify } from "../lib/utils.js";
+import { slugify, formatBytes } from "../lib/utils.js";
 import {
   fetchProfiles, deleteProfile, setDefaultProfile,
   fetchUserTools, createUserTool, deleteUserTool,
   fetchUserSkills, createUserSkill, deleteUserSkill, uploadSkillFile,
+  fetchSkillFile, skillFileRawUrl,
   fetchUserAgents, createUserAgent, deleteUserAgent,
-  type ProfileSummary,
+  type ProfileSummary, type SkillFile,
 } from "../api/client.js";
 import {
   PageHeader, PageBody, Tabs, Card, Button, Field, Input, Textarea, Select,
@@ -479,6 +481,7 @@ function SkillSection() {
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [viewSkill, setViewSkill] = useState<Record<string, unknown> | null>(null);
   const [skillName, setSkillName] = useState("");
   const [skillDesc, setSkillDesc] = useState("");
   const [skillContent, setSkillContent] = useState("");
@@ -536,17 +539,27 @@ function SkillSection() {
     {
       key: "_actions",
       label: "",
-      width: "60px",
+      width: "92px",
       align: "right",
       render: (s) => (
-        <button
-          type="button"
-          className="vz-action-btn vz-action-btn--danger"
-          title="Delete"
-          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(s.id as string); }}
-        >
-          <Trash2 size={13} />
-        </button>
+        <span style={{ display: "inline-flex", gap: 4, justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            className="vz-action-btn"
+            title="View contents"
+            onClick={(e) => { e.stopPropagation(); setViewSkill(s); }}
+          >
+            <Eye size={13} />
+          </button>
+          <button
+            type="button"
+            className="vz-action-btn vz-action-btn--danger"
+            title="Delete"
+            onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(s.id as string); }}
+          >
+            <Trash2 size={13} />
+          </button>
+        </span>
       ),
     },
   ];
@@ -567,6 +580,22 @@ function SkillSection() {
       ),
     },
     { key: "source", label: "Source", render: () => <Pill tone="info">bundled</Pill> },
+    {
+      key: "_actions",
+      label: "",
+      width: "44px",
+      align: "right",
+      render: (s) => (
+        <button
+          type="button"
+          className="vz-action-btn"
+          title="View contents"
+          onClick={(e) => { e.stopPropagation(); setViewSkill(s); }}
+        >
+          <Eye size={13} />
+        </button>
+      ),
+    },
   ];
 
   return (
@@ -642,7 +671,129 @@ function SkillSection() {
           </>
         }
       />
+
+      {viewSkill && <SkillViewerModal skill={viewSkill} onClose={() => setViewSkill(null)} />}
     </CatalogLayout>
+  );
+}
+
+/**
+ * Read-only viewer for an uploaded skill bundle: a file tree from the stored
+ * manifest on the left, the selected file's contents on the right. SKILL.md is
+ * served from the row we already have; every other file is fetched on demand.
+ * Single-file / bundled (filesystem) skills have no manifest, so they just show
+ * SKILL.md.
+ */
+function SkillViewerModal({ skill, onClose }: { skill: Record<string, unknown>; onClose: () => void }) {
+  const id = skill.id as string;
+  const skillMd = (skill.content as string) ?? "";
+  const manifest = (skill.manifest as string[] | null) ?? null;
+  const hasBundle = Array.isArray(manifest) && manifest.length > 0;
+  // Always offer SKILL.md first; fall back to it for non-bundle skills.
+  const files = hasBundle ? manifest! : ["SKILL.md"];
+
+  const [selected, setSelected] = useState<string>("SKILL.md");
+  const [file, setFile] = useState<SkillFile | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fileError, setFileError] = useState("");
+
+  useEffect(() => {
+    // SKILL.md is already in hand (the row's content) — no round-trip.
+    if (selected === "SKILL.md") {
+      setFile({ path: "SKILL.md", size: skillMd.length, content: skillMd, binary: false, truncated: false });
+      setFileError("");
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setFileError("");
+    fetchSkillFile(id, selected)
+      .then((f) => { if (!cancelled) setFile(f); })
+      .catch((e) => { if (!cancelled) { setFile(null); setFileError(e instanceof Error ? e.message : "Failed to load file"); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [id, selected, skillMd]);
+
+  return (
+    <Modal open onClose={onClose} size="lg" title={skill.name as string} description={(skill.description as string) || undefined}>
+      <div style={{ display: "flex", gap: 14, minHeight: 360, maxHeight: "60vh" }}>
+        {/* File tree */}
+        <div style={{ width: 200, flexShrink: 0, overflowY: "auto", borderRight: "1px solid var(--vz-border)", paddingRight: 10 }}>
+          {!hasBundle && (
+            <div style={{ fontSize: 11, color: "var(--vz-muted-2)", marginBottom: 8, fontFamily: "var(--vz-font-mono)" }}>
+              single file
+            </div>
+          )}
+          {files.map((p) => {
+            const depth = p.split("/").length - 1;
+            const base = p.split("/").pop() ?? p;
+            const active = p === selected;
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setSelected(p)}
+                title={p}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, width: "100%",
+                  textAlign: "left", background: active ? "var(--vz-mute)" : "transparent",
+                  border: 0, borderRadius: "var(--vz-radius-sm)", cursor: "pointer",
+                  padding: "4px 6px", paddingLeft: 6 + depth * 12,
+                  color: active ? "var(--vz-ink)" : "var(--vz-muted)",
+                  fontSize: 12, fontFamily: "var(--vz-font-mono)",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}
+              >
+                <FileText size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{base}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Content pane */}
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+            <code style={{ fontSize: 11.5, color: "var(--vz-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {selected}{file && !loading ? ` · ${formatBytes(file.size)}` : ""}
+            </code>
+            {hasBundle && (
+              <a
+                href={skillFileRawUrl(id, selected)}
+                download
+                className="vz-action-btn"
+                title="Download this file"
+                style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--vz-muted)", textDecoration: "none", flexShrink: 0 }}
+              >
+                <Download size={12} /> download
+              </a>
+            )}
+          </div>
+          <div style={{ flex: 1, overflow: "auto", background: "var(--vz-mute)", border: "1px solid var(--vz-border)", borderRadius: "var(--vz-radius-sm)" }}>
+            {loading ? (
+              <div style={{ padding: 14, fontSize: 12, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>loading…</div>
+            ) : fileError ? (
+              <div style={{ padding: 14, fontSize: 12, color: "var(--vz-fail)" }}>{fileError}</div>
+            ) : file?.binary ? (
+              <div style={{ padding: 14, fontSize: 12, color: "var(--vz-muted)" }}>
+                Binary file • {formatBytes(file.size)} — use download to view.
+              </div>
+            ) : (
+              <>
+                <pre style={{ margin: 0, padding: 14, fontSize: 12, lineHeight: 1.5, fontFamily: "var(--vz-font-mono)", color: "var(--vz-ink-2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {file?.content}
+                </pre>
+                {file?.truncated && (
+                  <div style={{ padding: "6px 14px", fontSize: 11, color: "var(--vz-warn)", borderTop: "1px solid var(--vz-border)" }}>
+                    Preview truncated — download for the full file.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

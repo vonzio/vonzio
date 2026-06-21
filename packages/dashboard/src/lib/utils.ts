@@ -22,6 +22,12 @@ export function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function formatRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const secs = Math.floor(diff / 1000);
