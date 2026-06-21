@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { gzipSync } from "node:zlib";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2325,6 +2326,15 @@ export class Orchestrator extends EventEmitter {
     encryptionKey: string,
   ): Promise<{ sidecarId: string; tunnelId: string; networkMode: string; dns?: string[]; searchDomains?: string[] } | null> {
     const env: Record<string, string> = {};
+    // gzip BEFORE base64 so the value stays small. The whole config is shipped
+    // through the container-create request, which is buffered by the
+    // docker-socket-proxy (HAProxy) with a request-size limit (~24-28KB). A
+    // real OpenVPN config with inline certs is ~22KB → ~29KB base64, which
+    // exceeds that limit and gets a 400 before reaching the daemon — so VPN
+    // would never come up. gzip drops a PEM-heavy config to a few KB. The
+    // sidecar entrypoints (sidecar-*-entrypoint.sh) gunzip on read
+    // (auto-detecting gzip, so they remain compatible with un-gzipped input).
+    const gzipB64 = (s: string): string => gzipSync(Buffer.from(s, "utf8")).toString("base64");
     if (tunnel.type === "tailscale") {
       // Tailscale doesn't take a config file — the sidecar joins the
       // tailnet via auth key alone. The key lives in authBlobEncrypted
@@ -2334,7 +2344,7 @@ export class Orchestrator extends EventEmitter {
         return null;
       }
       const authkey = decrypt(tunnel.authBlobEncrypted, encryptionKey);
-      env.VPN_TS_AUTHKEY_B64 = Buffer.from(authkey, "utf8").toString("base64");
+      env.VPN_TS_AUTHKEY_B64 = gzipB64(authkey);
       // Hostname seen on the tailnet — useful for ACLs and admin UI.
       // Truncated tunnel id keeps it stable across sidecar restarts.
       env.VPN_TS_HOSTNAME = `vonzio-${tunnel.id.replace(/^vpn_/, "").slice(0, 12)}`;
@@ -2344,10 +2354,10 @@ export class Orchestrator extends EventEmitter {
         return null;
       }
       const config = decrypt(tunnel.encryptedConfig, encryptionKey);
-      env.VPN_CONFIG_B64 = Buffer.from(config, "utf8").toString("base64");
+      env.VPN_CONFIG_B64 = gzipB64(config);
       if (tunnel.authBlobEncrypted) {
         const authBlob = decrypt(tunnel.authBlobEncrypted, encryptionKey);
-        env.VPN_AUTH_USER_PASS_B64 = Buffer.from(authBlob, "utf8").toString("base64");
+        env.VPN_AUTH_USER_PASS_B64 = gzipB64(authBlob);
       }
     }
     if (tunnel.fullTunnel) {
