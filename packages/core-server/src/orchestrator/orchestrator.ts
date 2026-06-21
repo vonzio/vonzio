@@ -279,16 +279,32 @@ export class Orchestrator extends EventEmitter {
       }
     }
     if (!session.container_id) return; // nothing running
-    // Remove the container but DO NOT clear container_id — leaving it set makes
-    // the next message take dispatchSession's dead-container RECOVERY path
-    // (reuse the persistent volume + resume the SDK session, isResume=true, so
-    // the conversation continues) and re-run applyEgress. Clearing it would
-    // route to the create-from-scratch path (needsInit=true → fresh SDK session
-    // → lost context). This mirrors a natural container crash, which already
-    // recovers via the same path. (Non-persistent sessions have no volume, so
-    // they necessarily start fresh — the SDK state lived only in the container.)
-    await this.safeRemoveContainer(session.container_id);
-    this.log.info({ sessionId, containerId: session.container_id }, "Workspace container removed for restart (recreates + resumes on next message)");
+    // Remove the container, then EAGERLY recreate it (don't clear container_id).
+    // Network egress + env are baked in at container creation and can't change on
+    // a live/`docker restart`ed container — so applying new egress requires a
+    // fresh container. Recreating it now (rather than lazily on the next message)
+    // means updated egress/network settings take effect the moment the user
+    // clicks Restart, instead of silently waiting for their next message.
+    // wakeWorkspaceContainer sees the just-removed container as dead and
+    // provisions a fresh one via the full applyEgress path on the LIVE profile;
+    // for a persistent session it reuses the volume so the SDK session resumes
+    // (conversation continues) on the next message. If recreation fails
+    // (transient Docker error), we fall back to lazy: dispatchSession's recovery
+    // path still recreates on the next message.
+    const oldContainerId = session.container_id;
+    await this.safeRemoveContainer(oldContainerId);
+    this.log.info({ sessionId, containerId: oldContainerId }, "Workspace container removed for restart");
+    try {
+      const profile = await this.deps.profileService.getResolved(session.profile_id, {
+        apiKeyIdOverride: session.api_key_id_override ?? null,
+      });
+      if (profile) {
+        await this.wakeWorkspaceContainer(sessionId, profile);
+        this.log.info({ sessionId }, "Workspace container recreated on restart with current settings");
+      }
+    } catch (err) {
+      this.log.warn({ err, sessionId }, "Eager restart recreation failed; will recreate on next message");
+    }
   }
 
   /**
