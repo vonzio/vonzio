@@ -6,7 +6,7 @@ export type ClientMessage =
   | { type: "cancel"; task_id: string }
   | { type: "session.start"; profile_id: string; claude_md?: string; allowed_tools?: string[] }
   | { type: "session.resume"; session_id: string }
-  | { type: "session.turn"; session_id: string; message: string }
+  | { type: "session.turn"; session_id: string; message: string; model?: string }
   | { type: "session.turn.cancel"; session_id: string }
   | { type: "session.end"; session_id: string }
   | { type: "session.answer"; session_id: string; answers: Record<string, string> }
