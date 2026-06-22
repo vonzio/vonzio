@@ -149,3 +149,34 @@ export async function adminOnlyHook(request: FastifyRequest, reply: FastifyReply
     return reply.code(403).send({ error: "Forbidden", code: "FORBIDDEN" });
   }
 }
+
+/** Resolves a user's REAL persisted role by id (independent of the synthetic
+ *  `api_token` role set on token auth). Returns undefined if unknown. */
+export type RoleResolver = (userId: string) => Promise<string | undefined>;
+
+/**
+ * Admin gate for **read-only** platform endpoints that a machine (API token)
+ * caller legitimately needs — e.g. `vonzio ops` reading pool/container state.
+ *
+ * Session admins pass directly. For an API-token caller we do NOT trust the
+ * synthetic `api_token` role (see `adminOnlyHook`); instead we resolve the
+ * token owner's REAL db role and admit only a genuine `admin`. A non-admin's
+ * token resolves to a non-admin role and is rejected, so this does not widen
+ * privilege — it just lets an admin's token read what an admin's session can.
+ *
+ * Use this ONLY on side-effect-free routes. Mutating admin routes must keep
+ * `adminOnlyHook` (session-cookie only).
+ */
+export function adminReadHook(resolveRole: RoleResolver) {
+  return async function hook(request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) {
+      return reply.code(401).send({ error: "Unauthorized", code: "UNAUTHORIZED" });
+    }
+    if (request.user.role === "admin") return;
+    if (request.user.role === "api_token") {
+      const realRole = await resolveRole(request.user.id).catch(() => undefined);
+      if (realRole === "admin") return;
+    }
+    return reply.code(403).send({ error: "Forbidden", code: "FORBIDDEN" });
+  };
+}
