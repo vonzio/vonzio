@@ -692,7 +692,17 @@ export async function buildServer(deps: ServerDeps) {
     v1.register(integrationRoutes, { integrationService, notificationService, profileService });
     v1.register(memoryRoutes, { memoryService });
     v1.register(playbookRoutes, { playbookService, profileService, chainRunner, playbookScheduler });
-    v1.register(poolRoutes, { pool: containerPool, sessionRegistry, containerManager });
+    v1.register(poolRoutes, {
+      pool: containerPool,
+      sessionRegistry,
+      containerManager,
+      // Read-only ops (pool/containers) admit an admin's API token by resolving
+      // the token owner's real role from the better-auth `user` table.
+      resolveUserRole: async (userId: string) => {
+        const res = await db.execute(sql`SELECT role FROM "user" WHERE id = ${userId}`);
+        return (res.rows[0] as { role?: string } | undefined)?.role;
+      },
+    });
     v1.register(deviceApproveRoutes, { deviceService });
 
     // Ollama Cloud is key-based and usable regardless of OLLAMA_ENABLED (which

@@ -5,11 +5,16 @@ import type { SessionRegistry } from "../container/session-registry.js";
 import type { ContainerManager } from "@vonzio/shared";
 import { CONTAINER_MODE_LABEL, ContainerMode } from "../container/docker-manager.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
+import { adminReadHook, type RoleResolver } from "../auth/user-auth.js";
 
 export interface PoolRoutesOptions {
   pool: ContainerPool;
   sessionRegistry: SessionRegistry;
   containerManager: ContainerManager;
+  /** Resolves a token caller's REAL db role, so an admin's API token (e.g.
+   *  `vonzio ops`) can read pool state. When omitted, read routes fall back to
+   *  session-only admin (the synthetic `api_token` role never passes). */
+  resolveUserRole?: RoleResolver;
 }
 
 function requireAdmin(request: import("fastify").FastifyRequest, reply: import("fastify").FastifyReply) {
@@ -20,7 +25,11 @@ function requireAdmin(request: import("fastify").FastifyRequest, reply: import("
 
 export const poolRoutes = fp(
   async (server: FastifyInstance, opts: PoolRoutesOptions) => {
-    server.get("/v1/pool", { preHandler: requireAdmin as any }, async () => {
+    // Read-only routes admit an admin's API token (real-role resolved); mutating
+    // routes below stay strictly session-admin via `requireAdmin`.
+    const requireAdminRead = opts.resolveUserRole ? adminReadHook(opts.resolveUserRole) : requireAdmin;
+
+    server.get("/v1/pool", { preHandler: requireAdminRead as any }, async () => {
       return {
         idle: opts.pool.idleCount,
         busy: opts.pool.busyCount,
@@ -28,7 +37,7 @@ export const poolRoutes = fp(
       };
     });
 
-    server.get("/v1/pool/containers", { preHandler: requireAdmin as any }, async () => {
+    server.get("/v1/pool/containers", { preHandler: requireAdminRead as any }, async () => {
       const containers = await opts.containerManager.listManagedContainers();
       const poolMap = opts.pool.trackedContainers;
       const sessionMap = opts.sessionRegistry.containerSessionMap;

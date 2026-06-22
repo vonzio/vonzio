@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { FastifyRequest, FastifyReply } from "fastify";
-import { authorizeTenantAccess, adminOnlyHook, isOwnerOrAdmin } from "./user-auth.js";
+import { authorizeTenantAccess, adminOnlyHook, adminReadHook, isOwnerOrAdmin } from "./user-auth.js";
 
 function req(user: { id: string; role: string } | undefined, orgId?: string): FastifyRequest {
   return { user, orgContext: orgId ? { org_id: orgId } : undefined } as unknown as FastifyRequest;
@@ -70,6 +70,50 @@ describe("adminOnlyHook — only the real admin role passes", () => {
     const r2 = reply();
     await adminOnlyHook(req(undefined), r2);
     expect(r2._code).toBe(403);
+  });
+});
+
+describe("adminReadHook (real-role gate for token callers)", () => {
+  it("passes a session admin without resolving", async () => {
+    const resolve = vi.fn();
+    const r = reply();
+    await adminReadHook(resolve)(req({ id: "a1", role: "admin" }), r);
+    expect(r.code).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("admits an api_token whose owner is a real admin", async () => {
+    const resolve = vi.fn(async () => "admin");
+    const r = reply();
+    await adminReadHook(resolve)(req({ id: "u1", role: "api_token" }), r);
+    expect(resolve).toHaveBeenCalledWith("u1");
+    expect(r.code).not.toHaveBeenCalled();
+  });
+
+  it("rejects an api_token whose owner is NOT admin (no privilege widening)", async () => {
+    const resolve = vi.fn(async () => "user");
+    const r = reply();
+    await adminReadHook(resolve)(req({ id: "u2", role: "api_token" }), r);
+    expect(r._code).toBe(403);
+  });
+
+  it("rejects when the resolver throws (fail closed)", async () => {
+    const resolve = vi.fn(async () => { throw new Error("db down"); });
+    const r = reply();
+    await adminReadHook(resolve)(req({ id: "u1", role: "api_token" }), r);
+    expect(r._code).toBe(403);
+  });
+
+  it("401s an unauthenticated request", async () => {
+    const r = reply();
+    await adminReadHook(vi.fn())(req(undefined), r);
+    expect(r._code).toBe(401);
+  });
+
+  it("rejects an ordinary session user", async () => {
+    const r = reply();
+    await adminReadHook(vi.fn())(req({ id: "u1", role: "user" }), r);
+    expect(r._code).toBe(403);
   });
 });
 
