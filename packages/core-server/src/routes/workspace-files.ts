@@ -21,6 +21,57 @@ export const workspaceFilesRoutes = fp(
 
     await server.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB
 
+    // Run a shell command directly in the workspace container (owner-scoped).
+    // Not a new privilege — the workspace's agent can already run Bash here; this
+    // is a direct, no-LLM convenience (the CLI's `!` command). Bounded by a
+    // timeout + an output cap; output is combined stdout+stderr.
+    server.post<{ Params: { id: string }; Body: { command?: string } }>("/v1/workspaces/:id/exec", {
+      schema: {
+        summary: "Run a command in the workspace container",
+        description: "Executes `sh -c <command>` in the workspace's container and returns combined output (capped + time-bounded).",
+        tags: ["Workspaces"],
+        params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+        body: { type: "object", required: ["command"], properties: { command: { type: "string" } } },
+      },
+    }, async (request, reply) => {
+      const workspace = sessionRegistry.get(request.params.id);
+      if (!workspace || !workspace.container_id || !authorizeTenantAccess(request, workspace)) {
+        return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
+      }
+      const command = (request.body?.command ?? "").trim();
+      if (!command) return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "command is required"));
+
+      const MAX_BYTES = 64_000;
+      const TIMEOUT_MS = 30_000;
+      const it = containerManager.execInContainer(workspace.container_id, ["sh", "-c", command])[Symbol.asyncIterator]();
+      const start = Date.now();
+      let output = "";
+      let truncated = false;
+      let timedOut = false;
+      try {
+        for (;;) {
+          const remaining = TIMEOUT_MS - (Date.now() - start);
+          if (remaining <= 0) { timedOut = true; break; }
+          let timer: NodeJS.Timeout | undefined;
+          const next = await Promise.race([
+            it.next(),
+            new Promise<{ timeout: true }>((r) => { timer = setTimeout(() => r({ timeout: true }), remaining); }),
+          ]);
+          if (timer) clearTimeout(timer); // don't leak a timer per output line
+          if ("timeout" in next) { timedOut = true; break; }
+          if (next.done) break;
+          output += next.value + "\n";
+          if (output.length >= MAX_BYTES) { truncated = true; break; }
+        }
+      } finally {
+        // Stop reading + destroy the attach socket. Note: this does NOT signal
+        // the exec'd process — like the agent's own Bash, a runaway command keeps
+        // running in the (owner's, ephemeral) container until it exits on its own.
+        await it.return?.(undefined).catch(() => {});
+      }
+      return { output: output.slice(0, MAX_BYTES), truncated, timed_out: timedOut };
+    });
+
     server.get<{
       Params: { id: string };
       Querystring: { path?: string };
