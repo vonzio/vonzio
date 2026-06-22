@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { approveDeviceCode, ApiError } from "../api/client.js";
 import { Button, Field, Input } from "../brand/components.js";
@@ -17,6 +17,14 @@ export function Device() {
   const [code, setCode] = useState(params.get("user_code") ?? "");
   const [state, setState] = useState<"idle" | "submitting" | "approved" | "error">("idle");
   const [message, setMessage] = useState("");
+
+  // After approval, auto-continue to the dashboard so the page isn't a dead end
+  // (the CLI keeps working regardless). A manual link is offered as well.
+  useEffect(() => {
+    if (state !== "approved") return;
+    const t = setTimeout(() => { window.location.href = "/"; }, 5000);
+    return () => clearTimeout(t);
+  }, [state]);
 
   const approve = async () => {
     if (!code.trim()) return;
@@ -55,6 +63,10 @@ export function Device() {
               <p className="lede">
                 Head back to your terminal — the CLI will finish signing in. You can manage or
                 revoke this device anytime under <strong>Settings → Connected devices</strong>.
+              </p>
+              <p className="lede" style={{ marginTop: 4 }}>
+                <a href="/" style={{ color: "var(--vz-sodium)", fontWeight: 600 }}>Continue to your dashboard →</a>
+                <span style={{ color: "var(--vz-muted)" }}> &nbsp;(redirecting in a few seconds…)</span>
               </p>
             </>
           ) : (
