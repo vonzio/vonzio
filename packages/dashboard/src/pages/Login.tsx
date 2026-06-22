@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { authClient } from "../lib/auth-client.js";
 import { Toggle } from "../brand/components.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
+import { currentReturnTo } from "../lib/return-to.js";
 import "./login.css";
 
 declare global {
@@ -127,7 +128,9 @@ export function Login({ onLogin, showRegister, authProviders, turnstileSiteKey, 
   }
 
   async function handleOAuth(provider: "google" | "github") {
-    await authClient.signIn.social({ provider, callbackURL: "/" });
+    // Preserve a deep link (e.g. /device?user_code=…) across the OAuth round-trip,
+    // validated as a same-origin path (shared open-redirect guard).
+    await authClient.signIn.social({ provider, callbackURL: currentReturnTo() ?? "/" });
   }
 
   return (
