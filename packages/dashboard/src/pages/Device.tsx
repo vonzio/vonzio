@@ -1,19 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { approveDeviceCode, ApiError } from "../api/client.js";
-import { PageHeader, PageBody, Card, Button, Field, Input } from "../brand/components.js";
+import { Button, Field, Input } from "../brand/components.js";
+import { ThemeToggle } from "../components/ThemeToggle.js";
+import "./login.css";
 
 /**
  * Device-authorization verification page (RFC 8628). The CLI prints a code and
- * a link here; the logged-in user confirms it to approve the login. Lives at
- * /device (shell layout → requires a session; unauthenticated users are routed
- * to login first). `?user_code=` pre-fills from `verification_uri_complete`.
+ * a link here; the logged-in user confirms it to approve the login. Rendered
+ * headless (bare layout, no app shell) like the login/onboarding pages — but
+ * still session-gated, so an unauthenticated visitor is routed to login first
+ * (with ?returnTo back here). `?user_code=` pre-fills from the CLI link.
  */
 export function Device() {
   const [params] = useSearchParams();
   const [code, setCode] = useState(params.get("user_code") ?? "");
   const [state, setState] = useState<"idle" | "submitting" | "approved" | "error">("idle");
   const [message, setMessage] = useState("");
+
+  // After approval, auto-continue to the dashboard so the page isn't a dead end
+  // (the CLI keeps working regardless). A manual link is offered as well.
+  useEffect(() => {
+    if (state !== "approved") return;
+    const t = setTimeout(() => { window.location.href = "/"; }, 5000);
+    return () => clearTimeout(t);
+  }, [state]);
 
   const approve = async () => {
     if (!code.trim()) return;
@@ -29,25 +40,42 @@ export function Device() {
   };
 
   return (
-    <>
-      <PageHeader eyebrow="Devices" title="Connect a device" lede="Authorize the vonzio CLI (or another device) to act as you." />
-      <PageBody>
-        <div style={{ maxWidth: 440 }}>
-          <Card>
-            {state === "approved" ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--vz-ok)" }}>Device approved ✓</div>
-                <p style={{ margin: 0, fontSize: 13, color: "var(--vz-muted)", lineHeight: 1.5 }}>
-                  Head back to your terminal — the CLI will finish signing in. You can manage or
-                  revoke this device anytime under <strong>Settings → API tokens</strong>.
-                </p>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <p style={{ margin: 0, fontSize: 13, color: "var(--vz-muted)", lineHeight: 1.5 }}>
-                  Enter the code shown in your terminal to authorize this device. Only approve a
-                  code you started yourself.
-                </p>
+    <div className="sodium-shell">
+      <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10 }}>
+        <ThemeToggle className="vz-action-btn" />
+      </div>
+      <div className="login-stage">
+        <a href="/" className="login-brand" aria-label="vonzio">
+          <span className="vm" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 64 64">
+              <path d="M18 22 L32 44 L46 22" fill="none" stroke="var(--vz-sodium)" strokeWidth="6.5" strokeLinecap="round" strokeLinejoin="round" />
+              <rect x="22" y="49" width="20" height="3.5" rx="1.75" fill="var(--vz-sodium)" />
+            </svg>
+          </span>
+          <span><span className="vletter">v</span>onzio</span>
+        </a>
+
+        <div className="login-card">
+          <span className="vz-eyebrow">Connect a device</span>
+          {state === "approved" ? (
+            <>
+              <h1>Device <em>approved.</em></h1>
+              <p className="lede">
+                Head back to your terminal — the CLI will finish signing in. You can manage or
+                revoke this device anytime under <strong>Settings → Connected devices</strong>.
+              </p>
+              <p className="lede" style={{ marginTop: 4 }}>
+                <a href="/" style={{ color: "var(--vz-sodium)", fontWeight: 600 }}>Continue to your dashboard →</a>
+                <span style={{ color: "var(--vz-muted)" }}> &nbsp;(redirecting in a few seconds…)</span>
+              </p>
+            </>
+          ) : (
+            <>
+              <h1>Authorize <em>this device.</em></h1>
+              <p className="lede">
+                Enter the code shown in your terminal. Only approve a code you started yourself.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 8 }}>
                 <Field label="Device code">
                   <Input
                     value={code}
@@ -61,16 +89,14 @@ export function Device() {
                 {state === "error" && (
                   <div style={{ fontSize: 12.5, color: "var(--vz-fail)" }}>{message}</div>
                 )}
-                <div>
-                  <Button onClick={approve} disabled={state === "submitting" || !code.trim()}>
-                    {state === "submitting" ? "Approving…" : "Approve device"}
-                  </Button>
-                </div>
+                <Button onClick={approve} disabled={state === "submitting" || !code.trim()}>
+                  {state === "submitting" ? "Approving…" : "Approve device"}
+                </Button>
               </div>
-            )}
-          </Card>
+            </>
+          )}
         </div>
-      </PageBody>
-    </>
+      </div>
+    </div>
   );
 }

@@ -18,8 +18,19 @@ import { AppShell } from "./components/AppShell.js";
 import { track, initClickTracking } from "./lib/track.js";
 import { EntitlementsProvider, getRoutes, registerDefaults, useEntitlements } from "./registry/index.js";
 import { getPublicRoutes } from "./public-routes.js";
+import { currentReturnTo } from "./lib/return-to.js";
 
 registerDefaults();
+
+/** Catch-all for unauthenticated users: send to login (or setup) while
+ *  preserving the page they were trying to reach as ?returnTo. */
+function RedirectToAuth({ setupNeeded }: { setupNeeded: boolean }) {
+  const location = useLocation();
+  if (setupNeeded) return <Navigate to="/setup" replace />;
+  const dest = `${location.pathname}${location.search}`;
+  const qs = dest && dest !== "/" ? `?returnTo=${encodeURIComponent(dest)}` : "";
+  return <Navigate to={`/login${qs}`} replace />;
+}
 
 export function App() {
   const { data: session, isPending } = authClient.useSession();
@@ -98,14 +109,14 @@ export function App() {
           {setupNeeded && (
             <Route path="/setup" element={<Setup />} />
           )}
-          <Route path="/login" element={<Login onLogin={() => { window.location.href = "/"; }} showRegister={registrationEnabled ? () => { window.location.href = "/register"; } : undefined} authProviders={authProviders} turnstileSiteKey={turnstileSiteKey} marketingUrl={marketingUrl} emailEnabled={emailEnabled} />} />
+          <Route path="/login" element={<Login onLogin={() => { window.location.href = currentReturnTo() ?? "/"; }} showRegister={registrationEnabled ? () => { window.location.href = "/register"; } : undefined} authProviders={authProviders} turnstileSiteKey={turnstileSiteKey} marketingUrl={marketingUrl} emailEnabled={emailEnabled} />} />
           {registrationEnabled && (
             <Route path="/register" element={<Register onRegister={() => { window.location.href = "/"; }} showLogin={() => { window.location.href = "/login"; }} authProviders={authProviders} turnstileSiteKey={turnstileSiteKey} marketingUrl={marketingUrl} />} />
           )}
           {/* Marketing/landing lives on the marketing domain (vonzio.com).
               Anything else hitting the app domain unauthenticated →
               /setup on a fresh OSS instance, /login otherwise. */}
-          <Route path="*" element={<Navigate to={setupNeeded ? "/setup" : "/login"} replace />} />
+          <Route path="*" element={<RedirectToAuth setupNeeded={setupNeeded} />} />
         </Routes>
       </BrowserRouter>
     );
