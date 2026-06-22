@@ -124,7 +124,7 @@ export function registerDefaults(): void {
   registerRoute({ id: "playbooks", path: "/playbooks", element: <Playbooks />, layout: "shell", order: 30 });
   registerRoute({ id: "memories", path: "/memories", element: <Memories />, layout: "shell", order: 40 });
   registerRoute({ id: "settings", path: "/settings", element: <Settings />, layout: "shell", order: 50 });
-  registerRoute({ id: "device", path: "/device", element: <Device />, layout: "shell", order: 52 });
+  registerRoute({ id: "device", path: "/device", element: <Device />, layout: "bare", order: 52 });
   registerRoute({ id: "ops", path: "/ops", element: <Operations />, layout: "shell", entitlement: "admin", order: 60 });
   registerRoute({ id: "admin", path: "/admin", element: <Admin />, layout: "shell", entitlement: "admin_multitenant", order: 70 });
 
