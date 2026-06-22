@@ -1,10 +1,11 @@
 import { defineConfig } from "vitest/config";
 
-// Node-environment unit tests for the build tooling (the vonzio-plugins Vite
-// plugin). The React app itself isn't unit-tested here.
+// Node-environment unit tests: the build tooling (the vonzio-plugins Vite
+// plugin) plus pure, framework-free app utilities under src (e.g. the
+// open-redirect guard). Component tests are not run here.
 export default defineConfig({
   test: {
-    include: ["*.test.ts"],
+    include: ["*.test.ts", "src/**/*.test.ts"],
     environment: "node",
   },
 });
