@@ -648,6 +648,8 @@ export function setupWsHandler(
             prompt: msg.message,
             profile_id: session.profile_id,
             session_id: msg.session_id,
+            // Per-turn model override (CLI `/model`). Undefined → the profile's model.
+            model: msg.model,
             // session.turn isn't in ClientMessage's discriminated union yet —
             // the field is validated by submitTaskSchema upstream.
             attachments: (msg as Record<string, unknown>).attachments as TaskAttachment[] | undefined,
