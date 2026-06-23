@@ -50,6 +50,11 @@ const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
 // Mirrors PLATFORM_MCP_INSTRUCTIONS in mcp/platform-mcp.ts (which goes out via
 // the MCP initialize handshake); kept here too because the system prompt is
 // guaranteed to reach the model.
+// Native Anthropic API base. Used to override any in-container gateway base URL
+// (ollama/openai providers bake ANTHROPIC_BASE_URL=127.0.0.1:11434 at container
+// creation) when a turn runs on a native Anthropic credential.
+const ANTHROPIC_NATIVE_BASE_URL = "https://api.anthropic.com";
+
 const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- LEARNING SKILLS: when you work out a non-trivial, repeatable procedure, save it as a skill with create_skill (bundle helper scripts via files) so future runs reuse it. skill_list first to avoid duplicates; improve an existing one with skill_update rather than duplicating. This is how you improve over time.\n- PREREQUISITES: reading Gmail or sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
 
 /** Short, user-safe error string for surfacing a cause in events/logs. */
@@ -1830,8 +1835,16 @@ export class Orchestrator extends EventEmitter {
       // prefer the API key and silently bypass the subscription.
       delete env.ANTHROPIC_API_KEY;
       env.CLAUDE_CODE_OAUTH_TOKEN = profile.resolved_api_key;
+      // Reset the base URL to native Anthropic. A reused session container that
+      // was first created under the ollama/openai provider has the in-container
+      // gateway baked in as ANTHROPIC_BASE_URL; the per-turn exec only overrides
+      // vars it sets, so without this the OAuth call inherits the gateway URL and
+      // the model 404s ("may not exist or you may not have access to it").
+      env.ANTHROPIC_BASE_URL = ANTHROPIC_NATIVE_BASE_URL;
     } else if (profile.resolved_api_key) {
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
+      // Same gateway-leak guard as above for native Anthropic API keys.
+      env.ANTHROPIC_BASE_URL = ANTHROPIC_NATIVE_BASE_URL;
     } else {
       throw new Error("No API key linked to this agent. Go to Agents → Edit to attach one.");
     }
