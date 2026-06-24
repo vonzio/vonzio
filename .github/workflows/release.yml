@@ -21,11 +21,17 @@ jobs:
   # stops the release.
   e2e-gate:
     name: e2e gate
+    # Canonical publish pipeline — only the upstream OSS repo cuts releases and
+    # publishes the runtime images + npm SDK. On a fork or the cloud mirror
+    # (which ships via its own deploy.yml) every job below is skipped, so this
+    # whole workflow is a no-op there instead of failing/double-publishing.
+    if: ${{ github.repository == 'vonzio/vonzio' }}
     uses: ./.github/workflows/e2e-full.yml
 
   release:
     name: GitHub release
     needs: e2e-gate
+    if: ${{ github.repository == 'vonzio/vonzio' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -83,6 +89,7 @@ jobs:
     # this job grants explicitly (the top-level token is contents:write only).
     name: publish runtime images to GHCR
     needs: release
+    if: ${{ github.repository == 'vonzio/vonzio' }}
     permissions:
       contents: read
       packages: write
@@ -100,6 +107,7 @@ jobs:
     # are no-ops. Bumping an SDK package.json version + pushing a v* tag ships it.
     name: publish plugin SDK to npm
     needs: e2e-gate
+    if: ${{ github.repository == 'vonzio/vonzio' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
