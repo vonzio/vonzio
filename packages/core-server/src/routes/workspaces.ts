@@ -243,7 +243,11 @@ export const workspaceRoutes = fp(
         apiKey: resolved?.resolved_api_key,
         provider: resolved?.resolved_provider,
         baseUrl: resolved?.resolved_base_url,
-        model: workspace.model_override ?? resolved?.model,
+        // Prefer the model that actually ran this workspace's last turn — it's
+        // consistent with resolved_provider. model_override ?? resolved.model can
+        // desync from the provider (profile default model vs a switched-to key)
+        // and 404 — see the ws/handler post-turn hook for the full rationale.
+        model: workspace.last_run_model ?? workspace.model_override ?? resolved?.model,
       });
       if (title) {
         await workspaceService.update(request.params.id, { name: title });
