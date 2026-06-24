@@ -55,6 +55,21 @@ const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
 // creation) when a turn runs on a native Anthropic credential.
 const ANTHROPIC_NATIVE_BASE_URL = "https://api.anthropic.com";
 
+// Provider-routing env vars that select the model endpoint + credential. On a
+// reused session container these must each be set explicitly every turn — an
+// unset var inherits the previous provider's baked value (docker exec only
+// overrides what it passes). buildEnvFromProfile empties any of these the active
+// provider didn't set. Egress's routeModelThroughGateway refines a subset after.
+const PROVIDER_ROUTE_ENV = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "OLLAMA_TARGET_URL",
+  "LLM_GATEWAY_MODE",
+  "LLM_GATEWAY_TARGET_URL",
+  "LLM_GATEWAY_PASSTHROUGH_RAW",
+] as const;
+
 const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- LEARNING SKILLS: when you work out a non-trivial, repeatable procedure, save it as a skill with create_skill (bundle helper scripts via files) so future runs reuse it. skill_list first to avoid duplicates; improve an existing one with skill_update rather than duplicating. This is how you improve over time.\n- PREREQUISITES: reading Gmail or sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
 
 /** Short, user-safe error string for surfacing a cause in events/logs. */
@@ -1832,8 +1847,10 @@ export class Orchestrator extends EventEmitter {
       // as a bearer credential against the NATIVE Anthropic API (no gateway,
       // and it injects the oauth beta header itself). Clear any ANTHROPIC_API_KEY
       // a user secret may have injected above — if both are set the SDK could
-      // prefer the API key and silently bypass the subscription.
-      delete env.ANTHROPIC_API_KEY;
+      // prefer the API key and silently bypass the subscription. Set to "" (not
+      // delete): on a reused container an unset var inherits the baked value, so
+      // we must explicitly override it to empty (see PROVIDER_ROUTE_ENV below).
+      env.ANTHROPIC_API_KEY = "";
       env.CLAUDE_CODE_OAUTH_TOKEN = profile.resolved_api_key;
       // Reset the base URL to native Anthropic. A reused session container that
       // was first created under the ollama/openai provider has the in-container
@@ -1847,6 +1864,18 @@ export class Orchestrator extends EventEmitter {
       env.ANTHROPIC_BASE_URL = ANTHROPIC_NATIVE_BASE_URL;
     } else {
       throw new Error("No API key linked to this agent. Go to Agents → Edit to attach one.");
+    }
+
+    // Neutralize cross-provider env leaks on a REUSED session container. The
+    // first turn's provider env is baked into the container; a later turn is a
+    // docker exec that only overrides the vars it sets, so any routing var the
+    // new provider doesn't set would inherit the old provider's baked value
+    // (e.g. a glm/ollama→claude_subscription switch leaking ANTHROPIC_API_KEY →
+    // "Invalid API key", or ollama's gateway base URL → "model may not exist").
+    // Explicitly empty every routing var the chosen provider didn't set so the
+    // exec overrides the stale container value.
+    for (const k of PROVIDER_ROUTE_ENV) {
+      if (!(k in env)) env[k] = "";
     }
 
     // Inject git credentials from linked providers (or all user providers if none linked)
