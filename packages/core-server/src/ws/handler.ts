@@ -204,7 +204,13 @@ export function setupWsHandler(
             apiKey: resolved?.resolved_api_key,
             provider: resolved?.resolved_provider,
             baseUrl: resolved?.resolved_base_url,
-            model: workspace.model_override ?? resolved?.model,
+            // Prefer the model that ACTUALLY produced this turn. It is consistent
+            // with resolved_provider (the same api_key_id_override ran it). Using
+            // model_override ?? resolved.model can desync from the provider: with
+            // no model_override it falls to the profile default (e.g. an ollama
+            // model) while the provider comes from a switched-to key (Anthropic)
+            // → a glm model sent to Anthropic 404s and titling silently fails.
+            model: workspace.last_run_model ?? workspace.model_override ?? resolved?.model,
           }, wsLog as any);
           const title = llm ?? heuristicTitle(prompt);
           if (title && title !== name) {
