@@ -76,5 +76,25 @@ if [ "${MODE}" = "chat" ]; then
   export VONZIO_E2E_CHAT=1  # un-gates chat.spec.ts (skipped without the mock)
 fi
 echo ">> running ${SPEC}"
-VONZIO_E2E_BASE_URL="http://localhost:${DASH_PORT}" \
-  npx playwright test --config e2e/playwright.config.ts "${SPEC}"
+if ! VONZIO_E2E_BASE_URL="http://localhost:${DASH_PORT}" \
+  npx playwright test --config e2e/playwright.config.ts "${SPEC}"; then
+  # Capture the runtime state BEFORE the EXIT trap tears the stack (and the
+  # orchestrator-spawned agent containers) down — otherwise a chat failure
+  # leaves no trace of WHY the agent never replied.
+  {
+    echo "===== E2E FAILURE DIAGNOSTICS ====="
+    echo "--- vonzio-agent image ---"
+    docker images vonzio-agent:latest --format '{{.ID}}  created {{.CreatedAt}} ({{.CreatedSince}})' || true
+    echo "--- spawned agent containers (label=managed-by=vonzio) ---"
+    docker ps -a --filter "label=managed-by=vonzio" || true
+    for a in $(docker ps -aq --filter "label=managed-by=vonzio" --filter "network=${NETWORK}"); do
+      echo "--- agent ${a} logs (tail) ---"
+      docker logs "$a" 2>&1 | tail -120 || true
+    done
+    echo "--- server logs ---";   compose logs --tail=150 server || true
+    echo "--- mock-llm logs ---"; compose logs --tail=80 mock-llm || true
+    echo "--- network inspect ${NETWORK} ---"; docker network inspect "${NETWORK}" || true
+    echo "===== END DIAGNOSTICS ====="
+  } >&2
+  exit 1
+fi
