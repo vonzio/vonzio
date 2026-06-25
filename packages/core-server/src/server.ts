@@ -360,6 +360,13 @@ export async function buildServer(deps: ServerDeps) {
     submitTask: (input) => taskService.submit(input, [input.profile_id!]),
     notificationService,
     log: server.log,
+    // SaaS seams — wrapped so a cp-server that mutates coreDeps AFTER this
+    // construction still resolves at call time (same pattern as recordTaskOrg
+    // wiring in the task routes below).
+    recordTaskOrg: (taskId, orgId) =>
+      coreDeps.recordTaskOrg ? coreDeps.recordTaskOrg(taskId, orgId) : Promise.resolve(),
+    resolveOrgIdForUser: (userId) =>
+      coreDeps.resolveOrgIdForUser ? coreDeps.resolveOrgIdForUser(userId) : Promise.resolve(null),
   });
   const playbookScheduler = new PlaybookScheduler(playbookService, chainRunner, server.log);
 

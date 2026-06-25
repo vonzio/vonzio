@@ -16,6 +16,12 @@ interface ChainRunnerDeps {
   submitTask: (input: SubmitTaskInput) => Promise<{ task_id: string }>;
   notificationService?: NotificationService;
   log?: Logger;
+  // SaaS seams (no-ops in OSS): link each scheduler-submitted task to the
+  // playbook owner's org so the orchestrator's detached dispatch can org-tag
+  // the workspace it creates. Without this, playbook workspace inserts hit the
+  // SaaS org_id NOT NULL constraint. Mirrors recordTaskOrg in routes/tasks.ts.
+  recordTaskOrg?: (taskId: string, orgId: string) => Promise<void>;
+  resolveOrgIdForUser?: (userId: string) => Promise<string | null>;
 }
 
 const CHAIN_OUTPUT_SCHEMA = {
@@ -72,6 +78,12 @@ export class ChainRunner {
   async execute(playbook: Playbook, userId: string): Promise<PlaybookRun> {
     const sessionId = `pb-${nanoid()}`;
     const run = await this.deps.playbookService.createRun(playbook.id, userId, sessionId);
+    // Resolve the playbook owner's org once (SaaS only) so every task this run
+    // submits can be linked to it. OSS: resolveOrgIdForUser is undefined → null
+    // → no link recorded → org_id stays null (existing behavior).
+    const orgId = this.deps.resolveOrgIdForUser
+      ? await this.deps.resolveOrgIdForUser(userId)
+      : null;
     const runState = { cancelled: false };
     this.activeRuns.set(run.id, runState);
 
@@ -124,6 +136,11 @@ export class ChainRunner {
 
         const { task_id } = await this.deps.submitTask(taskInput);
         taskIds.push(task_id);
+        // Link before the orchestrator's first dispatch races to create the
+        // workspace (resolveOrgIdForTask must see the row). No-op in OSS.
+        if (orgId && this.deps.recordTaskOrg) {
+          await this.deps.recordTaskOrg(task_id, orgId);
+        }
 
         // Name the workspace after first task submission
         if (isFirstChain) {
