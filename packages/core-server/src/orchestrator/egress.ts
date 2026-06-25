@@ -97,9 +97,28 @@ export function planEgress(
 }
 
 /**
+ * Hostname(s) of the internal server URL, for exclusion from the egress proxy.
+ * Returns [] when no URL is configured (OSS without the internal MCP wiring).
+ */
+export function internalServerHost(internalServerUrl?: string): string[] {
+  if (!internalServerUrl) return [];
+  try {
+    return [new URL(internalServerUrl).hostname];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Build the env that points an agent at the egress proxy. The signed token
  * carries the allowlist; localhost is excluded so the SDK→gateway hop stays
  * direct. `ttlSeconds` bounds token replay if it leaks.
+ *
+ * `noProxyHosts` are extra hosts excluded from the proxy — pass the internal
+ * server host so the agent's calls to the in-cluster MCP endpoints
+ * (`http://server:3000/mcp/*`) hit it DIRECTLY instead of being routed through
+ * the egress proxy, whose deny-by-default allowlist would block the internal
+ * host and leave every built-in MCP server stuck "connecting".
  */
 export function buildProxyEnv(opts: {
   domains: string[];
@@ -107,15 +126,17 @@ export function buildProxyEnv(opts: {
   proxyAlias: string;
   proxyPort: number;
   ttlSeconds?: number;
+  noProxyHosts?: string[];
 }): Record<string, string> {
   const token = signToken(opts.domains, opts.secret, opts.ttlSeconds);
   const url = `http://${token}:@${opts.proxyAlias}:${opts.proxyPort}`;
+  const noProxy = ["localhost", "127.0.0.1", "::1", ...(opts.noProxyHosts ?? [])].join(",");
   return {
     HTTP_PROXY: url,
     HTTPS_PROXY: url,
     http_proxy: url,
     https_proxy: url,
-    NO_PROXY: "localhost,127.0.0.1,::1",
-    no_proxy: "localhost,127.0.0.1,::1",
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
   };
 }

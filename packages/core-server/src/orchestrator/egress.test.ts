@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
-import { modelHostsFromEnv, planEgress, buildProxyEnv, signToken, routeModelThroughGateway } from "./egress.js";
+import { modelHostsFromEnv, planEgress, buildProxyEnv, signToken, routeModelThroughGateway, internalServerHost } from "./egress.js";
 
 const require = createRequire(import.meta.url);
 const proxy = require("../../../../docker/egress-proxy.cjs") as {
@@ -117,5 +117,27 @@ describe("buildProxyEnv", () => {
   it("re-exports the proxy's signer (single token implementation)", () => {
     const t = signToken(["x.com"], "k");
     expect(proxy.verifyToken(t, "k")?.domains).toEqual(["x.com"]);
+  });
+
+  it("excludes extra noProxyHosts so internal MCP calls bypass the proxy", () => {
+    const env = buildProxyEnv({
+      domains: ["api.anthropic.com"],
+      secret: "s3cret",
+      proxyAlias: "egress-proxy",
+      proxyPort: 8080,
+      noProxyHosts: ["server"],
+    });
+    expect(env.NO_PROXY.split(",")).toContain("server");
+    expect(env.NO_PROXY).toBe(env.no_proxy);
+  });
+});
+
+describe("internalServerHost", () => {
+  it("extracts the hostname from the internal server URL", () => {
+    expect(internalServerHost("http://server:3000")).toEqual(["server"]);
+  });
+  it("returns [] when unset or unparseable", () => {
+    expect(internalServerHost(undefined)).toEqual([]);
+    expect(internalServerHost("not a url")).toEqual([]);
   });
 });
