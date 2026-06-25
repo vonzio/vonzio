@@ -12,6 +12,11 @@ export interface ContainerCreateOptions {
    *  strings (e.g. "/dev/net/tun" or "/dev/foo:/dev/bar:rwm"). OpenVPN
    *  sidecars require /dev/net/tun. */
   devices?: string[];
+  /** Extra /etc/hosts entries, formatted as Docker `--add-host` strings
+   *  ("hostname:ip"). Cannot be combined with a `container:` networkMode
+   *  (Docker rejects it), so set this on the network-owning container — e.g.
+   *  a VPN sidecar — whose /etc/hosts the attached agent then inherits. */
+  extraHosts?: string[];
   labels?: Record<string, string>;
 }
 

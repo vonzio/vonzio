@@ -84,6 +84,7 @@ export class DockerManager implements ContainerManager {
             CgroupPermissions: perms ?? "rwm",
           };
         }),
+        ExtraHosts: opts.extraHosts,
         ShmSize: 256 * 1024 * 1024, // 256MB — needed for Chrome/Chromium
         // Cap process/thread count so a runaway or hostile workload can't
         // fork-bomb the shared host kernel. Configurable; 0 = unlimited.
