@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { gzipSync } from "node:zlib";
+import { lookup as dnsLookup } from "node:dns/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2364,6 +2365,26 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
+  /** Resolve the internal server host(s) to `host:ip` entries for a sidecar's
+   *  /etc/hosts, so agents joining the sidecar's netns can reach the in-cluster
+   *  MCP endpoints by name even after a VPN clobbers DNS. Resolution runs from
+   *  this (server) process, which shares the sidecar's network and so returns
+   *  the reachable internal IP. Returns [] when no internal URL is configured
+   *  (OSS) or the host can't be resolved. */
+  private async resolveInternalExtraHosts(): Promise<string[]> {
+    const hosts = internalServerHost(this.deps.config.internalServerUrl);
+    const entries: string[] = [];
+    for (const h of hosts) {
+      try {
+        const addrs = await dnsLookup(h, { all: true });
+        for (const a of addrs) entries.push(`${h}:${a.address}`);
+      } catch {
+        // Unresolvable from here — skip; agent falls back to whatever DNS it has.
+      }
+    }
+    return entries;
+  }
+
   /** Actually create + start the sidecar, wait for DNS push, record
    *  bookkeeping. Called only by ensureVpnSidecar via the in-flight
    *  serialization. */
@@ -2424,6 +2445,15 @@ export class Orchestrator extends EventEmitter {
       env,
       capAdd: ["NET_ADMIN"],
       devices,
+      // Bake the internal server host into the sidecar's /etc/hosts. The agent
+      // joins this sidecar's netns and inherits its /etc/hosts + resolv.conf;
+      // once the VPN pushes its own DNS, the Docker service name `server` no
+      // longer resolves there, so the agent's calls to the in-cluster MCP
+      // endpoints (http://server:3000/mcp/*) fail and the built-in MCP servers
+      // never connect. A hosts entry is consulted before DNS, so it survives
+      // the VPN's DNS takeover. (ExtraHosts can't go on the agent itself — it
+      // conflicts with the `container:` networkMode.)
+      extraHosts: await this.resolveInternalExtraHosts(),
       labels: {
         [CONTAINER_MODE_LABEL]: ContainerMode.VpnSidecar,
         "vonzio-vpn-tunnel-id": tunnel.id,
