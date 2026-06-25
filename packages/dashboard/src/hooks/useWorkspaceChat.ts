@@ -589,9 +589,19 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     text: string,
     attachments?: Array<{ type: "image" | "document"; media_type: string; data: string; name: string }>,
     opts?: { goal_mode?: boolean; acceptance_criteria?: string[] },
-  ) => {
+    // Explicit session id for the just-created session. startSession() resolves
+    // on session.ready, but currentSessionIdRef is updated by the ready handler
+    // and may lag the promise resolution by a tick — so a first send that relies
+    // on the ref can silently drop (the old code papered over this with a 100ms
+    // setTimeout that still lost messages when setup ran long). Passing the id
+    // the caller already holds removes the race entirely. Returns whether the
+    // turn was actually dispatched so the caller can keep the input on failure.
+    sessionIdOverride?: string,
+  ): boolean => {
+    const sid = sessionIdOverride ?? currentSessionIdRef.current;
     const hasContent = text.trim().length > 0 || (attachments && attachments.length > 0);
-    if (!hasContent || !wsRef.current || !currentSessionIdRef.current) return;
+    if (!hasContent || !wsRef.current || !sid) return false;
+    currentSessionIdRef.current = sid;
     setMessages((prev) => [...prev, {
       id: nextId(), role: "user", content: text, timestamp: new Date(),
       images: attachments?.filter((a) => a.type === "image").map((a) => `data:${a.media_type};base64,${a.data}`) || undefined,
@@ -602,13 +612,14 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     setStreaming(true);
     wsRef.current.send(JSON.stringify({
       type: "session.turn",
-      session_id: currentSessionIdRef.current,
+      session_id: sid,
       message: text,
       ...(attachments && attachments.length > 0 && { attachments }),
       // Per-message goal-loop override (composer "Run until done" toggle).
       ...(opts?.goal_mode !== undefined && { goal_mode: opts.goal_mode }),
       ...(opts?.acceptance_criteria && opts.acceptance_criteria.length > 0 && { acceptance_criteria: opts.acceptance_criteria }),
     }));
+    return true;
   }, []);
 
   const sendQuickReply = useCallback((text: string) => {

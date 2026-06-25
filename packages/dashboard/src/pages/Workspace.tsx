@@ -658,10 +658,24 @@ export function Workspace() {
     setGoalCriteria("");
     setUserScrolledUp(false);
 
+    // Restore the composer if the send never dispatches — otherwise the
+    // optimistic clear above silently eats the message and the user has to
+    // retype it (reported on new-chat sends that lost the session race).
+    const restoreComposer = () => {
+      setInput(text);
+      if (attachments.length > 0) setAttachments(attachments);
+    };
+
     if (!activeWorkspaceId) {
       const pid = selectedProfileId || defaultProfileId;
-      if (!pid) return;
-      const sessionId = await chat.startSession(pid);
+      if (!pid) { restoreComposer(); return; }
+      let sessionId: string;
+      try {
+        sessionId = await chat.startSession(pid);
+      } catch {
+        restoreComposer();
+        return;
+      }
       setActiveWorkspaceId(sessionId);
       setPendingNew(false);
       navigate(`/w/${sessionId}`, { replace: true });
@@ -689,14 +703,19 @@ export function Workspace() {
         setPendingKeyOverride(null);
       }
 
-      setTimeout(() => {
-        chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList });
-        refetch();
-      }, 100);
+      // Send with the id we just got back — no setTimeout guess. send() uses
+      // this id directly instead of waiting for currentSessionIdRef to catch
+      // up, so the first turn can't be dropped. Restore the composer if it
+      // somehow doesn't dispatch.
+      const dispatched = chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList }, sessionId);
+      if (!dispatched) restoreComposer();
+      refetch();
       return;
     }
 
-    chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList });
+    if (!chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList })) {
+      restoreComposer();
+    }
   }
 
   async function handleLogout() {
