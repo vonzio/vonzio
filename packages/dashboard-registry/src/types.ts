@@ -84,6 +84,14 @@ export interface ComposerSlotProps {
    *  can't swap a container's network_mode mid-flight, so a change
    *  requires container recreation. */
   attachedTunnel?: { id: string; name: string } | null;
+  /** Register an async hook that runs right after a brand-new workspace
+   *  is created but BEFORE its first turn dispatches. Lets a composer
+   *  control (e.g. the VPN picker) flush a choice stashed while
+   *  `workspaceId === null` in time for the server to bake it at
+   *  container creation — otherwise the first send races the deferred
+   *  write and the container comes up with the wrong (profile-default)
+   *  network. Pass `null` to unregister (call in an effect cleanup). */
+  registerBeforeSend?: (fn: ((workspaceId: string) => Promise<void>) | null) => void;
 }
 
 export interface ComposerSlotReg {
