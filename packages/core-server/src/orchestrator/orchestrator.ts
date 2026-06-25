@@ -22,7 +22,7 @@ import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
 import { decideGoalNext } from "./goal-loop.js";
-import { modelHostsFromEnv, planEgress, buildProxyEnv, routeModelThroughGateway } from "./egress.js";
+import { modelHostsFromEnv, planEgress, buildProxyEnv, routeModelThroughGateway, internalServerHost } from "./egress.js";
 import { judgeServerSide } from "./judge-server.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
@@ -2255,6 +2255,11 @@ export class Orchestrator extends EventEmitter {
       // are baked into a long-lived container's env with no refresh path, so
       // they don't expire (a mid-session 407 would otherwise kill the session).
       ttlSeconds: opts?.tokenTtlSeconds,
+      // Exclude the internal server host so the agent reaches the in-cluster MCP
+      // endpoints (/mcp/platform, /mcp/memory, …) directly — routing them through
+      // the egress proxy's deny-by-default allowlist blocks them and the built-in
+      // MCP servers never connect.
+      noProxyHosts: internalServerHost(this.deps.config.internalServerUrl),
     }));
     return { networkMode: proxy.networkName };
   }
