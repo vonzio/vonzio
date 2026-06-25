@@ -117,12 +117,32 @@ export function Workspace() {
   const composerSlots = getComposerSlots().filter(
     (s) => !s.entitlement || entitlements.includes(s.entitlement),
   );
+  // Composer slots can register an async hook that runs after a new
+  // workspace is created but before its first turn dispatches (see
+  // ComposerSlotProps.registerBeforeSend). The registrar is stable per
+  // slot id so the slot's effect doesn't re-register every render.
+  const composerBeforeSend = useRef<Map<string, (workspaceId: string) => Promise<void>>>(new Map());
+  const beforeSendRegistrars = useRef<Map<string, (fn: ((workspaceId: string) => Promise<void>) | null) => void>>(new Map());
+  function getBeforeSendRegistrar(id: string) {
+    let r = beforeSendRegistrars.current.get(id);
+    if (!r) {
+      r = (fn) => {
+        if (fn) composerBeforeSend.current.set(id, fn);
+        else composerBeforeSend.current.delete(id);
+      };
+      beforeSendRegistrars.current.set(id, r);
+    }
+    return r;
+  }
   const [input, setInput] = useState(() => {
     if (!routeId) return "";
     try { return localStorage.getItem(`vonzio_draft_${routeId}`) ?? ""; } catch { return ""; }
   });
   const [pendingNew, setPendingNew] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Composer history: ArrowUp/ArrowDown recall your previous messages (shell
+  // style). -1 = not navigating. Index counts back from the most recent.
+  const [historyIdx, setHistoryIdx] = useState(-1);
   // Goal-loop composer override. null = follow the profile's auto_continue
   // default; true/false = explicit per-message choice. `goalCriteria` is the
   // optional acceptance-criteria text (one per line).
@@ -642,6 +662,33 @@ export function Workspace() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Your previously-sent messages, most-recent-last, for ArrowUp recall.
+  const sentHistory = useMemo(
+    () => chat.messages.filter((m) => m.role === "user" && typeof m.content === "string" && m.content.trim().length > 0).map((m) => m.content),
+    [chat.messages],
+  );
+
+  // ArrowUp/ArrowDown composer history. Only engages when the caret is at the
+  // very start (so multi-line editing/normal cursor movement is unaffected) or
+  // when already navigating. Returns true if it handled the key.
+  function navigateHistory(dir: "up" | "down", el: HTMLTextAreaElement): boolean {
+    if (sentHistory.length === 0) return false;
+    if (dir === "up") {
+      if (historyIdx === -1 && (el.selectionStart !== 0 || el.selectionEnd !== 0)) return false;
+      const next = Math.min(historyIdx + 1, sentHistory.length - 1);
+      if (next === historyIdx) return true;
+      setHistoryIdx(next);
+      setInputWithDraft(sentHistory[sentHistory.length - 1 - next]);
+      return true;
+    }
+    // down
+    if (historyIdx === -1) return false;
+    const next = historyIdx - 1;
+    setHistoryIdx(next);
+    setInputWithDraft(next === -1 ? "" : sentHistory[sentHistory.length - 1 - next]);
+    return true;
+  }
+
   // ─── Send message ────────────────────────────────────────────────
   async function handleSend() {
     const text = input.trim();
@@ -650,6 +697,7 @@ export function Workspace() {
       ? attachments.map(({ type, media_type, data, name }) => ({ type, media_type, data, name }))
       : undefined;
     setInput("");
+    setHistoryIdx(-1);
     if (activeWorkspaceId) clearDraft(activeWorkspaceId);
     setAttachments([]);
     // Clear the per-message acceptance-criteria field on send (the goal_mode
@@ -701,6 +749,17 @@ export function Workspace() {
         }
         setPendingModelOverride(null);
         setPendingKeyOverride(null);
+      }
+
+      // Flush any composer-slot choices stashed while this chat had no
+      // workspace yet (e.g. the VPN picker's "none"/pin override). These
+      // MUST land before the first turn so the server bakes the right
+      // network at container creation — same await-before-dispatch reason
+      // as the model override above. Best-effort: a failed flush falls back
+      // to the profile default but never blocks the send.
+      const beforeSendHooks = Array.from(composerBeforeSend.current.values());
+      if (beforeSendHooks.length > 0) {
+        await Promise.all(beforeSendHooks.map((fn) => fn(sessionId).catch(() => {})));
       }
 
       // Send with the id we just got back — no setTimeout guess. send() uses
@@ -1207,9 +1266,11 @@ export function Workspace() {
                   <textarea
                     ref={inputRef}
                     value={input}
-                    onChange={(e) => setInputWithDraft(e.target.value)}
+                    onChange={(e) => { setHistoryIdx(-1); setInputWithDraft(e.target.value); }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); return; }
+                      if (e.key === "ArrowUp" && navigateHistory("up", e.currentTarget)) { e.preventDefault(); return; }
+                      if (e.key === "ArrowDown" && navigateHistory("down", e.currentTarget)) { e.preventDefault(); return; }
                     }}
                     onPaste={handlePaste}
                     placeholder="Message vonzio…"
@@ -1343,6 +1404,7 @@ export function Workspace() {
                             workspaceId={activeWorkspaceId ?? null}
                             profileId={activeProfile?.id ?? null}
                             attachedTunnel={activeWorkspace?.attached_tunnel ?? null}
+                            registerBeforeSend={getBeforeSendRegistrar(slot.id)}
                           />
                         );
                       })}
