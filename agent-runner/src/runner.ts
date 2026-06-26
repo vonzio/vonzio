@@ -11,6 +11,7 @@ export async function runTask(payload: TaskPayload): Promise<void> {
 
   const options: Record<string, unknown> = {
     allowedTools: payload.allowed_tools,
+    ...(payload.disallowed_tools?.length ? { disallowedTools: payload.disallowed_tools } : {}),
     maxTurns: payload.max_turns ?? 200,
     // Containers are sandboxed in Docker — bypass interactive permission prompts
     permissionMode: "bypassPermissions",
