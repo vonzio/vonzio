@@ -237,11 +237,21 @@ To enable the "Install GitHub App" button:
      (add more as needed).
    - **Setup URL:** `<BETTER_AUTH_URL>/api/git/app/callback` and tick
      **"Redirect on update"**.
-   - Generate a **private key** (downloads a `.pem`).
-2. Set the id and slug (see `.env.example`):
+   - **Tick "Request user authorization (OAuth) during installation".** This is
+     required, not optional: on the install callback vonzio uses the returned
+     OAuth `code` to confirm the installer actually owns the installation before
+     binding it. A GitHub `installation_id` is a small, enumerable integer — if
+     it were trusted blindly, one user could bind another org's installation to
+     their account and mint tokens for its repos. Without this enabled, the
+     install button stays hidden.
+   - Generate a **private key** (downloads a `.pem`) **and a client secret**
+     (under "Client secrets" on the same settings page).
+2. Set the id, slug, and OAuth client creds (see `.env.example`):
    ```bash
    GITHUB_APP_ID=123456
    GITHUB_APP_SLUG=your-app-slug          # the github.com/apps/<slug> name
+   GITHUB_APP_CLIENT_ID=Iv1.xxxxxxxx      # App settings → "Client ID"
+   GITHUB_APP_CLIENT_SECRET=…             # App settings → "Client secrets"
    ```
 3. Provide the private key — **how depends on whether you run under Docker:**
 

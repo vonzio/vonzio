@@ -159,10 +159,10 @@ export const gitOAuthCallbackRoute = fp(
     // GitHub App setup/callback URL. GitHub redirects here after an install (or
     // a "configure" that changes the repo selection) with installation_id +
     // setup_action, plus the state we round-tripped through the install URL.
-    server.get<{ Querystring: { installation_id?: string; setup_action?: string; state?: string } }>(
+    server.get<{ Querystring: { installation_id?: string; setup_action?: string; state?: string; code?: string } }>(
       "/api/git/app/callback",
       async (request, reply) => {
-        const { installation_id, state } = request.query;
+        const { installation_id, state, code } = request.query;
 
         if (!installation_id) {
           return reply.redirect("/settings?oauth=error&message=missing_installation&source=git#integrations");
@@ -188,7 +188,24 @@ export const gitOAuthCallbackRoute = fp(
           return reply.redirect(`${returnPath}?oauth=error&message=expired&source=git#integrations`);
         }
 
+        // SECURITY: installation_id is attacker-controllable (small, enumerable
+        // integers) and the encrypted state only proves WHICH vonzio user started
+        // the flow — not that they own this installation. Without a check, a user
+        // could bind another org's installation to their account and mint tokens
+        // for its repos. So we verify ownership against the user-OAuth `code`
+        // GitHub returns alongside installation_id: exchange it for the human's
+        // token and confirm the installation is one they can actually access.
+        if (!code) {
+          return reply.redirect(`${returnPath}?oauth=error&message=app_user_auth_required&source=git#integrations`);
+        }
+
         try {
+          const userToken = await githubAppService.exchangeUserCode(code);
+          const owns = await githubAppService.userHasInstallation(userToken, installation_id);
+          if (!owns) {
+            server.log.warn({ installation_id, userId: stateData.userId }, "GitHub App install: user does not own the installation — refusing to bind");
+            return reply.redirect(`${returnPath}?oauth=error&message=installation_not_owned&source=git#integrations`);
+          }
           const installation = await githubAppService.getInstallation(installation_id);
           await gitProviderService.createFromGitHubApp({
             installationId: installation_id,

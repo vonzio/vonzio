@@ -243,6 +243,8 @@ export async function buildServer(deps: ServerDeps) {
     appId: config.GITHUB_APP_ID,
     privateKey: githubAppPrivateKey,
     slug: config.GITHUB_APP_SLUG,
+    clientId: config.GITHUB_APP_CLIENT_ID,
+    clientSecret: config.GITHUB_APP_CLIENT_SECRET,
   });
   // GitProviderService mints GitHub App installation tokens via githubAppService
   // in getWithSecret (github_app rows have no stored token).

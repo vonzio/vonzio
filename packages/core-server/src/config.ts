@@ -221,6 +221,13 @@ const configSchema = z.object({
   // GITHUB_APP_PRIVATE_KEY (inline) stays supported for host-mode / non-Docker.
   GITHUB_APP_PRIVATE_KEY: z.string().optional(),
   GITHUB_APP_PRIVATE_KEY_PATH: z.string().optional(),
+  // The App's user-OAuth client id + secret. REQUIRED for the install flow:
+  // they let the callback verify (via the user-OAuth `code` GitHub returns) that
+  // the person actually owns the installation they sent us — otherwise an
+  // enumerable installation_id could be bound to the wrong account. Enable
+  // "Request user authorization (OAuth) during installation" on the App too.
+  GITHUB_APP_CLIENT_ID: z.string().optional(),
+  GITHUB_APP_CLIENT_SECRET: z.string().optional(),
 
   // Auth OAuth providers (for login, separate from git integration)
   AUTH_GOOGLE_CLIENT_ID: z.string().optional(),

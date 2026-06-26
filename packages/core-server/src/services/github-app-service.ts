@@ -38,12 +38,18 @@ export interface GithubAppConfig {
   appId?: string;
   privateKey?: string;
   slug?: string;
+  /** The App's user-OAuth client id/secret — required to verify, at install
+   *  callback time, that the user actually owns the installation they sent us. */
+  clientId?: string;
+  clientSecret?: string;
 }
 
 export class GithubAppService {
   private appId?: string;
   private privateKey?: string;
   readonly slug?: string;
+  private clientId?: string;
+  private clientSecret?: string;
   private tokenCache = new Map<string, CachedToken>();
 
   constructor(cfg: GithubAppConfig) {
@@ -52,6 +58,8 @@ export class GithubAppService {
     // normalize them back to real newlines so the crypto layer accepts the key.
     this.privateKey = cfg.privateKey ? cfg.privateKey.replace(/\\n/g, "\n") : undefined;
     this.slug = cfg.slug;
+    this.clientId = cfg.clientId;
+    this.clientSecret = cfg.clientSecret;
   }
 
   /** True only when the app is fully configured (id + private key). */
@@ -59,9 +67,65 @@ export class GithubAppService {
     return !!(this.appId && this.privateKey);
   }
 
-  /** True when the app can also build an install URL (needs the slug). */
+  /**
+   * True when we can offer AND securely complete an install: we need the slug
+   * (to build the URL) and the OAuth client id/secret (to verify, at callback
+   * time, that the user owns the installation). Without the client creds we
+   * can't verify ownership, so we don't offer the install at all — default-deny,
+   * rather than create an unverified, hijackable binding.
+   */
   canInstall(): boolean {
-    return this.isConfigured() && !!this.slug;
+    return this.isConfigured() && !!this.slug && !!this.clientId && !!this.clientSecret;
+  }
+
+  /**
+   * Exchange the user-OAuth `code` GitHub returns alongside `installation_id`
+   * (requires "Request user authorization (OAuth) during installation" on the
+   * App) for a user access token. That token represents the human who did the
+   * install — used only to confirm installation ownership, never stored.
+   */
+  async exchangeUserCode(code: string): Promise<string> {
+    if (!this.clientId || !this.clientSecret) {
+      throw new Error("GitHub App OAuth client not configured (GITHUB_APP_CLIENT_ID / GITHUB_APP_CLIENT_SECRET)");
+    }
+    const res = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "Vonzio" },
+      body: JSON.stringify({ client_id: this.clientId, client_secret: this.clientSecret, code }),
+    });
+    if (!res.ok) {
+      throw new Error(`GitHub user-OAuth exchange failed (${res.status})`);
+    }
+    const data = (await res.json()) as { access_token?: string; error?: string };
+    if (!data.access_token) {
+      throw new Error(`GitHub user-OAuth exchange returned no token${data.error ? ` (${data.error})` : ""}`);
+    }
+    return data.access_token;
+  }
+
+  /**
+   * Confirm the authenticated user can actually access `installationId` — i.e.
+   * the install belongs to them (or an org they administer). This is the gate
+   * that stops a user binding someone else's (enumerable) installation id to
+   * their own account. Paginates GET /user/installations.
+   */
+  async userHasInstallation(userToken: string, installationId: string): Promise<boolean> {
+    const wanted = String(installationId);
+    for (let page = 1; page <= 10; page++) {
+      const res = await fetch(`${GITHUB_API}/user/installations?per_page=100&page=${page}`, {
+        headers: {
+          Authorization: `Bearer ${userToken}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "Vonzio",
+        },
+      });
+      if (!res.ok) throw new Error(`Failed to list user installations (${res.status})`);
+      const data = (await res.json()) as { total_count: number; installations: Array<{ id: number }> };
+      if (data.installations.some((i) => String(i.id) === wanted)) return true;
+      if (page * 100 >= data.total_count) break;
+    }
+    return false;
   }
 
   /** github.com/apps/<slug>/installations/new — opens the install/repo-picker UI. */
