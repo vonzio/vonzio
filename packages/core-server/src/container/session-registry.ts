@@ -37,6 +37,20 @@ export class SessionRegistry {
   private containerManager: ContainerManager | null = null;
   /** Callback to get session IDs with live WS connections. Injected by server. */
   getConnectedSessionIds: () => Set<string> = () => new Set();
+  /** Ephemeral, connection-scoped local-exec state (CLI `--local-exec`). NOT
+   *  persisted — it's a property of the live WS connection, not the workspace
+   *  row. Set on session.start when the client advertised the capability;
+   *  cleared on session end. `root` is the CLI's cwd label (display only). */
+  private localExec = new Map<string, { root: string }>();
+
+  setLocalExec(sessionId: string, info: { root: string } | null): void {
+    if (info) this.localExec.set(sessionId, info);
+    else this.localExec.delete(sessionId);
+  }
+
+  getLocalExec(sessionId: string): { root: string } | null {
+    return this.localExec.get(sessionId) ?? null;
+  }
 
   constructor(
     private config: SessionRegistryConfig,
@@ -402,6 +416,7 @@ export class SessionRegistry {
     const session = this.sessions.get(sessionId);
     const volumeId = session?.volume_id ?? undefined;
     const deleted = this.sessions.delete(sessionId);
+    this.localExec.delete(sessionId);
     if (deleted) {
       await this.markExpiredInDB(sessionId, false, volumeId);
     }
