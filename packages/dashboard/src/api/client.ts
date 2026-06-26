@@ -486,7 +486,7 @@ export interface GitProviderInfo {
   id: string;
   name: string;
   type: "github" | "gitlab" | "bitbucket";
-  auth_method: "pat" | "oauth";
+  auth_method: "pat" | "oauth" | "github_app";
   token: string;
   user_name?: string;
   user_email?: string;
@@ -515,6 +515,8 @@ export interface GitOAuthConfig {
   github: boolean;
   gitlab: boolean;
   bitbucket: boolean;
+  /** True when a GitHub App is configured (id + private key + slug). */
+  githubApp?: boolean;
 }
 
 export function fetchGitOAuthConfig(): Promise<GitOAuthConfig> {
@@ -524,6 +526,11 @@ export function fetchGitOAuthConfig(): Promise<GitOAuthConfig> {
 export function getGitOAuthAuthorizeUrl(provider: string, returnPath?: string): Promise<{ url: string }> {
   const params = returnPath ? `?returnPath=${encodeURIComponent(returnPath)}` : "";
   return request(`/git-providers/oauth/${provider}/authorize${params}`);
+}
+
+export function getGitHubAppInstallUrl(returnPath?: string): Promise<{ url: string }> {
+  const params = returnPath ? `?returnPath=${encodeURIComponent(returnPath)}` : "";
+  return request(`/git-providers/github-app/install${params}`);
 }
 
 // --- Integrations (Slack, etc.) ---

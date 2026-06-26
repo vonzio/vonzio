@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
 import type { Config } from "../config.js";
 import type { GitProviderService } from "../services/git-provider-service.js";
+import type { GithubAppService } from "../services/github-app-service.js";
 import { encrypt, decrypt } from "../auth/crypto.js";
 
 type ProviderType = "github" | "gitlab" | "bitbucket";
@@ -32,6 +33,7 @@ interface OAuthProviderConfig {
 export interface GitOAuthRoutesOptions {
   config: Config;
   gitProviderService: GitProviderService;
+  githubAppService: GithubAppService;
   encryptionKey: string;
 }
 
@@ -79,7 +81,7 @@ function getProviderConfig(config: Config, provider: ProviderType): OAuthProvide
  */
 export const gitOAuthRoutes = fp(
   async (server: FastifyInstance, opts: GitOAuthRoutesOptions) => {
-    const { config, encryptionKey } = opts;
+    const { config, githubAppService, encryptionKey } = opts;
     const callbackBase = config.BETTER_AUTH_URL.replace(/\/$/, "");
 
     server.get("/v1/git-providers/oauth/config", async () => {
@@ -87,8 +89,30 @@ export const gitOAuthRoutes = fp(
         github: !!(config.GITHUB_CLIENT_ID && config.GITHUB_CLIENT_SECRET),
         gitlab: !!(config.GITLAB_CLIENT_ID && config.GITLAB_CLIENT_SECRET),
         bitbucket: !!(config.BITBUCKET_CLIENT_ID && config.BITBUCKET_CLIENT_SECRET),
+        // GitHub App install flow — needs id + private key + slug to build the URL.
+        githubApp: githubAppService.canInstall(),
       };
     });
+
+    // Begin a GitHub App installation. Returns the github.com install URL with
+    // an encrypted state blob; GitHub redirects back to /api/git/app/callback
+    // with the chosen installation_id after the user picks repos and (for orgs)
+    // an owner approves.
+    server.get<{ Querystring: { returnPath?: string } }>(
+      "/v1/git-providers/github-app/install",
+      async (request, reply) => {
+        if (!githubAppService.canInstall()) {
+          return reply.code(400).send({ error: "GitHub App not configured" });
+        }
+        const user = request.user!;
+        const returnPath = request.query.returnPath ?? "/settings";
+        const state = encrypt(
+          JSON.stringify({ userId: user.id, returnPath, ts: Date.now() }),
+          encryptionKey,
+        );
+        return { url: githubAppService.installUrl(state) };
+      },
+    );
 
     server.get<{ Params: { provider: string }; Querystring: { returnPath?: string } }>(
       "/v1/git-providers/oauth/:provider/authorize",
@@ -129,8 +153,56 @@ export const gitOAuthRoutes = fp(
  */
 export const gitOAuthCallbackRoute = fp(
   async (server: FastifyInstance, opts: GitOAuthRoutesOptions) => {
-    const { config, gitProviderService, encryptionKey } = opts;
+    const { config, gitProviderService, githubAppService, encryptionKey } = opts;
     const callbackBase = config.BETTER_AUTH_URL.replace(/\/$/, "");
+
+    // GitHub App setup/callback URL. GitHub redirects here after an install (or
+    // a "configure" that changes the repo selection) with installation_id +
+    // setup_action, plus the state we round-tripped through the install URL.
+    server.get<{ Querystring: { installation_id?: string; setup_action?: string; state?: string } }>(
+      "/api/git/app/callback",
+      async (request, reply) => {
+        const { installation_id, state } = request.query;
+
+        if (!installation_id) {
+          return reply.redirect("/settings?oauth=error&message=missing_installation&source=git#integrations");
+        }
+
+        // State is optional: GitHub may hit the setup URL without it (e.g. an
+        // install initiated from github.com rather than our button). Without a
+        // user binding we can't attribute the installation, so we ask the user
+        // to start from the in-app button.
+        if (!state) {
+          return reply.redirect("/settings?oauth=error&message=app_install_needs_inapp_start&source=git#integrations");
+        }
+
+        let stateData: { userId: string; returnPath?: string; ts: number };
+        try {
+          stateData = JSON.parse(decrypt(state, encryptionKey));
+        } catch {
+          return reply.redirect("/settings?oauth=error&message=invalid_state&source=git#integrations");
+        }
+
+        const returnPath = safeReturnPath(stateData.returnPath);
+        if (Date.now() - stateData.ts > 30 * 60 * 1000) {
+          return reply.redirect(`${returnPath}?oauth=error&message=expired&source=git#integrations`);
+        }
+
+        try {
+          const installation = await githubAppService.getInstallation(installation_id);
+          await gitProviderService.createFromGitHubApp({
+            installationId: installation_id,
+            accountLogin: installation.accountLogin,
+            userId: stateData.userId,
+          });
+          return reply.redirect(`${returnPath}?oauth=success&source=git#integrations`);
+        } catch (err) {
+          server.log.error({ err, installation_id }, "GitHub App install callback failed");
+          const message = err instanceof Error ? err.message : "app_install_failed";
+          return reply.redirect(`${returnPath}?oauth=error&message=${encodeURIComponent(message)}&source=git#integrations`);
+        }
+      },
+    );
 
     server.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string; error?: string } }>(
       "/api/git/callback/:provider",

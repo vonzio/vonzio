@@ -205,6 +205,17 @@ const configSchema = z.object({
   GITLAB_CLIENT_ID: z.string().optional(),
   GITLAB_CLIENT_SECRET: z.string().optional(),
 
+  // GitHub App (optional — enables the "Install GitHub App" flow). Unlike the
+  // OAuth App above, a GitHub App is installed per account/org with per-repo
+  // selection and is approved by an org owner as part of the install — it
+  // sidesteps "OAuth App access restrictions" entirely and mints short-lived,
+  // least-privilege installation tokens. GITHUB_APP_SLUG is the app's URL slug
+  // (github.com/apps/<slug>); GITHUB_APP_PRIVATE_KEY is the PEM (literal "\n"
+  // escapes are normalized to newlines at load).
+  GITHUB_APP_ID: z.string().optional(),
+  GITHUB_APP_SLUG: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+
   // Auth OAuth providers (for login, separate from git integration)
   AUTH_GOOGLE_CLIENT_ID: z.string().optional(),
   AUTH_GOOGLE_CLIENT_SECRET: z.string().optional(),

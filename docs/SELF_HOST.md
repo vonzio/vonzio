@@ -211,6 +211,48 @@ The full env var reference is in [packages/core-server/src/config.ts](../package
 
 OAuth integrations (GitHub, Google, Slack, etc.) require their client id/secret pairs — see `config.ts` for the variable names.
 
+### Git provider access: OAuth App vs GitHub App
+
+Agents clone and push with a token from a connected git provider (Settings →
+Integrations → Git providers). For GitHub there are three ways to connect, in
+descending order of how well they handle **org** repositories:
+
+| Method | Repo scope | Org-restricted repos | Token |
+|---|---|---|---|
+| **GitHub App** (recommended) | Pick exactly which repos | Org owner approves the install — no separate step | Short-lived, minted per session |
+| OAuth App | All repos the account can reach | Needs a **separate** owner approval of the OAuth app | Long-lived user token |
+| Personal access token | Whatever the PAT is scoped to | Honors the PAT's scope | Long-lived PAT |
+
+If your org has **"OAuth App access restrictions"** enabled, an OAuth App token
+gets `403`s on org repos until an org owner approves the app
+([GitHub docs](https://docs.github.com/en/organizations/managing-oauth-access-to-your-organizations-data/about-oauth-app-access-restrictions)).
+A **GitHub App** sidesteps this: the org owner approves the installation (with a
+repo allow-list) as part of the normal install flow, and vonzio mints
+short-lived, least-privilege installation tokens on demand.
+
+To enable the "Install GitHub App" button:
+
+1. Create a GitHub App at **github.com/settings/apps/new** (or under your org).
+   - **Repository permissions →** Contents: *Read & write*, Metadata: *Read-only*
+     (add more as needed).
+   - **Setup URL:** `<BETTER_AUTH_URL>/api/git/app/callback` and tick
+     **"Redirect on update"**.
+   - Generate a **private key** (downloads a `.pem`).
+2. Set the env vars (see `.env.example`):
+   ```bash
+   GITHUB_APP_ID=123456
+   GITHUB_APP_SLUG=your-app-slug          # the github.com/apps/<slug> name
+   GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n…\n-----END RSA PRIVATE KEY-----"
+   ```
+   The PEM may be pasted with literal `\n` escapes (single-line) or as a real
+   multi-line value.
+3. Restart the stack. "Install GitHub App" now appears in the Git providers
+   dialog; clicking it opens GitHub's install/repo-picker, and on return the
+   installation is saved as a `github_app` provider.
+
+The OAuth App (`GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`) and PAT paths remain
+available and unchanged — the GitHub App is purely additive.
+
 ### Customizing the system prompt and tools
 
 The default agent **system prompt** (`config/vonzio.md`) and the **example tool** (`tools/example-weather.js`) are baked into the server image, so a pull-based install runs without them on disk. (The legacy name `config/system-prompt.md` still works as a fallback.) To customize without rebuilding, drop your own copies next to the compose files and bind-mount them over the baked-in defaults — add this to a small override file (e.g. `docker/docker-compose.override.yml`):

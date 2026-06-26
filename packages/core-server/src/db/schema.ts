@@ -284,8 +284,12 @@ export const gitProviders = pgTable("git_providers", {
   user_id: text("user_id"),
   name: text("name").notNull(),
   type: text("type", { enum: ["github", "gitlab", "bitbucket"] }).notNull(),
-  auth_method: text("auth_method", { enum: ["pat", "oauth"] }).notNull().default("pat"),
+  auth_method: text("auth_method", { enum: ["pat", "oauth", "github_app"] }).notNull().default("pat"),
   encrypted_token: text("encrypted_token").notNull(),
+  // GitHub App installations have no static token — `encrypted_token` holds an
+  // encrypted empty placeholder and the real installation access token is
+  // minted on demand from this id (see GitProviderService.getWithSecret).
+  installation_id: text("installation_id"),
   user_name: text("user_name"),
   user_email: text("user_email"),
   created_at: text("created_at").notNull(),
