@@ -205,6 +205,30 @@ const configSchema = z.object({
   GITLAB_CLIENT_ID: z.string().optional(),
   GITLAB_CLIENT_SECRET: z.string().optional(),
 
+  // GitHub App (optional — enables the "Install GitHub App" flow). Unlike the
+  // OAuth App above, a GitHub App is installed per account/org with per-repo
+  // selection and is approved by an org owner as part of the install — it
+  // sidesteps "OAuth App access restrictions" entirely and mints short-lived,
+  // least-privilege installation tokens. GITHUB_APP_SLUG is the app's URL slug
+  // (github.com/apps/<slug>); GITHUB_APP_PRIVATE_KEY is the PEM (literal "\n"
+  // escapes are normalized to newlines at load).
+  GITHUB_APP_ID: z.string().optional(),
+  GITHUB_APP_SLUG: z.string().optional(),
+  // The PEM private key. Prefer GITHUB_APP_PRIVATE_KEY_PATH for Docker: compose
+  // `env_file` is line-based and mangles a multi-line PEM (and inlining one with
+  // literal "\n" escapes is brittle), so mount the .pem as a file secret and
+  // point this path at it — mirrors the Teller mTLS file-secret pattern.
+  // GITHUB_APP_PRIVATE_KEY (inline) stays supported for host-mode / non-Docker.
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY_PATH: z.string().optional(),
+  // The App's user-OAuth client id + secret. REQUIRED for the install flow:
+  // they let the callback verify (via the user-OAuth `code` GitHub returns) that
+  // the person actually owns the installation they sent us — otherwise an
+  // enumerable installation_id could be bound to the wrong account. Enable
+  // "Request user authorization (OAuth) during installation" on the App too.
+  GITHUB_APP_CLIENT_ID: z.string().optional(),
+  GITHUB_APP_CLIENT_SECRET: z.string().optional(),
+
   // Auth OAuth providers (for login, separate from git integration)
   AUTH_GOOGLE_CLIENT_ID: z.string().optional(),
   AUTH_GOOGLE_CLIENT_SECRET: z.string().optional(),

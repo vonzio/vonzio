@@ -45,6 +45,7 @@ import { FsSkillStorage } from "./services/skill-storage.js";
 import { DocumentService } from "./services/document-service.js";
 import { SubagentService } from "./services/subagent-service.js";
 import { GitProviderService } from "./services/git-provider-service.js";
+import { GithubAppService } from "./services/github-app-service.js";
 import { ConnectionManager } from "./ws/connection.js";
 import { setupWsHandler } from "./ws/handler.js";
 import { createPreviewAuthChecker } from "./auth/preview-auth.js";
@@ -227,7 +228,28 @@ export async function buildServer(deps: ServerDeps) {
     config.MAX_DOCUMENT_MB * 1024 * 1024,
     config.MAX_PROFILE_DOCUMENTS_MB * 1024 * 1024,
   );
-  const gitProviderService = new GitProviderService(db, config.ENCRYPTION_KEY);
+  // Resolve the GitHub App private key: a mounted file (preferred for Docker —
+  // compose env_file can't carry a multi-line PEM) wins over the inline env var.
+  let githubAppPrivateKey = config.GITHUB_APP_PRIVATE_KEY;
+  if (config.GITHUB_APP_PRIVATE_KEY_PATH) {
+    if (existsSync(config.GITHUB_APP_PRIVATE_KEY_PATH)) {
+      githubAppPrivateKey = readFileSync(config.GITHUB_APP_PRIVATE_KEY_PATH, "utf8");
+    } else {
+      console.warn(
+        `[github-app] GITHUB_APP_PRIVATE_KEY_PATH set but file not found: ${config.GITHUB_APP_PRIVATE_KEY_PATH} — GitHub App install disabled`,
+      );
+    }
+  }
+  const githubAppService = new GithubAppService({
+    appId: config.GITHUB_APP_ID,
+    privateKey: githubAppPrivateKey,
+    slug: config.GITHUB_APP_SLUG,
+    clientId: config.GITHUB_APP_CLIENT_ID,
+    clientSecret: config.GITHUB_APP_CLIENT_SECRET,
+  });
+  // GitProviderService mints GitHub App installation tokens via githubAppService
+  // in getWithSecret (github_app rows have no stored token).
+  const gitProviderService = new GitProviderService(db, config.ENCRYPTION_KEY, githubAppService);
   const integrationService = new IntegrationService(db, config.ENCRYPTION_KEY);
   // Plugin runtime infrastructure. Created here so NotificationService
   // can take a reference (it dispatches outbound notifications via
@@ -693,7 +715,7 @@ export async function buildServer(deps: ServerDeps) {
     v1.get<{ Querystring: { filter?: string } }>("/v1/images", async (request) => {
       return containerManager.listImages(request.query.filter ?? "vonzio");
     });
-    v1.register(gitOAuthRoutes, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
+    v1.register(gitOAuthRoutes, { config, gitProviderService, githubAppService, encryptionKey: config.ENCRYPTION_KEY });
     // /v1/integrations/slack/* + /v1/integrations/telegram/* routes
     // moved to their respective plugins (registered via init()).
     v1.register(gmailOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
@@ -754,7 +776,7 @@ export async function buildServer(deps: ServerDeps) {
 
   // OAuth callbacks (no auth — browser redirect from provider)
   server.register(devicePublicRoutes, { deviceService });
-  server.register(gitOAuthCallbackRoute, { config, gitProviderService, encryptionKey: config.ENCRYPTION_KEY });
+  server.register(gitOAuthCallbackRoute, { config, gitProviderService, githubAppService, encryptionKey: config.ENCRYPTION_KEY });
   // Slack OAuth callback moved to @vonzio/plugin-slack.
   server.register(gmailOAuthCallbackRoute, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
 

@@ -7,6 +7,20 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Added
 
+- **GitHub App support for git providers.** Alongside the existing OAuth App and
+  PAT paths, you can now connect GitHub via a **GitHub App**: per-repository
+  selection (including org repos), org-owner approval handled inline by the
+  install flow, and short-lived installation tokens minted on demand instead of a
+  stored long-lived token. This sidesteps **"OAuth App access restrictions"**,
+  which otherwise `403` an OAuth token on org repos until an owner approves the
+  app. Configure `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and the private key (inline
+  `GITHUB_APP_PRIVATE_KEY`, or — recommended for Docker, since compose `env_file`
+  can't carry a multi-line PEM — a mounted file via `GITHUB_APP_PRIVATE_KEY_PATH`)
+  to surface an "Install GitHub App" button in Settings → Integrations → Git
+  providers. See [docs/SELF_HOST.md](docs/SELF_HOST.md#git-provider-access-oauth-app-vs-github-app).
+  Purely additive — OAuth App and PAT connections are unchanged. (DB: adds
+  `git_providers.installation_id`, migration 32.)
+
 - **Embeddable chat is back in OSS.** The `@vonzio/widget` drop-in script, the
   `/chat` embed page, and a Settings → **Embed** snippet generator now ship in
   the open-source core (they had briefly moved to the SaaS build). Embedding a

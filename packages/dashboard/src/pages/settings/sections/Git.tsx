@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { GitBranch, Trash2, KeyRound, Plus } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
-  fetchGitOAuthConfig, getGitOAuthAuthorizeUrl,
+  fetchGitOAuthConfig, getGitOAuthAuthorizeUrl, getGitHubAppInstallUrl,
   fetchUserGitProviders, createUserGitProvider, updateUserGitProvider, deleteUserGitProvider,
   type GitProviderInfo,
   type GitOAuthConfig,
@@ -67,7 +67,19 @@ export function GitSection() {
     }
   };
 
+  const handleGitHubAppInstall = async () => {
+    setConnecting("github-app"); setError("");
+    try {
+      const { url } = await getGitHubAppInstallUrl("/settings");
+      window.location.href = url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to start GitHub App install");
+      setConnecting(null);
+    }
+  };
+
   const hasOAuth = oauthConfig && (oauthConfig.github || oauthConfig.gitlab || oauthConfig.bitbucket);
+  const hasGitHubApp = !!oauthConfig?.githubApp;
 
   const resetForm = () => {
     setName(""); setToken(""); setUserName(""); setUserEmail("");
@@ -117,7 +129,11 @@ export function GitSection() {
       key: "auth",
       label: "Auth",
       width: "90px",
-      render: (p) => p.auth_method === "oauth" ? <Pill tone="ok">OAuth</Pill> : <Pill>PAT</Pill>,
+      render: (p) => p.auth_method === "github_app"
+        ? <Pill tone="ok">App</Pill>
+        : p.auth_method === "oauth"
+          ? <Pill tone="ok">OAuth</Pill>
+          : <Pill>PAT</Pill>,
     },
     {
       key: "_actions",
@@ -126,7 +142,7 @@ export function GitSection() {
       align: "right",
       render: (p) => (
         <div style={{ display: "inline-flex", gap: 2 }} onClick={(e) => e.stopPropagation()}>
-          {p.auth_method !== "oauth" && (
+          {p.auth_method === "pat" && (
             <button type="button" className="vz-action-btn" title="Edit" onClick={() => openEdit(p)}>
               <KeyRound size={13} />
             </button>
@@ -175,7 +191,7 @@ export function GitSection() {
         // the topmost dialog instead of collapsing the whole stack.
         dismissable={!showForm && !confirmDeleteId}
         title="Git providers"
-        description="Connect a provider so agents can clone and push your repositories. OAuth is recommended; personal access tokens also work."
+        description="Connect a provider so agents can clone and push your repositories. The GitHub App is recommended for org repos; OAuth and personal access tokens also work."
       >
       {oauthStatus && (
         <div
@@ -196,9 +212,23 @@ export function GitSection() {
       )}
       {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
 
+      {hasGitHubApp && (
+        <Card style={{ marginBottom: 16 }}>
+          <SubLabel>Install the GitHub App (recommended)</SubLabel>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Button variant="primary" size="sm" icon={<GitBranch size={13} />} onClick={handleGitHubAppInstall} disabled={connecting !== null}>
+              {connecting === "github-app" ? "Opening GitHub…" : "Install GitHub App"}
+            </Button>
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--vz-muted-2)", marginTop: 10, lineHeight: 1.5 }}>
+            Pick exactly which repositories agents can access — including org repos. Org owners approve the install directly (no separate OAuth-App approval), and access uses short-lived tokens scoped to the repos you select.
+          </div>
+        </Card>
+      )}
+
       {hasOAuth && (
         <Card style={{ marginBottom: 16 }}>
-          <SubLabel>Connect via OAuth (recommended)</SubLabel>
+          <SubLabel>Connect via OAuth</SubLabel>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {oauthConfig.github && (
               <Button variant="ghost" size="sm" icon={<GitBranch size={13} />} onClick={() => handleOAuthConnect("github")} disabled={connecting !== null}>
@@ -217,7 +247,7 @@ export function GitSection() {
             )}
           </div>
           <div style={{ fontSize: 11.5, color: "var(--vz-muted-2)", marginTop: 10, lineHeight: 1.5 }}>
-            OAuth grants access to every repository your account can reach (including org repos). For least privilege, skip OAuth and add a fine-grained personal access token scoped to specific repos.
+            OAuth grants access to every repository your account can reach, and orgs with OAuth-App access restrictions require a separate owner approval. For org repos prefer the GitHub App above; for least privilege add a fine-grained personal access token scoped to specific repos.
           </div>
         </Card>
       )}

@@ -751,6 +751,13 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`CREATE INDEX IF NOT EXISTS device_codes_user_code_idx ON device_codes(user_code)`);
     },
   },
+  {
+    version: 32,
+    description: "GitHub App git providers: git_providers.installation_id (installation access tokens minted on demand; auth_method may now be 'github_app').",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE git_providers ADD COLUMN IF NOT EXISTS installation_id TEXT`);
+    },
+  },
 ];
 
 /**
