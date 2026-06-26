@@ -227,9 +227,21 @@ export async function buildServer(deps: ServerDeps) {
     config.MAX_DOCUMENT_MB * 1024 * 1024,
     config.MAX_PROFILE_DOCUMENTS_MB * 1024 * 1024,
   );
+  // Resolve the GitHub App private key: a mounted file (preferred for Docker —
+  // compose env_file can't carry a multi-line PEM) wins over the inline env var.
+  let githubAppPrivateKey = config.GITHUB_APP_PRIVATE_KEY;
+  if (config.GITHUB_APP_PRIVATE_KEY_PATH) {
+    if (existsSync(config.GITHUB_APP_PRIVATE_KEY_PATH)) {
+      githubAppPrivateKey = readFileSync(config.GITHUB_APP_PRIVATE_KEY_PATH, "utf8");
+    } else {
+      console.warn(
+        `[github-app] GITHUB_APP_PRIVATE_KEY_PATH set but file not found: ${config.GITHUB_APP_PRIVATE_KEY_PATH} — GitHub App install disabled`,
+      );
+    }
+  }
   const githubAppService = new GithubAppService({
     appId: config.GITHUB_APP_ID,
-    privateKey: config.GITHUB_APP_PRIVATE_KEY,
+    privateKey: githubAppPrivateKey,
     slug: config.GITHUB_APP_SLUG,
   });
   // GitProviderService mints GitHub App installation tokens via githubAppService

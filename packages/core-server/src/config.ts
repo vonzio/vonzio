@@ -214,7 +214,13 @@ const configSchema = z.object({
   // escapes are normalized to newlines at load).
   GITHUB_APP_ID: z.string().optional(),
   GITHUB_APP_SLUG: z.string().optional(),
+  // The PEM private key. Prefer GITHUB_APP_PRIVATE_KEY_PATH for Docker: compose
+  // `env_file` is line-based and mangles a multi-line PEM (and inlining one with
+  // literal "\n" escapes is brittle), so mount the .pem as a file secret and
+  // point this path at it — mirrors the Teller mTLS file-secret pattern.
+  // GITHUB_APP_PRIVATE_KEY (inline) stays supported for host-mode / non-Docker.
   GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY_PATH: z.string().optional(),
 
   // Auth OAuth providers (for login, separate from git integration)
   AUTH_GOOGLE_CLIENT_ID: z.string().optional(),

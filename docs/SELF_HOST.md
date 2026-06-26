@@ -238,15 +238,38 @@ To enable the "Install GitHub App" button:
    - **Setup URL:** `<BETTER_AUTH_URL>/api/git/app/callback` and tick
      **"Redirect on update"**.
    - Generate a **private key** (downloads a `.pem`).
-2. Set the env vars (see `.env.example`):
+2. Set the id and slug (see `.env.example`):
    ```bash
    GITHUB_APP_ID=123456
    GITHUB_APP_SLUG=your-app-slug          # the github.com/apps/<slug> name
-   GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n…\n-----END RSA PRIVATE KEY-----"
    ```
-   The PEM may be pasted with literal `\n` escapes (single-line) or as a real
-   multi-line value.
-3. Restart the stack. "Install GitHub App" now appears in the Git providers
+3. Provide the private key — **how depends on whether you run under Docker:**
+
+   **Docker (recommended): mount the `.pem` as a file secret.** Docker Compose
+   loads `.env` via `env_file`, which is line-based and **mangles a multi-line
+   PEM** (it can break env loading and server boot). So do *not* inline the key.
+   Drop the downloaded `.pem` next to your compose files and bind-mount it, then
+   point the path env var at it:
+   ```yaml
+   # docker/docker-compose.override.yml (compose auto-loads it)
+   services:
+     server:
+       volumes:
+         - ./secrets/github/app.pem:/run/secrets/github/app.pem:ro
+   ```
+   ```bash
+   # .env
+   GITHUB_APP_PRIVATE_KEY_PATH=/run/secrets/github/app.pem
+   ```
+   This mirrors the Teller mTLS file-secret pattern. The mounted file wins over
+   any inline value.
+
+   **Host mode / non-Docker only:** you may instead inline the PEM with literal
+   `\n` escapes (single line, double-quoted):
+   ```bash
+   GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n…\n-----END RSA PRIVATE KEY-----\n"
+   ```
+4. Restart the stack. "Install GitHub App" now appears in the Git providers
    dialog; clicking it opens GitHub's install/repo-picker, and on return the
    installation is saved as a `github_app` provider.
 
