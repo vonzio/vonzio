@@ -65,6 +65,7 @@ const ORCHESTRATOR_EVENTS = [
   "task:goal_eval",
   "task:goal_stop",
   "task:goal_judging",
+  "task:local_tool_call",
 ] as const;
 
 export function setupWsHandler(
@@ -109,6 +110,16 @@ export function setupWsHandler(
   orchestrator.on("task:token", (taskId: string, sessionId: string | undefined, text: string) => {
     relayToSubscribers(taskId, sessionId, { type: "token", task_id: taskId, session_id: sessionId, text });
   });
+
+  // Local-exec: fan a local tool call out to the session's CLI. Sent directly
+  // (not via relayToSubscribers) so these in-flight RPC frames are NOT written
+  // to the event log — replaying a stale localtool.call would re-trigger it.
+  orchestrator.on(
+    "task:local_tool_call",
+    (sessionId: string, callId: string, tool: string, input: Record<string, unknown>) => {
+      connectionManager.sendToSession(sessionId, { type: "localtool.call", session_id: sessionId, call_id: callId, tool, input });
+    },
+  );
 
   orchestrator.on("task:tool_use", (taskId: string, sessionId: string | undefined, tool: string, input: unknown) => {
     relayToSubscribers(taskId, sessionId, { type: "tool_use", task_id: taskId, session_id: sessionId, tool, input });
@@ -465,6 +476,13 @@ export function setupWsHandler(
           persistent,
           connectionOrgId,
         );
+        // Local-exec (CLI `--local-exec`): the client advertised it can service
+        // localtool.call frames. Record it (ephemeral, connection-scoped) so the
+        // orchestrator localizes the agent's file/shell tools for this session.
+        // Server can never initiate this — it only activates when the client asks.
+        if (msg.capabilities?.includes("local-exec")) {
+          opts.sessionRegistry.setLocalExec(newSessionId, { root: msg.local_root ?? "" });
+        }
         connectionManager.subscribeSession(connectionId, newSessionId);
         connectionManager.sendTo(connectionId, {
           type: "session.ready",
@@ -677,9 +695,26 @@ export function setupWsHandler(
         break;
       }
 
+      case "localtool.result": {
+        // CLI replied to a localtool.call (local-exec). Match ownership before
+        // resolving the agent's pending tool call.
+        const ltSession = opts.sessionRegistry.get(msg.session_id);
+        if (!ltSession || ltSession.user_id !== user.id) break;
+        orchestrator.resolveLocalTool(msg.session_id, msg.call_id, { output: msg.output ?? "", exit_code: msg.exit_code });
+        break;
+      }
+
+      case "localtool.deny": {
+        const ltSession = opts.sessionRegistry.get(msg.session_id);
+        if (!ltSession || ltSession.user_id !== user.id) break;
+        orchestrator.denyLocalTool(msg.session_id, msg.call_id, msg.reason ?? "");
+        break;
+      }
+
       case "session.end": {
         const endSession = opts.sessionRegistry.get(msg.session_id);
         if (endSession && endSession.user_id !== user.id) break;
+        opts.sessionRegistry.setLocalExec(msg.session_id, null);
         await opts.workspaceService.terminate(msg.session_id);
         connectionManager.sendTo(connectionId, {
           type: "session.closed",

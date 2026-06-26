@@ -219,6 +219,17 @@ export class Orchestrator extends EventEmitter {
   private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] }>();
   // Per-task tokens for plugin-contributed MCP servers (ctx.mcpRegistry).
   private pluginMcpTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
+  // Per-task tokens for the local-fs MCP (CLI `--local-exec`). Resolves to the
+  // agent's session so the bridge can fan the tool call out to the right WS.
+  private localFsTokens = new Map<string, { userId: string; sessionId: string }>();
+  // In-flight local-tool calls, keyed by call_id. The local-fs MCP handler
+  // registers a pending promise here and blocks on it; the WS handler resolves
+  // it when the CLI replies with localtool.result / localtool.deny. See the
+  // LocalFsBridge methods below and docs/LOCAL_EXEC.md.
+  private localToolPending = new Map<
+    string,
+    { sessionId: string; resolve: (r: { output: string; exit_code?: number }) => void; timer: ReturnType<typeof setTimeout> }
+  >();
   private log: Logger;
 
   constructor(private deps: OrchestratorDeps) {
@@ -268,6 +279,60 @@ export class Orchestrator extends EventEmitter {
 
   clearPluginMcpToken(token: string): void {
     this.pluginMcpTokens.delete(token);
+  }
+
+  resolveLocalFsToken(token: string): { userId: string; sessionId: string } | undefined {
+    return this.localFsTokens.get(token);
+  }
+
+  // ─── Local-exec bridge (CLI `--local-exec`) ──────────────────────────
+  // The local-fs MCP runs the agent's file/shell tools on the user's machine.
+  // Its server-hosted handlers call callLocalTool(), which emits a
+  // localtool.call WS frame (relayed by ws/handler) and BLOCKS until the CLI
+  // replies — resolveLocalTool/denyLocalTool, matched by call_id. The whole
+  // round-trip lives in this one Node process: the MCP HTTP request awaits a
+  // promise that a later WS message resolves.
+
+  /** Hard server-side ceiling on a single local tool call. The CLI has its own
+   *  (tighter) kill-on-timeout; this only guards against a dead/disconnected
+   *  client leaving the agent turn hung forever. */
+  private static readonly LOCAL_TOOL_TIMEOUT_MS = 300_000;
+
+  callLocalTool(
+    sessionId: string,
+    tool: "local_bash" | "local_read" | "local_write" | "local_edit",
+    input: Record<string, unknown>,
+  ): Promise<{ output: string; exit_code?: number }> {
+    const callId = nanoid();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.localToolPending.delete(callId);
+        reject(new Error(`Local tool "${tool}" timed out — the CLI did not respond (is it still connected?).`));
+      }, Orchestrator.LOCAL_TOOL_TIMEOUT_MS);
+      this.localToolPending.set(callId, { sessionId, resolve, timer });
+      // Relayed to the session's CLI by ws/handler as a localtool.call frame.
+      this.emit("task:local_tool_call", sessionId, callId, tool, input);
+    });
+  }
+
+  resolveLocalTool(sessionId: string, callId: string, result: { output: string; exit_code?: number }): void {
+    const pending = this.localToolPending.get(callId);
+    // Bind the reply to the session the call was issued for — a client may only
+    // resolve calls for its own session, even though call_id is unguessable.
+    if (!pending || pending.sessionId !== sessionId) return;
+    clearTimeout(pending.timer);
+    this.localToolPending.delete(callId);
+    pending.resolve(result);
+  }
+
+  denyLocalTool(sessionId: string, callId: string, reason: string): void {
+    const pending = this.localToolPending.get(callId);
+    if (!pending || pending.sessionId !== sessionId) return;
+    clearTimeout(pending.timer);
+    this.localToolPending.delete(callId);
+    // Surface the denial to the agent as a (non-throwing) tool result so it
+    // adapts instead of failing the turn.
+    pending.resolve({ output: `The user denied this action: ${reason || "no reason given"}` });
   }
 
   /** Returns the VPN tunnel currently routing the given agent container,
@@ -1155,7 +1220,7 @@ export class Orchestrator extends EventEmitter {
     // Users can still add chrome-devtools MCP manually per profile if needed.
 
     // MCP tokens to clean up after task completes
-    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "gmail" | "platform" | "plugin"; token: string }> = [];
+    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "gmail" | "platform" | "plugin" | "localfs"; token: string }> = [];
 
     // Memory integration: inject MCP server and build memory section for system prompt
     const userId = profile.user_id ?? "";
@@ -1239,6 +1304,30 @@ export class Orchestrator extends EventEmitter {
       });
     }
 
+    // Local-exec (CLI `--local-exec`): when the session's CLI advertised the
+    // capability, the agent's file/shell tools run on the USER'S machine via
+    // the local-fs MCP, not the container. Inject the server-hosted local-fs
+    // MCP (its handlers fan calls out over the session WS) and disable the
+    // built-in Bash/Edit/Write/Read so the agent can't silently touch the
+    // container FS instead. See docs/LOCAL_EXEC.md.
+    const localExec = task.session_id ? this.deps.sessionRegistry.getLocalExec(task.session_id) : null;
+    let disallowedTools: string[] | undefined;
+    if (localExec && this.deps.config.internalServerUrl && userId) {
+      const localFsToken = `localfs_${nanoid()}`;
+      this.localFsTokens.set(localFsToken, { userId, sessionId: task.session_id! });
+      mcpTokensToClean.push({ type: "localfs", token: localFsToken });
+      nonSdkServers.push({
+        name: "local-fs",
+        type: "http",
+        url: `${this.deps.config.internalServerUrl}/mcp/localfs`,
+        headers: { Authorization: `Bearer ${localFsToken}` },
+      });
+      // Built-ins the local-fs MCP replaces. Disallowing (vs an allowlist) keeps
+      // every other tool — Glob/Grep/WebFetch/TodoWrite/MCP — available without
+      // enumerating them.
+      disallowedTools = ["Bash", "Edit", "Write", "Read", "MultiEdit", "NotebookEdit"];
+    }
+
     // Plugin-contributed MCP servers (ctx.mcpRegistry). Unlike the built-in
     // MCPs above, these are injected unconditionally — the plugin's route does
     // its own per-user filtering and returns nothing when the user has no
@@ -1285,6 +1374,18 @@ export class Orchestrator extends EventEmitter {
     // belt-and-suspenders copy.
     if (nonSdkServers.some((s) => s.name === "vonzio")) {
       systemPrompt += PLATFORM_MCP_PRIMER;
+    }
+    // Local-exec surface note: the agent's file/shell tools act on the user's
+    // machine, outside this container's sandbox. Steer it to the local_* tools
+    // and to confirm-before-destroy, since the user can reject any call.
+    if (localExec) {
+      systemPrompt +=
+        `\n\n## Local-exec mode\n` +
+        `Your file and shell tools run on the USER'S machine` +
+        (localExec.root ? ` at \`${localExec.root}\`` : "") +
+        `, OUTSIDE this container's sandbox. The built-in Bash/Read/Edit/Write tools are disabled; ` +
+        `use \`local_bash\`, \`local_read\`, \`local_write\`, \`local_edit\` instead — they execute on the user's filesystem. ` +
+        `All paths are confined to the project root; the user sees a preview and may reject any call, so explain destructive actions and prefer the smallest change that works.`;
     }
     this.emit("task:system_prompt", task.id, task.session_id, systemPrompt);
 
@@ -1506,6 +1607,7 @@ export class Orchestrator extends EventEmitter {
     const payload: TaskPayload = {
       prompt: taskPrompt,
       allowed_tools: task.allowed_tools,
+      disallowed_tools: disallowedTools,
       max_turns: task.max_turns ?? profile.max_turns ?? this.deps.config.maxTurns,
       max_budget_usd: task.max_budget_usd,
       model: model || undefined,
@@ -1643,6 +1745,7 @@ export class Orchestrator extends EventEmitter {
         else if (type === "gmail") this.gmailTokens.delete(token);
         else if (type === "platform") this.platformTokens.delete(token);
         else if (type === "plugin") this.pluginMcpTokens.delete(token);
+        else if (type === "localfs") this.localFsTokens.delete(token);
       }
     }
   }

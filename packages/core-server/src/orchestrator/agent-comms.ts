@@ -57,6 +57,7 @@ export interface ToolFilePayload {
 export interface TaskPayload {
   prompt: string;
   allowed_tools?: string[];
+  disallowed_tools?: string[];
   max_turns?: number;
   max_budget_usd?: number;
   session_id?: string;

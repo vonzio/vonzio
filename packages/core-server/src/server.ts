@@ -83,6 +83,7 @@ import { memoryMcpPlugin } from "./mcp/memory-mcp.js";
 import { notifyMcpPlugin } from "./mcp/notify-mcp.js";
 import { gmailMcpPlugin } from "./mcp/gmail-mcp.js";
 import { platformMcpPlugin } from "./mcp/platform-mcp.js";
+import { localFsMcpPlugin } from "./mcp/local-fs-mcp.js";
 import { ErrorCodes, errorResponse } from "./errors.js";
 import { NotificationBusImpl } from "./plugins/notification-bus.js";
 import { McpRegistryImpl } from "./plugins/mcp-registry.js";
@@ -836,6 +837,13 @@ export async function buildServer(deps: ServerDeps) {
           }
         : null;
     },
+  });
+
+  // Local-fs MCP endpoint (CLI `--local-exec`). Token-based auth; each tool
+  // call is fanned out to the session's CLI over the WS by the orchestrator.
+  server.register(localFsMcpPlugin, {
+    resolveSession: (token: string) => orchestrator.resolveLocalFsToken(token) ?? null,
+    callLocalTool: (sessionId, tool, input) => orchestrator.callLocalTool(sessionId, tool, input),
   });
 
   // Slack events + Telegram webhook both moved to their respective
