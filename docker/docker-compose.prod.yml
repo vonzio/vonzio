@@ -89,8 +89,12 @@ services:
       - CORS_ORIGIN=https://${DOMAIN},https://${MARKETING_DOMAIN},https://www.${MARKETING_DOMAIN}
       - POOL_MIN_SIZE=2
       - POOL_MAX_SIZE=8
-      - SESSION_IDLE_TTL_SECS=3600
-      - MAX_SESSION_CONTAINERS=20
+      # Capacity knobs — overridable in .env so a busy host can raise the
+      # container cap / lengthen the idle TTL without editing this file. The
+      # defaults match the historical hardcoded values.
+      - SESSION_IDLE_TTL_SECS=${SESSION_IDLE_TTL_SECS:-3600}
+      - MAX_SESSION_CONTAINERS=${MAX_SESSION_CONTAINERS:-20}
+      - WORKSTATION_MAX_PAUSED=${WORKSTATION_MAX_PAUSED:-10}
       - PREVIEW_MODE=hostname
       - PREVIEW_DOMAIN=${DOMAIN}
       - PREVIEW_URL_TEMPLATE=https://{container_id}-{port}.${DOMAIN}
