@@ -92,11 +92,20 @@ export function extractCitations(content: string): { text: string; citations: Kn
 
 // ─── Markdown ────────────────────────────────────────────────────────
 
-/** Auto-linkify raw URLs that aren't already markdown links */
+/**
+ * Auto-linkify bare URLs while leaving anything that's already a link or code
+ * untouched. Tokenizes first so a URL that lives inside an existing markdown
+ * link — including one whose visible text is itself a URL, e.g.
+ * `[https://x](https://x)` — a fenced/inline code span, or an autolink is
+ * passed through verbatim. The old single-lookbehind approach only guarded the
+ * `](href)` half, so it mangled `[url](url)` into `[[url](url)](url)` and broke
+ * rendering.
+ */
 export function linkifyText(text: string): string {
   return text.replace(
-    /(?<!\]\()(?<!\<)(https?:\/\/[^\s\)>\]]+?)(?=[*`\]>)\s]|$)/g,
-    (url) => `[${url}](${url})`,
+    /(```[\s\S]*?```)|(\[[^\]]*\]\([^)]*\))|(`[^`]*`)|(<https?:\/\/[^>]+>)|(https?:\/\/[^\s)>\]*`]+)/g,
+    (match, _fenced, _mdLink, _code, _autolink, bareUrl) =>
+      bareUrl ? `[${bareUrl}](${bareUrl})` : match,
   );
 }
 
