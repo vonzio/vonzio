@@ -313,7 +313,10 @@ function stopTypingRefresh(sessionId: string) {
   }
 }
 
-const SLUG_PREFIX_RE = /^@([a-z0-9](?:-?[a-z0-9])*):?(?:\s+|$)/;
+// Case-insensitive: users naturally type `@DeepResearch` for a slug stored as
+// `deep-research`. We match loosely here and resolve the profile by a
+// lowercased comparison (slugs are canonically lowercase).
+const SLUG_PREFIX_RE = /^@([a-z0-9](?:-?[a-z0-9])*):?(?:\s+|$)/i;
 
 function secretsMatch(a: string, b: string | undefined): boolean {
   if (!b || a.length !== b.length) return false;
@@ -1039,6 +1042,28 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
       return;
     }
 
+    if (data.startsWith("agentnew:")) {
+      // Agent picker tap (from /agents) — start a fresh session on the
+      // chosen agent. We force the profile by id rather than round-tripping
+      // a slug, so it works even if the user couldn't have typed the slug.
+      const profileId = data.slice("agentnew:".length);
+      await telegramService.answerCallbackQuery(cfg.bot_token, cq.id, { text: "Starting…" });
+      // Clear the keyboard so the picker can't be double-tapped (editing the
+      // text in place is the only Bot API way our service exposes).
+      await telegramService.editMessageText(
+        cfg.bot_token, chatId, messageId,
+        (cq.message?.text ?? "Available agents") + "\n\n✓ Starting a new session…",
+        { reply_markup: { inline_keyboard: [] } },
+      ).catch(() => {});
+      const syntheticMsg: TelegramMessage = { ...cq.message!, from: cq.from };
+      await startNewSession(integration, cfg, syntheticMsg, "", [], {
+        endActiveBeforeStart: true,
+        awaitFirstMessageIfNoPrompt: true,
+        forceProfileId: profileId,
+      });
+      return;
+    }
+
     if (data.startsWith("resume:")) {
       const sessionId = data.slice("resume:".length);
       const restored = await resumeSession(integration, cfg, chatId, fromId, sessionId);
@@ -1184,10 +1209,17 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
     // because slugs are alphanumeric+hyphen — no MarkdownV2-special
     // chars to escape.
     const lines = profiles.map((p) => `• <code>@${htmlEscape(p.slug)}</code> — ${htmlEscape(p.name)}`);
+    // Tappable picker: each button starts a fresh session on that agent
+    // (callback `agentnew:<profileId>`). Saves the user from typing `@slug`.
+    // Telegram caps callback_data at 64 bytes; `agentnew:` + a UUID fits.
+    const keyboard = profiles
+      .filter((p) => `agentnew:${p.id}`.length <= 64)
+      .map((p) => [{ text: `🆕 ${p.name}`, callback_data: `agentnew:${p.id}` }]);
     await telegramService.sendMessage(cfg.bot_token, {
       chat_id: chatId,
-      text: `Available agents:\n${lines.join("\n")}\n\nUse <code>/new @slug &lt;prompt&gt;</code>.`,
+      text: `Available agents:\n${lines.join("\n")}\n\nTap one below to start a new session, or use <code>/new @slug &lt;prompt&gt;</code>.`,
       parse_mode: "HTML",
+      reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
     });
   }
 
@@ -1466,6 +1498,12 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
      * card as "Ended: <title>".
      */
     endActiveBeforeStart?: boolean;
+    /**
+     * Force a specific agent profile by id, bypassing slug/bound/default
+     * resolution. Set by the inline agent picker (the `agentnew:<id>`
+     * callback) where the user tapped a button rather than typing `@slug`.
+     */
+    forceProfileId?: string;
   }
 
   async function startNewSession(
@@ -1494,8 +1532,11 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
     // through to (3) in that case so the bot stays usable.
     const fallbackProfile = profiles.find((p) => p.is_default) ?? profiles[0];
     let profile: typeof profiles[number] | undefined;
-    if (slug) {
-      profile = profiles.find((p) => p.slug === slug);
+    if (opts.forceProfileId) {
+      profile = profiles.find((p) => p.id === opts.forceProfileId);
+    } else if (slug) {
+      const wanted = slug.toLowerCase();
+      profile = profiles.find((p) => p.slug.toLowerCase() === wanted);
     } else if (cfg.bound_profile_id) {
       profile = profiles.find((p) => p.id === cfg.bound_profile_id) ?? fallbackProfile;
     } else {
