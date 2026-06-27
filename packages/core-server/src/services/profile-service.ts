@@ -1,4 +1,4 @@
-import { eq, or, isNull, and } from "drizzle-orm";
+import { eq, or, isNull, and, desc, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { encrypt, decrypt } from "../auth/crypto.js";
 import type { DrizzleDB } from "../db/index.js";
@@ -242,14 +242,17 @@ export class ProfileService {
   }
 
   async list(userId?: string): Promise<Profile[]> {
+    // Default agent first (preselected everywhere — home picker, chat surfaces,
+    // the `profiles[0]` fallback), then oldest-first for a stable order.
+    const order = [desc(schema.profiles.is_default), asc(schema.profiles.created_at)];
     const query = this.db.select().from(schema.profiles);
     if (userId) {
-      const rows = await query.where(
-        or(eq(schema.profiles.user_id, userId), isNull(schema.profiles.user_id)),
-      );
+      const rows = await query
+        .where(or(eq(schema.profiles.user_id, userId), isNull(schema.profiles.user_id)))
+        .orderBy(...order);
       return rows.map((r) => this.mapRow(r, true));
     }
-    const rows = await query;
+    const rows = await query.orderBy(...order);
     return rows.map((r) => this.mapRow(r, true));
   }
 

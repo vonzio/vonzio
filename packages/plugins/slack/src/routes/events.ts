@@ -250,7 +250,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
       }
       const profile = slug
         ? profiles.find((p) => p.slug === slug)
-        : profiles[0];
+        : profiles.find((p) => p.is_default) ?? profiles[0];
       if (!profile) {
         const available = profiles.map((p) => `\`@${p.slug}\``).join(", ");
         return reply.code(200).send({
@@ -555,7 +555,7 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
         }
         const profile = slug
           ? profiles.find((p) => p.slug === slug)
-          : profiles[0];
+          : profiles.find((p) => p.is_default) ?? profiles[0];
         if (!profile) {
           const available = profiles.map((p) => `\`@${p.slug}\``).join(", ");
           await slackService.sendMessage(botToken, {
