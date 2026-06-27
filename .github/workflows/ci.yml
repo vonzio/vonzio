@@ -19,6 +19,29 @@ concurrency:
 # self-hoster (or the SaaS superset) move CI off metered minutes without
 # editing this file per-job.
 jobs:
+  # Cheap gate job: detect whether anything agent-image-related changed. The
+  # agent-base image (chromium + Trivy scan, ~10-20min) is independent of the
+  # app/dashboard/plugin code, so on a PR that doesn't touch it we skip the
+  # expensive build+scan steps below. The matrix leg still RUNS (so the required
+  # check "image build+scan (agent-base)" reports green) — it just no-ops in ~20s.
+  changes:
+    name: changes
+    runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    outputs:
+      agent: ${{ steps.filter.outputs.agent }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            agent:
+              - 'docker/Dockerfile.agent.base'
+              - 'docker/Dockerfile.agent'
+              - 'agent-runner/**'
+              - '.github/workflows/ci.yml'
+
   typecheck:
     name: typecheck
     runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
@@ -124,6 +147,7 @@ jobs:
     # 2. CVEs in OS layer or bundled CLIs (git, gh, jq, chromium, etc.).
     # 3. CVEs introduced by new app dependencies.
     name: image build+scan (${{ matrix.image.name }})
+    needs: changes
     runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
@@ -151,6 +175,9 @@ jobs:
       - id: aptsnap
         run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       - name: Build ${{ matrix.image.name }}
+        # Skip the heavy agent-base build when no agent-image source changed.
+        # The server image always builds (it bundles dashboard + plugins).
+        if: matrix.image.name != 'agent-base' || needs.changes.outputs.agent == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -166,6 +193,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
       - name: Scan ${{ matrix.image.name }} with Trivy
+        if: matrix.image.name != 'agent-base' || needs.changes.outputs.agent == 'true'
         # Blocking gate as of v0.2: fails the job on any HIGH/CRITICAL
         # fixable CVE in OS or library layers. The Dockerfiles run
         # apt-get upgrade + npm install -g npm@latest on every rebuild
