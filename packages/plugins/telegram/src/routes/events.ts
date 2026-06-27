@@ -203,6 +203,13 @@ interface TelegramCallbackQuery {
 // Per-session token + tool buffers, mirroring the Slack relay model.
 const sessionBuffers = new Map<string, { tokens: string[]; toolCalls: string[] }>();
 
+// Task ids for turns that were initiated FROM Telegram. The relay normally
+// suppresses outbound when a dashboard WS is live on the session (dedup), but a
+// turn the user typed in Telegram must reply on Telegram regardless of whether
+// they also have the dashboard open. Membership bypasses that gate; the
+// terminal handlers (task:done / task:failed) delete the entry.
+const telegramOriginTasks = new Set<string>();
+
 // AskUserQuestion message_id → option labels (to recover label from callback index).
 // Process-local — survives only until restart, which is acceptable for an in-flight question.
 // Each entry has a TTL via setTimeout to prevent unbounded growth when users ignore questions.
@@ -765,6 +772,10 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
                 text: `Resumed session <code>${htmlEscape(sessionId.slice(0, 8))}</code> — send a message to continue.`,
                 parse_mode: "HTML",
               });
+              // Best-effort context replay; never block the resume on it.
+              await replayLastTurn(cfg, msg.chat.id, sessionId).catch((err) => {
+                server.log.warn({ err, sessionId }, "Telegram resume replay failed");
+              });
             } else {
               await telegramService.sendMessage(cfg.bot_token, {
                 chat_id: String(msg.chat.id),
@@ -1075,6 +1086,9 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
           cfg.bot_token, chatId, messageId,
           `Resumed session ${sessionId.slice(0, 8)}. Send your next message.`,
         ).catch(() => {});
+        await replayLastTurn(cfg, chatId, sessionId).catch((err) => {
+          server.log.warn({ err, sessionId }, "Telegram resume replay failed");
+        });
       }
       return;
     }
@@ -1664,7 +1678,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
 
     await telegramService.sendChatAction(cfg.bot_token, msg.chat.id, "typing");
     startTypingRefresh(sessionId, telegramService, cfg.bot_token, msg.chat.id);
-    await taskService.submit(
+    const submitted = await taskService.submit(
       {
         mode: "session",
         prompt,
@@ -1674,6 +1688,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
       },
       [profile.id],
     );
+    telegramOriginTasks.add(submitted.task_id);
   }
 
   async function continueSession(
@@ -1712,7 +1727,7 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
 
     await telegramService.sendChatAction(cfg.bot_token, msg.chat.id, "typing");
     startTypingRefresh(sessionId, telegramService, cfg.bot_token, msg.chat.id);
-    await taskService.submit(
+    const submitted = await taskService.submit(
       {
         mode: "session",
         prompt: text,
@@ -1722,6 +1737,42 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
       },
       [profileId],
     );
+    telegramOriginTasks.add(submitted.task_id);
+  }
+
+  // On resume, replay the last user→assistant exchange so a fresh Telegram chat
+  // shows where the session left off. Bounded: one message, each side trimmed,
+  // with a link to the full workspace. Returns false when there's nothing to
+  // replay (caller then sends the plain "resumed" line).
+  const REPLAY_SIDE_MAX = 700;
+  function trimForReplay(s: string): string {
+    const t = s.trim();
+    return t.length > REPLAY_SIDE_MAX ? t.slice(0, REPLAY_SIDE_MAX).trimEnd() + "…" : t;
+  }
+  async function replayLastTurn(cfg: TelegramConfig, chatId: number, sessionId: string): Promise<boolean> {
+    const events = eventLog.read(sessionId);
+    let userText = "";
+    let assistantText = "";
+    // Walk newest→oldest for the last of each.
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (!assistantText && e.type === "turn.done") assistantText = (e.data.result_text as string) ?? "";
+      if (!userText && e.type === "user_message") userText = (e.data.text as string) ?? "";
+      if (userText && assistantText) break;
+    }
+    if (!userText.trim() && !assistantText.trim()) return false;
+
+    const parts: string[] = [];
+    if (userText.trim()) parts.push(`<b>You</b>\n${htmlEscape(trimForReplay(userText))}`);
+    if (assistantText.trim()) parts.push(`<b>Agent</b>\n${htmlEscape(trimForReplay(assistantText))}`);
+    const body = `<i>Where you left off</i>\n\n${parts.join("\n\n")}\n\n<a href="${htmlEscape(workspaceUrl(sessionId))}">Open full workspace</a>`;
+    await telegramService.sendMessage(cfg.bot_token, {
+      chat_id: String(chatId),
+      text: body,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    });
+    return true;
   }
 
   async function resumeSession(
@@ -1912,9 +1963,17 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     return opts.sessionRegistry.getConnectedSessionIds().has(sessionId);
   }
 
-  sessionEvents.on("task:token", (_taskId: string, sessionId: string | undefined, text: string) => {
+  // The dedup gate, but origin-aware: a turn the user initiated FROM Telegram
+  // must always reply on Telegram, even when the dashboard is also open on the
+  // same session. Only dashboard-origin turns get suppressed while a dashboard
+  // WS is live.
+  function suppressForDashboard(sessionId: string, taskId: string): boolean {
+    return dashboardIsLive(sessionId) && !telegramOriginTasks.has(taskId);
+  }
+
+  sessionEvents.on("task:token", (taskId: string, sessionId: string | undefined, text: string) => {
     if (!sessionId) return;
-    if (dashboardIsLive(sessionId)) return; // user is reading on the dashboard, don't echo to Telegram
+    if (suppressForDashboard(sessionId, taskId)) return; // dashboard-origin turn read in-app, don't echo
     const buffer = sessionBuffers.get(sessionId);
     if (!buffer) return;
     buffer.tokens.push(text);
@@ -1993,16 +2052,16 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     ).catch(() => {});
   }
 
-  sessionEvents.on("task:tool_use", (_taskId: string, sessionId: string | undefined, tool: string) => {
+  sessionEvents.on("task:tool_use", (taskId: string, sessionId: string | undefined, tool: string) => {
     if (!sessionId) return;
-    if (dashboardIsLive(sessionId)) return;
+    if (suppressForDashboard(sessionId, taskId)) return;
     const buffer = sessionBuffers.get(sessionId);
     if (buffer) buffer.toolCalls.push(tool);
   });
 
-  sessionEvents.on("task:ask_user", async (_taskId: string, sessionId: string | undefined, input: unknown) => {
+  sessionEvents.on("task:ask_user", async (taskId: string, sessionId: string | undefined, input: unknown) => {
     if (!sessionId) return;
-    if (dashboardIsLive(sessionId)) return; // dashboard renders its own QuestionPicker
+    if (suppressForDashboard(sessionId, taskId)) return; // dashboard renders its own QuestionPicker
     // findAskUserTelegramContext widens beyond getTelegramContext: it
     // also catches dashboard-origin sessions whose owner has a linked
     // Telegram bot. The fallback notification (ask-user-fallback.ts)
@@ -2043,10 +2102,11 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     }
   });
 
-  sessionEvents.on("task:done", async (_taskId: string, sessionId: string | undefined, result?: { text?: string }) => {
+  sessionEvents.on("task:done", async (taskId: string, sessionId: string | undefined, result?: { text?: string }) => {
     if (!sessionId) return;
     stopTypingRefresh(sessionId);
-    if (dashboardIsLive(sessionId)) {
+    const wasTelegramOrigin = telegramOriginTasks.delete(taskId);
+    if (dashboardIsLive(sessionId) && !wasTelegramOrigin) {
       // Dashboard is reading this session right now. Suppress the
       // Telegram broadcast — the user is already seeing the result
       // in-app. Clean up any in-flight streaming state so the next
@@ -2202,11 +2262,12 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     }
   });
 
-  sessionEvents.on("task:failed", async (_taskId: string, sessionId: string | undefined, error?: string) => {
+  sessionEvents.on("task:failed", async (taskId: string, sessionId: string | undefined, error?: string) => {
     if (!sessionId) return;
     stopTypingRefresh(sessionId);
     clearStreamingState(sessionId);
-    if (dashboardIsLive(sessionId)) {
+    const wasTelegramOrigin = telegramOriginTasks.delete(taskId);
+    if (dashboardIsLive(sessionId) && !wasTelegramOrigin) {
       sessionBuffers.delete(sessionId);
       return;
     }
