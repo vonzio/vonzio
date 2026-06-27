@@ -45,6 +45,7 @@ import { OllamaModelPicker } from "../components/OllamaModelPicker.js";
 import { ProfileModelSelect } from "../components/ProfileModelSelect.js";
 import { McpServerEditor, type McpServerConfig } from "../components/McpServerEditor.js";
 import { ChecklistRows } from "../components/ChecklistRows.js";
+import { AgentSecretsPanel } from "../components/AgentSecretsPanel.js";
 
 // Tab identifiers — single source of truth so the hash gate, the Tabs
 // component, and the JSX render guards can't drift.
@@ -709,6 +710,7 @@ export function EditAgent() {
                   emptyText="No skills yet — upload a .zip bundle or create one."
                 />
               </Panel>
+              <AgentSecretsPanel profileId={editingId} />
             </div>
           )}
 

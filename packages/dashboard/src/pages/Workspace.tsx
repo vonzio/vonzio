@@ -1010,6 +1010,7 @@ export function Workspace() {
               messages={chat.messages}
               workspaceName={activeWorkspace.name ?? "workspace"}
               profileName={profileName}
+              profileIdForSlot={activeWorkspace.profile_id}
               attachedTunnel={activeWorkspace.attached_tunnel ?? null}
             />
           ) : isNarrow && (
