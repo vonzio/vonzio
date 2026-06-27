@@ -76,6 +76,11 @@ export interface TaskPayload {
   attachments?: TaskAttachment[];
 }
 
+// Where the agent records its own PID inside the container (see dispatch()).
+// Session abort reads this to kill the agent process group without stopping
+// the container.
+const AGENT_PID_FILE = "/tmp/vonzio-agent.pid";
+
 export class AgentCommunicator {
   private activeExecs = new Map<string, AbortController>();
 
@@ -91,9 +96,14 @@ export class AgentCommunicator {
 
     try {
       const stdin = JSON.stringify(payload) + "\n";
+      // Record the agent's own PID to a file so abort() can kill THIS process
+      // (and its tool/bash children) inside the container while keeping the
+      // container — and its long-running dev servers — alive. `exec` replaces
+      // the shell with node so the recorded $$ is node's PID. Without this,
+      // aborting only stops us reading the stream; the agent keeps running.
       const stream = this.manager.execInContainer(
         containerId,
-        ["node", "/app/dist/index.js"],
+        ["sh", "-c", `echo $$ > ${AGENT_PID_FILE}; exec node /app/dist/index.js`],
         stdin,
         env,
       );
@@ -157,15 +167,45 @@ export class AgentCommunicator {
   async abort(containerId: string, keepContainer = false): Promise<void> {
     const controller = this.activeExecs.get(containerId);
     if (controller) {
+      // Stops OUR read loop immediately so the UI goes quiet at once.
       controller.abort();
     }
     if (!keepContainer) {
-      // Force kill the container's exec processes (batch mode)
+      // Batch mode: stopping the whole container is the kill.
       try {
         await this.manager.stopContainer(containerId, 10);
       } catch {
         // Container may already be stopped
       }
+      return;
+    }
+    // Session mode: aborting the read loop is NOT enough — the agent process is
+    // still running inside the container and will keep executing tool calls.
+    // Kill the recorded agent PID (and its process group, to catch tool/bash
+    // children) with TERM then KILL, while leaving the container — and its
+    // dev servers — running.
+    await this.killAgentProcess(containerId);
+  }
+
+  /** Kill the in-container agent process (TERM, then KILL after a grace) using
+   *  the PID it recorded at launch. Best-effort; never throws. */
+  private async killAgentProcess(containerId: string): Promise<void> {
+    // `-$P` targets the process group; `$P` the process itself — belt and
+    // suspenders since the agent may or may not be a group leader. The brief
+    // sleep gives a clean SIGTERM shutdown before the hard SIGKILL.
+    const script =
+      `P=$(cat ${AGENT_PID_FILE} 2>/dev/null); [ -z "$P" ] && exit 0; ` +
+      `kill -TERM -"$P" 2>/dev/null; kill -TERM "$P" 2>/dev/null; ` +
+      `sleep 1; ` +
+      `kill -KILL -"$P" 2>/dev/null; kill -KILL "$P" 2>/dev/null; ` +
+      `rm -f ${AGENT_PID_FILE} 2>/dev/null; true`;
+    try {
+      // Drain the exec stream so the kill actually runs to completion.
+      for await (const _line of this.manager.execInContainer(containerId, ["sh", "-c", script])) {
+        // no output expected; consume to drive the command
+      }
+    } catch {
+      // Container gone or exec failed — nothing more we can do.
     }
   }
 
