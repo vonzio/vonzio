@@ -53,6 +53,7 @@ export function App() {
       if (c.version) { setAppVersion(c.version); (window as any).__VONZIO_VERSION = c.version; }
       if (c.maxTurns) { (window as any).__VONZIO_MAX_TURNS = c.maxTurns; }
       if (c.maxDocumentMb) { (window as any).__VONZIO_MAX_DOCUMENT_MB = c.maxDocumentMb; }
+      if (c.maxUploadMb) { (window as any).__VONZIO_MAX_UPLOAD_MB = c.maxUploadMb; }
       if (c.ollamaEnabled) { (window as any).__VONZIO_OLLAMA_ENABLED = true; }
       (window as any).__VONZIO_EGRESS_ENFORCEMENT = !!c.egressEnforcement;
       if (c.previewUrlTemplate) { (window as any).__VONZIO_PREVIEW_URL_TEMPLATE = c.previewUrlTemplate; }

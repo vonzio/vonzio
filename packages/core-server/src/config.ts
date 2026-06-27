@@ -141,6 +141,13 @@ const configSchema = z.object({
   MAX_DOCUMENT_MB: z.coerce.number().default(100),
   MAX_PROFILE_DOCUMENTS_MB: z.coerce.number().default(500),
 
+  // Single shared cap (megabytes) for both workspace upload paths: the chat
+  // composer's inline attachments (ride the WebSocket as base64) and the Files
+  // panel's multipart upload. Published in /api/config so the client enforces
+  // the same number and the WS maxPayload is sized from it. Raise via .env on a
+  // host that needs to push large files into a workspace.
+  MAX_UPLOAD_MB: z.coerce.number().default(100),
+
   // Pool (Mode B)
   POOL_MIN_SIZE: z.coerce.number().default(3),
   POOL_MAX_SIZE: z.coerce.number().default(10),

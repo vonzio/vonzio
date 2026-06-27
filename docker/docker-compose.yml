@@ -106,6 +106,9 @@ services:
       - "BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?required — set in .env or run ./install.sh which generates one with: openssl rand -hex 32}"
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
       - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-false}
+      # Shared cap (MB) for chat attachments + Files-panel uploads. Raise on a
+      # host that needs to push large files into a workspace.
+      - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-100}
       - "DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:?required — set in .env}@postgres:5432/vonzio"
       # Route Docker API through the socket-proxy (see docker-proxy service
       # above). DOCKER_HOST takes precedence over DOCKER_SOCKET in

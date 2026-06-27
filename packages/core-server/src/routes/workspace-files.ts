@@ -10,6 +10,8 @@ import { authorizeTenantAccess } from "../auth/user-auth.js";
 export interface WorkspaceFilesRoutesOptions {
   sessionRegistry: SessionRegistry;
   containerManager: ContainerManager;
+  /** Per-file upload cap in bytes (config.MAX_UPLOAD_MB). */
+  maxUploadBytes: number;
 }
 
 /** POSIX-safe single-quote escaping for values interpolated into `sh -c`. */
@@ -17,9 +19,15 @@ const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 export const workspaceFilesRoutes = fp(
   async (server: FastifyInstance, opts: WorkspaceFilesRoutesOptions) => {
-    const { sessionRegistry, containerManager } = opts;
+    const { sessionRegistry, containerManager, maxUploadBytes } = opts;
 
-    await server.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB
+    // Shared cap (config.MAX_UPLOAD_MB). throwFileSizeLimit makes the part
+    // stream throw when a file exceeds it, so the handler can return a clear
+    // 413 instead of silently writing a truncated file.
+    await server.register(multipart, {
+      limits: { fileSize: maxUploadBytes },
+      throwFileSizeLimit: true,
+    });
 
     // Run a shell command directly in the workspace container (owner-scoped).
     // Not a new privilege — the workspace's agent can already run Bash here; this
@@ -127,7 +135,9 @@ export const workspaceFilesRoutes = fp(
       // Sanitize hard: confine to /workspace/ and strip any traversal.
       let destDir = "/workspace";
 
-      for await (const part of parts) {
+      const maxUploadMb = Math.round(maxUploadBytes / (1024 * 1024));
+      try {
+       for await (const part of parts) {
         if (part.type === "field" && part.fieldname === "dest") {
           const cleaned = String(part.value ?? "")
             .replace(/\\/g, "/")
@@ -158,6 +168,13 @@ export const workspaceFilesRoutes = fp(
         for await (const chunk of part.file) {
           chunks.push(chunk);
         }
+        // @fastify/multipart flags truncated when the file hit the size limit
+        // (belt-and-suspenders alongside the throw caught below).
+        if (part.file.truncated) {
+          return reply
+            .code(413)
+            .send(errorResponse(ErrorCodes.BAD_REQUEST, `"${safeName}" exceeds the ${maxUploadMb} MB upload limit`));
+        }
         const buffer = Buffer.concat(chunks);
         const base64 = buffer.toString("base64");
 
@@ -176,6 +193,17 @@ export const workspaceFilesRoutes = fp(
         }
 
         uploaded.push({ name: safeName, size: buffer.length });
+       }
+      } catch (err) {
+        // @fastify/multipart throws (code FST_REQ_FILE_TOO_LARGE) when a file
+        // exceeds the limit. Surface a clear 413 instead of a generic 500 the
+        // UI swallows.
+        if ((err as { code?: string })?.code === "FST_REQ_FILE_TOO_LARGE") {
+          return reply
+            .code(413)
+            .send(errorResponse(ErrorCodes.BAD_REQUEST, `File exceeds the ${maxUploadMb} MB upload limit`));
+        }
+        throw err;
       }
 
       return { uploaded };
