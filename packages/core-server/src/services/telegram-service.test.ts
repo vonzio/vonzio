@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { escapeMarkdownV2, markdownToTelegram, splitTelegramMessage } from "./telegram-service.js";
+import {
+  escapeMarkdownV2,
+  markdownToTelegram,
+  splitTelegramMessage,
+  toTelegramHtml,
+  chunkMarkdown,
+  stripTelegramHtml,
+} from "./telegram-service.js";
 
 describe("escapeMarkdownV2", () => {
   it("escapes all reserved characters", () => {
@@ -84,5 +91,65 @@ describe("splitTelegramMessage", () => {
     const chunks = splitTelegramMessage(text, 30);
     expect(chunks.every((c) => c.length <= 30)).toBe(true);
     expect(chunks.join("")).toBe(text);
+  });
+});
+
+describe("toTelegramHtml", () => {
+  it("renders bold and italic", () => {
+    expect(toTelegramHtml("**bold** and _italic_")).toBe("<b>bold</b> and <i>italic</i>");
+  });
+
+  it("renders inline code without auto-linking dotted filenames", () => {
+    // The bug: `dev-start.sh` / `CLAUDE.md` leaked as plain text and Telegram
+    // auto-linked the .sh/.md TLD. Inside <code> it never linkifies.
+    expect(toTelegramHtml("run `dev-start.sh`")).toBe("run <code>dev-start.sh</code>");
+  });
+
+  it("does not corrupt standalone numbers in prose (placeholder collision regression)", () => {
+    const out = toTelegramHtml("you have 10 files on ports 3000 and 5432");
+    expect(out).toBe("you have 10 files on ports 3000 and 5432");
+  });
+
+  it("escapes HTML special chars in text", () => {
+    expect(toTelegramHtml("a < b & c > d")).toBe("a &lt; b &amp; c &gt; d");
+  });
+
+  it("renders fenced code with a language class", () => {
+    expect(toTelegramHtml("```js\nfoo()\n```")).toBe('<pre><code class="language-js">foo()</code></pre>');
+  });
+
+  it("renders links", () => {
+    expect(toTelegramHtml("[docs](https://example.com)")).toBe('<a href="https://example.com">docs</a>');
+  });
+
+  it("renders unordered lists with bullets", () => {
+    expect(toTelegramHtml("- one\n- two")).toBe("• one\n• two");
+  });
+
+  it("turns headers into bold", () => {
+    expect(toTelegramHtml("# Title")).toBe("<b>Title</b>");
+  });
+
+  it("handles nested bold containing inline code", () => {
+    expect(toTelegramHtml("**use `x` now**")).toBe("<b>use <code>x</code> now</b>");
+  });
+});
+
+describe("stripTelegramHtml", () => {
+  it("removes tags and unescapes entities", () => {
+    expect(stripTelegramHtml("<b>a &lt; b</b> &amp; <code>c</code>")).toBe("a < b & c");
+  });
+});
+
+describe("chunkMarkdown", () => {
+  it("returns a single chunk when under the limit", () => {
+    expect(chunkMarkdown("short", 100)).toEqual(["short"]);
+  });
+
+  it("splits at block boundaries without cutting a code fence", () => {
+    const md = "para one\n\n```js\nlong code block here\n```\n\npara two";
+    const chunks = chunkMarkdown(md, 20);
+    // The fenced block must stay intact within a single chunk.
+    expect(chunks.some((c) => c.includes("```js\nlong code block here\n```"))).toBe(true);
   });
 });

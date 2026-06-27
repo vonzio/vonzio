@@ -25,8 +25,9 @@ import type { NotificationHandler, PluginContext } from "@vonzio/plugin-api";
 import type { TelegramConfig } from "./types.js";
 import {
   TelegramService,
-  markdownToTelegram,
-  splitTelegramMessage,
+  toTelegramHtml,
+  chunkMarkdown,
+  stripTelegramHtml,
 } from "./services/telegram-service.js";
 import { telegramPlaybookThreads } from "./db/schema.js";
 
@@ -81,8 +82,7 @@ export function buildTelegramNotifyHandler(ctx: PluginContext): NotificationHand
       };
     }
 
-    const formatted = markdownToTelegram(req.text);
-    const chunks = splitTelegramMessage(formatted, 4000);
+    const chunks = chunkMarkdown(req.text, 3800).map((c) => toTelegramHtml(c));
 
     // Attach the thread-claim keyboard to the LAST chunk only -- earlier
     // chunks are just continuations of the same logical message; we
@@ -110,26 +110,25 @@ export function buildTelegramNotifyHandler(ctx: PluginContext): NotificationHand
         const sent = await telegramService.sendMessage(config.bot_token, {
           chat_id: config.owner_tg_user_id,
           text: chunk,
-          parse_mode: "MarkdownV2",
+          parse_mode: "HTML",
           disable_web_page_preview: true,
           ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
         });
         if (isLast) lastSentMessageId = sent.message_id;
       } catch (mvErr) {
-        // MarkdownV2 parse rejection from the API -- retry as plain
-        // text after stripping the V2 escapes. Surfaces a failure
-        // result if even that fails.
+        // HTML parse rejection from the API -- retry as plain text after
+        // stripping tags. Surfaces a failure result if even that fails.
         try {
           const sent = await telegramService.sendMessage(config.bot_token, {
             chat_id: config.owner_tg_user_id,
-            text: chunk.replace(/\\([_*[\]()~`>#+\-=|{}.!\\])/g, "$1"),
+            text: stripTelegramHtml(chunk),
             ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
           });
           if (isLast) lastSentMessageId = sent.message_id;
         } catch (plainErr) {
           ctx.log.warn(
             { mvErr: String(mvErr), plainErr: String(plainErr) },
-            "Telegram send failed (both MarkdownV2 and plain text)",
+            "Telegram send failed (both HTML and plain text)",
           );
           return {
             ok: false,

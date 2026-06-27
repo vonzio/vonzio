@@ -121,6 +121,7 @@ jobs:
             packages/core-server/src/orchestrator/retry.test.ts \
             packages/core-server/src/queue/queue.test.ts \
             packages/core-server/src/services/format-message.test.ts \
+            packages/core-server/src/services/telegram-service.test.ts \
             packages/core-server/src/services/scope.test.ts \
             packages/core-server/src/services/title-service.test.ts \
             packages/core-server/src/lib/safe-webhook-fetch.test.ts \
