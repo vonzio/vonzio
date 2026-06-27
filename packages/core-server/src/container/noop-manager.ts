@@ -34,6 +34,8 @@ export class NoopContainerManager implements ContainerManager {
   async readFile(): Promise<Buffer> {
     return Buffer.alloc(0);
   }
+  async copyToContainer(): Promise<void> {}
+  async listListeningPorts(): Promise<number[]> { return []; }
   async pauseContainer(): Promise<void> {}
   async unpauseContainer(): Promise<void> {}
   async ensureNetwork(): Promise<void> {}

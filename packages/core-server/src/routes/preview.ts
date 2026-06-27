@@ -4,22 +4,43 @@ import { basename, extname, posix as posixPath } from "node:path";
 import type { ContainerManager } from "@vonzio/shared";
 import type { SessionRegistry } from "../container/session-registry.js";
 import type { Auth } from "../auth/better-auth.js";
-import { createPreviewAuthChecker, unauthorizedHtml, brandedErrorHtml, type PreviewAuthChecker } from "../auth/preview-auth.js";
+import { createPreviewAuthChecker, unauthorizedHtml, brandedErrorHtml, previewCodeGateHtml, CODE_COOKIE_NAME, type PreviewAuthChecker } from "../auth/preview-auth.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 
 // Read the `vonzio_preview` cookie value. Same-origin cookie set on the
 // preview subdomain after a successful _pvt exchange.
-function readPreviewCookie(cookieHeader: string | string[] | undefined): string | null {
+// Brute-force guard for share-code entry, keyed by container:port:ip. Low-entropy
+// codes need this — without it the gate is trivially guessable at scale.
+const CODE_MAX_ATTEMPTS = 10;
+const CODE_WINDOW_MS = 5 * 60_000;
+const codeAttempts = new Map<string, { count: number; resetAt: number }>();
+function codeRateLimited(key: string): boolean {
+  const e = codeAttempts.get(key);
+  return !!e && Date.now() <= e.resetAt && e.count >= CODE_MAX_ATTEMPTS;
+}
+function recordCodeFailure(key: string): void {
+  const now = Date.now();
+  const e = codeAttempts.get(key);
+  if (!e || now > e.resetAt) codeAttempts.set(key, { count: 1, resetAt: now + CODE_WINDOW_MS });
+  else e.count++;
+}
+function clearCodeAttempts(key: string): void { codeAttempts.delete(key); }
+
+function readCookie(cookieHeader: string | string[] | undefined, name: string): string | null {
   const raw = Array.isArray(cookieHeader) ? cookieHeader[0] : cookieHeader;
   if (!raw) return null;
   for (const part of raw.split(";")) {
     const [k, ...rest] = part.trim().split("=");
-    if (k === "vonzio_preview") {
+    if (k === name) {
       try { return decodeURIComponent(rest.join("=")); }
       catch { return rest.join("="); }
     }
   }
   return null;
+}
+
+function readPreviewCookie(cookieHeader: string | string[] | undefined): string | null {
+  return readCookie(cookieHeader, "vonzio_preview");
 }
 
 function notFoundHtml(dashboardUrl: string): string {
@@ -83,11 +104,12 @@ export interface PreviewRoutesOptions {
   sessionRegistry: SessionRegistry;
   dashboardUrl: string;
   secret: string;
+  encryptionKey: string;
 }
 
 export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (server, opts) => {
-  const { containerManager, previewMode, previewDomain, auth, sessionRegistry, dashboardUrl, secret } = opts;
-  const authChecker = createPreviewAuthChecker(auth, sessionRegistry, secret);
+  const { containerManager, previewMode, previewDomain, auth, sessionRegistry, dashboardUrl, secret, encryptionKey } = opts;
+  const authChecker = createPreviewAuthChecker(auth, sessionRegistry, secret, encryptionKey);
 
   // Cache: short container ID → { fullId, ip }
   const ipCache = new Map<string, { fullId: string; ip: string; ts: number }>();
@@ -114,9 +136,9 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
   }
 
   /** Check auth via session cookie, token, or public_preview flag. */
-  async function checkAuth(request: FastifyRequest, reply: FastifyReply, fullContainerId: string): Promise<boolean> {
-    // Public previews skip auth
-    if (authChecker.isPublic(fullContainerId)) return true;
+  async function checkAuth(request: FastifyRequest, reply: FastifyReply, fullContainerId: string, port?: number): Promise<boolean> {
+    // Public previews skip auth (per-port, or the legacy container-wide master)
+    if (authChecker.isPublic(fullContainerId, port)) return true;
 
     // Try session cookie first
     const user = await authChecker.checkSession(request.headers, fullContainerId);
@@ -126,9 +148,86 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
     const query = request.query as Record<string, string>;
     if (query?._pvt && authChecker.checkToken(query._pvt, fullContainerId)) return true;
 
+    // Code-protected port: a shared viewer who's entered the code.
+    if (port !== undefined && authChecker.portMode(fullContainerId, port) === "code") {
+      const codeCookie = readCookie(request.headers.cookie, CODE_COOKIE_NAME);
+      if (codeCookie && authChecker.checkCodeToken(codeCookie, fullContainerId, port)) return true;
+      // Signed token from the unlock redirect — set the cookie, drop the param.
+      if (query?.__vzc && authChecker.checkCodeToken(query.__vzc, fullContainerId, port)) {
+        setCodeCookieRedirect(request, reply, query.__vzc);
+        return false;
+      }
+      // Raw code in a convenience share link — verify, mint, set cookie, clean.
+      // Rate-limited + failures recorded, same as the hostname branch and the
+      // unlock endpoint, so this path can't be used to brute-force the code.
+      const rlKey = `${fullContainerId}:${port}:${request.ip}`;
+      if (query?.__vzc_code && !codeRateLimited(rlKey) && authChecker.checkCode(fullContainerId, port, query.__vzc_code)) {
+        clearCodeAttempts(rlKey);
+        const token = authChecker.signCodeToken(fullContainerId, port);
+        if (token) { setCodeCookieRedirect(request, reply, token); return false; }
+      }
+      // A present-but-wrong inline code counts against the brute-force budget.
+      if (query?.__vzc_code) recordCodeFailure(rlKey);
+      const accept = (request.headers.accept ?? "") as string;
+      if (accept.includes("text/html")) {
+        reply.code(401).header("Content-Type", "text/html").send(
+          previewCodeGateHtml({ action: "/api/preview-unlock", container: fullContainerId, port: String(port), returnUrl: request.url }),
+        );
+      } else {
+        reply.code(401).header("Content-Type", "text/plain").send("preview code required");
+      }
+      return false;
+    }
+
     reply.code(403).header("Content-Type", "text/html").send(unauthorizedHtml(dashboardUrl));
     return false;
   }
+
+  // Strip the code params, set the unlock cookie, and bounce to the clean URL.
+  function setCodeCookieRedirect(request: FastifyRequest, reply: FastifyReply, token: string): void {
+    const u = new URL(request.url, "http://preview.local");
+    u.searchParams.delete("__vzc");
+    u.searchParams.delete("__vzc_code");
+    const clean = u.pathname + (u.search || "");
+    reply.header("set-cookie", `${CODE_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${7 * 24 * 3600}; HttpOnly; SameSite=Lax`);
+    reply.redirect(clean);
+  }
+
+  // Only allow the unlock redirect to bounce back to our own preview surface —
+  // never an arbitrary host (which would leak a freshly-minted access token).
+  function isSafeReturn(returnUrl: string): boolean {
+    if (returnUrl.startsWith("/preview/")) return true;
+    try {
+      const host = new URL(returnUrl).host;
+      return !!previewDomain && (host === previewDomain || host.endsWith(`.${previewDomain}`));
+    } catch { return false; }
+  }
+
+  // --- Code unlock: verify a share code, redirect back with a signed token ---
+  server.get("/api/preview-unlock", async (request, reply) => {
+    const q = request.query as Record<string, string>;
+    const { container, port, code } = q;
+    const returnUrl = q.return;
+    if (!container || !port || !returnUrl || !isSafeReturn(returnUrl)) {
+      return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Invalid unlock request"));
+    }
+    const fullId = await containerManager.resolveContainerId(container);
+    const rlKey = `${fullId ?? container}:${port}:${request.ip}`;
+    if (codeRateLimited(rlKey)) {
+      return reply.code(429).header("Content-Type", "text/plain").send("Too many attempts — wait a few minutes and try again.");
+    }
+    if (!fullId || !authChecker.checkCode(fullId, port, code ?? "")) {
+      recordCodeFailure(rlKey);
+      return reply.code(401).header("Content-Type", "text/html").send(
+        previewCodeGateHtml({ action: "/api/preview-unlock", container, port, returnUrl, error: true }),
+      );
+    }
+    clearCodeAttempts(rlKey);
+    const token = authChecker.signCodeToken(fullId, port);
+    if (!token) return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Port is not code-protected"));
+    const sep = returnUrl.includes("?") ? "&" : "?";
+    return reply.redirect(`${returnUrl}${sep}__vzc=${encodeURIComponent(token)}`);
+  });
 
   // --- Preview auth token endpoint (main domain — session cookie is available) ---
   server.get("/api/preview-auth", async (request, reply) => {
@@ -166,7 +265,7 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
       return reply.code(404).header("Content-Type", "text/html").send(notFoundHtml(dashboardUrl));
     }
 
-    if (!(await checkAuth(request, reply, target.fullId))) return;
+    if (!(await checkAuth(request, reply, target.fullId, portNum))) return;
 
     // Build the proxied path — strip /preview/:containerId/:port prefix
     const prefix = `/preview/${containerId}/${port}`;
@@ -184,7 +283,7 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
     const target = await resolveTarget(containerId, portNum);
     if (!target) return reply.code(404).header("Content-Type", "text/html").send(notFoundHtml(dashboardUrl));
 
-    if (!(await checkAuth(request, reply, target.fullId))) return;
+    if (!(await checkAuth(request, reply, target.fullId, portNum))) return;
 
     return proxyRequest(request, reply, target.ip, target.port, "/");
   });
@@ -299,8 +398,9 @@ export function setupHostnamePreviewProxy(
   sessionRegistry: SessionRegistry,
   dashboardUrl: string,
   secret: string,
+  encryptionKey: string,
 ): void {
-  const authChecker = createPreviewAuthChecker(auth, sessionRegistry, secret);
+  const authChecker = createPreviewAuthChecker(auth, sessionRegistry, secret, encryptionKey);
   const ipCache = new Map<string, { fullId: string; ip: string; ts: number }>();
   const CACHE_TTL = 30_000;
 
@@ -335,9 +435,58 @@ export function setupHostnamePreviewProxy(
       return;
     }
 
-    // Public previews skip auth entirely
-    if (authChecker.isPublic(target.fullId)) {
+    // Public previews skip auth entirely (per-port, or legacy container-wide)
+    if (authChecker.isPublic(target.fullId, target.port)) {
       await proxyToContainer(request, reply, target.ip, target.port, request.url || "/");
+      return;
+    }
+
+    // Code-protected port: shared-viewer flow (cookie / minted token / raw code
+    // share link / gate). Owners still fall through to the session/_pvt flow.
+    if (authChecker.portMode(target.fullId, target.port) === "code"
+        && !(await authChecker.checkSession(request.headers, target.fullId))) {
+      const q2 = request.query as Record<string, string>;
+      const codeCookie = readCookie(request.headers.cookie, CODE_COOKIE_NAME);
+      if (codeCookie && authChecker.checkCodeToken(codeCookie, target.fullId, target.port)) {
+        await proxyToContainer(request, reply, target.ip, target.port, request.url || "/");
+        return;
+      }
+      // Signed token from the unlock redirect → same-origin cookie, clean URL.
+      if (q2?.__vzc && authChecker.checkCodeToken(q2.__vzc, target.fullId, target.port)) {
+        const url = new URL(request.url, `http://${host}`);
+        url.searchParams.delete("__vzc");
+        const cleanPath = url.pathname + (url.search || "");
+        await proxyToContainer(request, reply, target.ip, target.port, cleanPath, {
+          "set-cookie": `${CODE_COOKIE_NAME}=${encodeURIComponent(q2.__vzc)}; Path=/; Max-Age=${7 * 24 * 3600}; HttpOnly; SameSite=Lax`,
+        });
+        return;
+      }
+      // Convenience share link carrying the raw code → mint, set cookie, clean.
+      const rlKey = `${target.fullId}:${target.port}:${request.ip}`;
+      if (q2?.__vzc_code && !codeRateLimited(rlKey) && authChecker.checkCode(target.fullId, target.port, q2.__vzc_code)) {
+        clearCodeAttempts(rlKey);
+        const token = authChecker.signCodeToken(target.fullId, target.port);
+        if (token) {
+          const url = new URL(request.url, `http://${host}`);
+          url.searchParams.delete("__vzc_code");
+          const cleanPath = url.pathname + (url.search || "");
+          reply.header("set-cookie", `${CODE_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${7 * 24 * 3600}; HttpOnly; SameSite=Lax`);
+          reply.redirect(cleanPath);
+          return;
+        }
+      }
+      // A present-but-wrong inline code counts against the brute-force budget.
+      if (q2?.__vzc_code) recordCodeFailure(rlKey);
+      const accept = (request.headers.accept ?? "") as string;
+      if (accept.includes("text/html")) {
+        const protocol = dashboardUrl.startsWith("https") ? "https" : "http";
+        const returnUrl = `${protocol}://${host}${request.url}`;
+        reply.code(401).header("Content-Type", "text/html").send(
+          previewCodeGateHtml({ action: `${dashboardUrl}/api/preview-unlock`, container: target.fullId, port: String(target.port), returnUrl }),
+        );
+      } else {
+        reply.code(401).header("Content-Type", "text/plain").send("preview code required");
+      }
       return;
     }
 
@@ -458,8 +607,9 @@ export function setupPreviewWebSocketProxy(
   auth: Auth,
   sessionRegistry: SessionRegistry,
   secret: string,
+  encryptionKey: string,
 ): void {
-  const authChecker = createPreviewAuthChecker(auth, sessionRegistry, secret);
+  const authChecker = createPreviewAuthChecker(auth, sessionRegistry, secret, encryptionKey);
   const ipCache = new Map<string, { fullId: string; ip: string; ts: number }>();
   const CACHE_TTL = 30_000;
 
@@ -511,12 +661,17 @@ export function setupPreviewWebSocketProxy(
       return;
     }
 
-    // Auth: public previews skip auth, then try session cookie, then token
-    if (!authChecker.isPublic(resolved.fullId)) {
+    // Auth: public (per-port) skips auth; else owner session / _pvt token; else a
+    // code-mode viewer carrying the unlock cookie (so WS apps — Vite HMR, live
+    // reload — keep working behind a shared code once the HTTP gate is passed).
+    if (!authChecker.isPublic(resolved.fullId, parsed.port)) {
       const headers = req.headers as Record<string, string | string[] | undefined>;
       const user = await authChecker.checkSession(headers, resolved.fullId);
       if (!user) {
-        if (!parsed.token || !authChecker.checkToken(parsed.token, resolved.fullId)) {
+        const codeCookie = readCookie(req.headers.cookie, CODE_COOKIE_NAME);
+        const codeOk = authChecker.portMode(resolved.fullId, parsed.port) === "code"
+          && !!codeCookie && authChecker.checkCodeToken(codeCookie, resolved.fullId, parsed.port);
+        if (!codeOk && (!parsed.token || !authChecker.checkToken(parsed.token, resolved.fullId))) {
           socket.destroy();
           return;
         }

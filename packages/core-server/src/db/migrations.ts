@@ -758,6 +758,20 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE git_providers ADD COLUMN IF NOT EXISTS installation_id TEXT`);
     },
   },
+  {
+    version: 33,
+    description: "Per-port public preview: workspaces.public_ports (jsonb array of publicly-reachable container ports; complements the legacy public_preview master flag).",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS public_ports JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    },
+  },
+  {
+    version: 34,
+    description: "Public-with-code preview: workspaces.preview_codes (jsonb map port → {code_enc, code_version}; a third per-port access mode between private and fully public).",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS preview_codes JSONB NOT NULL DEFAULT '{}'::jsonb`);
+    },
+  },
 ];
 
 /**

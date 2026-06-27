@@ -1,6 +1,17 @@
 export const WORKSPACE_STATUSES = ["active", "idle", "paused", "resumable", "expired"] as const;
 export type WorkspaceStatus = (typeof WORKSPACE_STATUSES)[number];
 
+/** Per-port "public with code" access. The code is stored encrypted (vault
+ *  key), never plaintext; `code_version` bumps on rotate to invalidate any
+ *  previously-issued access cookies. */
+export interface PreviewCodeAccess {
+  code_enc: string;
+  code_version: number;
+}
+
+/** Resolved access mode for a single preview port. */
+export type PreviewPortMode = "private" | "public" | "code";
+
 export interface Workspace {
   session_id: string;
   container_id: string | null;
@@ -20,6 +31,12 @@ export interface Workspace {
   volume_id: string | null;
   volume_expires_at: string | null;
   public_preview: boolean;
+  /** Container ports (as strings) exposed publicly through the preview proxy
+   *  without auth — granular, per-service complement to `public_preview`. */
+  public_ports: string[];
+  /** Ports gated behind a shared access code (the "public with code" mode).
+   *  Mutually exclusive with public_ports per port. Keyed by port string. */
+  preview_codes: Record<string, PreviewCodeAccess>;
   model_override: string | null;
   /** Per-conversation API-key override. When set, this turn runs on this key's
    *  credential/provider/base_url instead of the profile's attached key — lets

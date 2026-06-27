@@ -433,6 +433,11 @@ export async function buildServer(deps: ServerDeps) {
       },
       turnstileSiteKey: config.TURNSTILE_SITE_KEY ?? null,
       marketingUrl: config.MARKETING_URL ?? null,
+      // Canonical customer-dashboard URL. Same value as BETTER_AUTH_URL;
+      // sibling SPAs (e.g. admin-dashboard in SaaS) read this to redirect
+      // users to /login on the right host instead of guessing from
+      // window.location.
+      appUrl: config.BETTER_AUTH_URL,
       previewUrlTemplate: config.PREVIEW_URL_TEMPLATE,
       maxTurns: config.MAX_TURNS,
       ollamaEnabled: config.OLLAMA_ENABLED,
@@ -539,7 +544,7 @@ export async function buildServer(deps: ServerDeps) {
   // Shared preview-auth checker used by chat-surface relays (WS/Telegram/Slack)
   // to mint short-lived _pvt tokens for agent-generated image URLs. Same secret
   // as the preview routes' internal checker — tokens are interchangeable.
-  const previewAuthChecker = createPreviewAuthChecker(auth, sessionRegistry, config.BETTER_AUTH_SECRET);
+  const previewAuthChecker = createPreviewAuthChecker(auth, sessionRegistry, config.BETTER_AUTH_SECRET, config.ENCRYPTION_KEY);
   // Session-aware wrapper around the rewriter with container-name caching.
   // One instance, three consumers (WS handler, Telegram relay, Slack relay).
   const imageRewriterService = new ImageRewriterService({
@@ -550,7 +555,7 @@ export async function buildServer(deps: ServerDeps) {
   // Hostname-based preview proxy — must be registered before any routes
   // so it intercepts *.vonzio.localhost before the SPA fallback
   if (config.PREVIEW_MODE === "hostname" && config.PREVIEW_DOMAIN) {
-    setupHostnamePreviewProxy(server, containerManager, config.PREVIEW_DOMAIN, auth, sessionRegistry, config.BETTER_AUTH_URL, config.BETTER_AUTH_SECRET);
+    setupHostnamePreviewProxy(server, containerManager, config.PREVIEW_DOMAIN, auth, sessionRegistry, config.BETTER_AUTH_URL, config.BETTER_AUTH_SECRET, config.ENCRYPTION_KEY);
   }
 
   // Mount Better Auth routes (before auth-guarded routes, after CORS)
@@ -666,7 +671,7 @@ export async function buildServer(deps: ServerDeps) {
           ? coreDeps.visibleProfileIdsForOrg(userId, activeOrgId, candidates)
           : Promise.resolve(null),
     });
-    v1.register(workspaceRoutes, { workspaceService, profileService, apiKeyService, eventLog, orchestrator });
+    v1.register(workspaceRoutes, { workspaceService, profileService, apiKeyService, eventLog, orchestrator, containerManager, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager, maxUploadBytes: config.MAX_UPLOAD_MB * 1024 * 1024 });
     v1.register(workspaceTerminalRoutes, { sessionRegistry, containerManager });
     v1.register(profileRoutes, {
@@ -917,6 +922,7 @@ export async function buildServer(deps: ServerDeps) {
     sessionRegistry,
     dashboardUrl: config.BETTER_AUTH_URL,
     secret: config.BETTER_AUTH_SECRET,
+    encryptionKey: config.ENCRYPTION_KEY,
   });
 
   // Prometheus metrics endpoint
@@ -1068,6 +1074,7 @@ export async function buildServer(deps: ServerDeps) {
       auth,
       sessionRegistry,
       config.BETTER_AUTH_SECRET,
+      config.ENCRYPTION_KEY,
     );
   });
 

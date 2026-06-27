@@ -21,7 +21,7 @@ export type {
 } from "./types/task.js";
 
 export { WORKSPACE_STATUSES } from "./types/workspace.js";
-export type { WorkspaceStatus, Workspace } from "./types/workspace.js";
+export type { WorkspaceStatus, Workspace, PreviewCodeAccess, PreviewPortMode } from "./types/workspace.js";
 
 export { PROFILE_PROVIDERS, AGENT_MODELS, PROVIDER_CATALOG, providerInfoByProvider } from "./types/profile.js";
 export { anthropicAuthHeaders, CLAUDE_SUBSCRIPTION_PROVIDER } from "./anthropic-auth.js";

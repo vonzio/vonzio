@@ -8,7 +8,9 @@ import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 import { generateTitle } from "../services/title-service.js";
 import { authorizeTenantAccess } from "../auth/user-auth.js";
-import { WORKSPACE_STATUSES, type Workspace, type WorkspaceStatus } from "@vonzio/shared";
+import { WORKSPACE_STATUSES, type Workspace, type WorkspaceStatus, type ContainerManager, type PreviewPortMode } from "@vonzio/shared";
+import { encrypt, decrypt } from "../auth/crypto.js";
+import { generatePreviewCode } from "../auth/preview-auth.js";
 
 export interface WorkspaceRoutesOptions {
   workspaceService: WorkspaceService;
@@ -20,11 +22,22 @@ export interface WorkspaceRoutesOptions {
   /** Optional — when present, GET responses are enriched with
    *  `attached_tunnel` for the chat header VPN pill. */
   orchestrator?: Pick<Orchestrator, "getActiveTunnelByAgentContainer" | "restartWorkspaceContainer">;
+  /** Optional — used to probe which ports the container is listening on, for
+   *  the preview/expose service picker. */
+  containerManager?: Pick<ContainerManager, "listListeningPorts">;
+  /** Vault key for encrypting per-port share codes at rest. */
+  encryptionKey?: string;
 }
 
 export const workspaceRoutes = fp(
   async (server: FastifyInstance, opts: WorkspaceRoutesOptions) => {
-    const { workspaceService, profileService, apiKeyService, eventLog, orchestrator } = opts;
+    const { workspaceService, profileService, apiKeyService, eventLog, orchestrator, containerManager, encryptionKey } = opts;
+
+    // Resolve a single port's access mode from the workspace's public/code maps.
+    const portModeOf = (w: Workspace, port: string): PreviewPortMode =>
+      w.public_preview === true || (w.public_ports ?? []).includes(port)
+        ? "public"
+        : (w.preview_codes ?? {})[port] ? "code" : "private";
 
     const withTunnel = (w: Workspace): Workspace => {
       if (!orchestrator || !w.container_id) return w;
@@ -144,14 +157,15 @@ export const workspaceRoutes = fp(
 
     server.patch<{
       Params: { id: string };
-      Body: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; api_key_id_override?: string | null };
+      Body: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; public_ports?: string[]; model_override?: string | null; api_key_id_override?: string | null };
     }>("/v1/workspaces/:id", {
       schema: {
         summary: "Update a workspace",
         description:
           "Patches user-mutable fields. Notable: `model_override` (per-workspace model picker — pass `null` to clear), " +
           "`api_key_id_override` (run this conversation on a different key than the profile's — pass `null` to clear), " +
-          "`starred`/`pinned`/`archived` for organization, `public_preview` to expose the preview iframe.",
+          "`starred`/`pinned`/`archived` for organization, `public_preview` to expose every preview port, " +
+          "`public_ports` (array of port strings) to expose specific services publicly.",
         tags: ["Workspaces"],
         params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
         body: {
@@ -164,6 +178,7 @@ export const workspaceRoutes = fp(
             archived: { type: "boolean" },
             tags: { type: "array", items: { type: "string" } },
             public_preview: { type: "boolean" },
+            public_ports: { type: "array", items: { type: "string" } },
             model_override: { type: "string", nullable: true },
             api_key_id_override: { type: "string", nullable: true },
           },
@@ -176,8 +191,16 @@ export const workspaceRoutes = fp(
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       }
       const body = request.body as {
-        name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; api_key_id_override?: string | null;
+        name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; public_ports?: string[]; model_override?: string | null; api_key_id_override?: string | null;
       };
+      // Normalize/validate public_ports: numeric strings, in range, deduped.
+      if (body.public_ports !== undefined) {
+        const cleaned = Array.from(new Set(body.public_ports.map((p) => String(p).trim())));
+        if (cleaned.some((p) => !/^\d{1,5}$/.test(p) || Number(p) < 1 || Number(p) > 65535)) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "public_ports must be valid port numbers"));
+        }
+        body.public_ports = cleaned;
+      }
       // A non-null key override must be a key the caller can actually use —
       // reject ids outside their visibility (own + admin + shared/org).
       if (body.api_key_id_override && apiKeyService) {
@@ -188,6 +211,116 @@ export const workspaceRoutes = fp(
       const updated = await workspaceService.update(request.params.id, body, { orgId: orgCtxId });
       return updated;
     });
+
+    // Live list of ports the container is currently listening on, so the
+    // dashboard can offer a preview/expose picker across ALL running services
+    // (not just whichever port the agent last printed). Each port carries its
+    // current public flag for the per-port expose toggles.
+    server.get<{ Params: { id: string } }>("/v1/workspaces/:id/ports", {
+      schema: {
+        summary: "List the container's listening ports",
+        description: "Probes the workspace container for listening TCP services (non-loopback). Returns each port with whether it's publicly exposed.",
+        tags: ["Workspaces"],
+        params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+      },
+    }, async (request, reply) => {
+      const workspace = workspaceService.get(request.params.id);
+      if (!workspace || !authorizeTenantAccess(request, workspace)) {
+        return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
+      }
+      // Decrypt a port's share code for the owner UI (this route is owner-authed).
+      const codeOf = (port: string): string | null => {
+        const entry = (workspace.preview_codes ?? {})[port];
+        if (!entry || !encryptionKey) return null;
+        try { return decrypt(entry.code_enc, encryptionKey); } catch { return null; }
+      };
+      if (!containerManager || !workspace.container_id) {
+        return { ports: [], public_preview: workspace.public_preview };
+      }
+      let detected: number[] = [];
+      try {
+        detected = await containerManager.listListeningPorts(workspace.container_id);
+      } catch {
+        detected = [];
+      }
+      return {
+        ports: detected.map((port) => {
+          const mode = portModeOf(workspace, String(port));
+          return {
+            port,
+            mode,
+            public: mode === "public",
+            code: mode === "code" ? codeOf(String(port)) : null,
+          };
+        }),
+        public_preview: workspace.public_preview,
+      };
+    });
+
+    // Set a single preview port's access mode: private | public | code.
+    // For "code", a code may be supplied (owner-chosen) or one is generated;
+    // the plaintext is returned ONCE here and stored only encrypted.
+    server.put<{ Params: { id: string }; Body: { port: string | number; mode: PreviewPortMode; code?: string } }>(
+      "/v1/workspaces/:id/preview-access",
+      {
+        schema: {
+          summary: "Set a preview port's access mode",
+          description: "private (owner only), public (anyone with the link), or code (anyone with the link + access code).",
+          tags: ["Workspaces"],
+          params: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+          body: {
+            type: "object",
+            required: ["port", "mode"],
+            properties: {
+              port: { type: ["string", "number"] },
+              mode: { type: "string", enum: ["private", "public", "code"] },
+              code: { type: "string" },
+            },
+          },
+        },
+      },
+      async (request, reply) => {
+        const orgCtxId = request.orgContext?.org_id;
+        const workspace = workspaceService.get(request.params.id);
+        if (!workspace || !authorizeTenantAccess(request, workspace)) {
+          return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
+        }
+        const body = request.body;
+        const port = String(body.port).trim();
+        if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Invalid port"));
+        }
+        const publicPorts = new Set((workspace.public_ports ?? []).map(String));
+        const codes: Record<string, { code_enc: string; code_version: number }> = { ...(workspace.preview_codes ?? {}) };
+        let issuedCode: string | null = null;
+
+        if (body.mode === "private") {
+          publicPorts.delete(port); delete codes[port];
+        } else if (body.mode === "public") {
+          publicPorts.add(port); delete codes[port];
+        } else {
+          // code mode — generate or accept a code, bump version to invalidate old cookies.
+          if (!encryptionKey) {
+            return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Code mode unavailable (no encryption key)"));
+          }
+          const code = (body.code ?? "").trim() || generatePreviewCode();
+          if (code.length < 4 || code.length > 64) {
+            return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Code must be 4–64 characters"));
+          }
+          const prevVersion = codes[port]?.code_version ?? 0;
+          codes[port] = { code_enc: encrypt(code, encryptionKey), code_version: prevVersion + 1 };
+          publicPorts.delete(port);
+          issuedCode = code;
+        }
+
+        await workspaceService.update(
+          request.params.id,
+          { public_ports: Array.from(publicPorts), preview_codes: codes },
+          { orgId: orgCtxId },
+        );
+        return { port, mode: body.mode, code: issuedCode };
+      },
+    );
 
     // Event log for a session (auditor view)
     server.get<{ Params: { id: string } }>("/v1/workspaces/:id/events", {

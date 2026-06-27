@@ -6,7 +6,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
 import { useApi } from "../hooks/useApi.js";
 import { useIsMobile, useIsNarrow } from "../hooks/use-mobile.js";
-import { fetchProfiles, fetchUserAnthropicKeys, updateProfile, fetchPromptSuggestions, type ProfileSummary, type UserAnthropicKey, type PromptSuggestion } from "../api/client.js";
+import { fetchProfiles, fetchUserAnthropicKeys, updateProfile, fetchPromptSuggestions, fetchWorkspacePorts, setPreviewAccess, type ProfileSummary, type UserAnthropicKey, type PromptSuggestion, type WorkspacePort, type PreviewPortMode } from "../api/client.js";
 import { WorkspaceSidebar } from "../components/WorkspaceSidebar.js";
 import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
@@ -21,6 +21,11 @@ import { HOME_DRAFT_KEY, HOME_AGENT_KEY } from "./Home.js";
 import { reopenOnboarding } from "../components/OnboardingHost.js";
 import { Button, Select } from "../brand/components.js";
 import { authClient } from "../lib/auth-client.js";
+
+// Persistent composer history (shell-style ArrowUp recall), shared across all
+// workspaces in this browser. Newest entry last; capped to keep it light.
+const COMPOSER_HISTORY_KEY = "vonzio_composer_history";
+const COMPOSER_HISTORY_MAX = 100;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -144,6 +149,15 @@ export function Workspace() {
   // Composer history: ArrowUp/ArrowDown recall your previous messages (shell
   // style). -1 = not navigating. Index counts back from the most recent.
   const [historyIdx, setHistoryIdx] = useState(-1);
+  // Persistent, cross-session command history (newest last), so ArrowUp recalls
+  // prior entries even in a brand-new/empty composer. Capped + deduped on push.
+  const [persistedHistory, setPersistedHistory] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(COMPOSER_HISTORY_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string") : [];
+    } catch { return []; }
+  });
   // Goal-loop composer override. null = follow the profile's auto_continue
   // default; true/false = explicit per-message choice. `goalCriteria` is the
   // optional acceptance-criteria text (one per line).
@@ -324,6 +338,12 @@ export function Workspace() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // What you were typing before stepping into history — stashed when recall
+  // begins (idx -1 → 0) and restored when you step back down past the newest.
+  const pendingDraftRef = useRef<string>("");
+  // Container vanity name, mirrored into a ref so the (earlier-defined) tool-
+  // result auto-detect can build preview URLs with the friendly name.
+  const containerNameRef = useRef<string | null>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
 
@@ -443,6 +463,7 @@ export function Workspace() {
       .replace("{port}", port);
   }, [previewUrlTemplate]);
 
+
   // Scan text for a vonzio preview URL and open the Preview panel
   const openPreviewFromText = useCallback((text: string) => {
     const match = text.match(PREVIEW_URL_REGEX);
@@ -466,8 +487,8 @@ export function Workspace() {
     if (tool === "Bash" && (output.includes("localhost:") || output.includes("0.0.0.0:"))) {
       const portMatch = output.match(/(?:localhost|0\.0\.0\.0):(\d{4,5})/);
       if (portMatch && activeWorkspace?.container_id) {
-        const shortId = activeWorkspace.container_id.slice(0, 12);
-        setPreviewUrl(buildPreviewUrl(shortId, portMatch[1]));
+        const host = containerNameRef.current || activeWorkspace.container_id.slice(0, 12);
+        setPreviewUrl(buildPreviewUrl(host, portMatch[1]));
         setPanelTab("preview");
         setPanelOpen(true);
         return;
@@ -553,6 +574,63 @@ export function Workspace() {
     }
     prevStreamingRef.current = chat.streaming;
   }, [chat.streaming]);
+
+  // ─── Preview port picker ────────────────────────────────────────────
+  // Every service the container is listening on, so the user can switch the
+  // preview between them and expose any one publicly — not just whichever
+  // port the agent happened to print. Probed live while Preview is open.
+  const [previewPorts, setPreviewPorts] = useState<WorkspacePort[]>([]);
+
+  const previewContainerId = activeWorkspace?.container_id ?? null;
+
+  const refreshPreviewPorts = useCallback(async () => {
+    if (!activeWorkspaceId || !previewContainerId) { setPreviewPorts([]); return; }
+    try {
+      const res = await fetchWorkspacePorts(activeWorkspaceId);
+      setPreviewPorts(res.ports);
+    } catch { /* container gone / transient — keep last list */ }
+  }, [activeWorkspaceId, previewContainerId]);
+
+  // Poll while the Preview tab is actually visible.
+  useEffect(() => {
+    if (!panelOpen || panelTab !== "preview" || !previewContainerId) return;
+    refreshPreviewPorts();
+    const t = setInterval(refreshPreviewPorts, 8000);
+    return () => clearInterval(t);
+  }, [panelOpen, panelTab, previewContainerId, refreshPreviewPorts]);
+
+  // The port currently shown in the iframe (parsed back out of previewUrl).
+  const currentPreviewPort = useMemo(() => {
+    if (!previewUrl) return null;
+    const m = previewUrl.match(PREVIEW_URL_REGEX);
+    return m && m[1] ? Number(m[1]) : null;
+  }, [previewUrl, PREVIEW_URL_REGEX]);
+
+  // Prefer the container's vanity name (what the agent prints in vonzio.md's
+  // preview URLs) over the raw hex id; the proxy resolves either. Falls back to
+  // the short id before the name has been resolved.
+  const previewHost = chat.containerName || (previewContainerId ? previewContainerId.slice(0, 12) : null);
+  useEffect(() => { containerNameRef.current = chat.containerName; }, [chat.containerName]);
+
+  const handleSelectPreviewPort = useCallback((port: number) => {
+    if (!previewHost) return;
+    setPreviewUrl(buildPreviewUrl(previewHost, String(port)));
+    setPanelTab("preview");
+    setPanelOpen(true);
+  }, [previewHost, buildPreviewUrl]);
+
+  const handleSetPortAccess = useCallback(async (port: number, mode: PreviewPortMode) => {
+    if (!activeWorkspaceId) return;
+    const res = await setPreviewAccess(activeWorkspaceId, { port, mode });
+    // Optimistically reflect the new mode + any freshly-issued code, then
+    // refetch to stay in sync with the server (other ports, decrypted codes).
+    setPreviewPorts((prev) => prev.map((p) => (p.port === port ? { ...p, mode, public: mode === "public", code: res.code ?? (mode === "code" ? p.code : null) } : p)));
+    refreshPreviewPorts();
+  }, [activeWorkspaceId, refreshPreviewPorts]);
+
+  const buildPortPublicUrl = useCallback((port: number) => {
+    return previewHost ? buildPreviewUrl(previewHost, String(port)) : "";
+  }, [previewHost, buildPreviewUrl]);
 
   // ─── Attachments ─────────────────────────────────────────────────
   const processFile = useCallback((file: File) => {
@@ -674,10 +752,23 @@ export function Workspace() {
   }, []);
 
   // Your previously-sent messages, most-recent-last, for ArrowUp recall.
-  const sentHistory = useMemo(
-    () => chat.messages.filter((m) => m.role === "user" && typeof m.content === "string" && m.content.trim().length > 0).map((m) => m.content),
-    [chat.messages],
-  );
+  // Merges the persistent cross-session history with this conversation's user
+  // messages (a resumed workspace's messages may predate the local history, or
+  // have been sent from another device), deduped keeping the most recent.
+  const sentHistory = useMemo(() => {
+    const session = chat.messages
+      .filter((m) => m.role === "user" && typeof m.content === "string" && m.content.trim().length > 0)
+      .map((m) => m.content as string);
+    const combined = [...persistedHistory, ...session];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (let i = combined.length - 1; i >= 0; i--) {
+      if (seen.has(combined[i])) continue;
+      seen.add(combined[i]);
+      out.unshift(combined[i]);
+    }
+    return out;
+  }, [chat.messages, persistedHistory]);
 
   // ArrowUp/ArrowDown composer history. Only engages when the caret is at the
   // very start (so multi-line editing/normal cursor movement is unaffected) or
@@ -686,6 +777,8 @@ export function Workspace() {
     if (sentHistory.length === 0) return false;
     if (dir === "up") {
       if (historyIdx === -1 && (el.selectionStart !== 0 || el.selectionEnd !== 0)) return false;
+      // Entering history — stash whatever was being typed so Down can restore it.
+      if (historyIdx === -1) pendingDraftRef.current = input;
       const next = Math.min(historyIdx + 1, sentHistory.length - 1);
       if (next === historyIdx) return true;
       setHistoryIdx(next);
@@ -696,14 +789,27 @@ export function Workspace() {
     if (historyIdx === -1) return false;
     const next = historyIdx - 1;
     setHistoryIdx(next);
-    setInputWithDraft(next === -1 ? "" : sentHistory[sentHistory.length - 1 - next]);
+    setInputWithDraft(next === -1 ? pendingDraftRef.current : sentHistory[sentHistory.length - 1 - next]);
     return true;
+  }
+
+  // Append a sent message to the persistent history (newest last). Drops a
+  // consecutive duplicate of the most recent entry and caps the list.
+  function pushHistory(text: string) {
+    if (!text) return;
+    setPersistedHistory((prev) => {
+      if (prev[prev.length - 1] === text) return prev;
+      const next = [...prev, text].slice(-COMPOSER_HISTORY_MAX);
+      try { localStorage.setItem(COMPOSER_HISTORY_KEY, JSON.stringify(next)); } catch { /* quota/unavailable */ }
+      return next;
+    });
   }
 
   // ─── Send message ────────────────────────────────────────────────
   async function handleSend() {
     const text = input.trim();
     if ((!text && attachments.length === 0) || chat.streaming) return;
+    if (text) pushHistory(text);
     const atts = attachments.length > 0
       ? attachments.map(({ type, media_type, data, name }) => ({ type, media_type, data, name }))
       : undefined;
@@ -1216,6 +1322,17 @@ export function Workspace() {
                     border: "1px solid var(--vz-border)",
                     boxShadow: "var(--vz-shadow-md)",
                     padding: 14,
+                    cursor: "text",
+                  }}
+                  onMouseDown={(e) => {
+                    // Clicking anywhere in the composer card (its padding, the
+                    // footer's empty space) should drop the cursor into the
+                    // textarea — the whole card reads as the input. Skip when
+                    // the click lands on an interactive control or a real text
+                    // selection target so buttons/the model picker still work.
+                    if ((e.target as HTMLElement).closest("button, a, textarea, input, select, [role='button'], [role='combobox']")) return;
+                    e.preventDefault();
+                    inputRef.current?.focus();
                   }}
                   onDrop={handleDrop}
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -1482,6 +1599,7 @@ export function Workspace() {
 
                 <p className="text-[10px] text-center mt-1.5 select-none" style={{ color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>
                   <kbd>shift + enter</kbd> for a new line
+                  {sentHistory.length > 0 && <> · <kbd>↑</kbd> recall history</>}
                 </p>
               </div>
             </div>
@@ -1509,8 +1627,13 @@ export function Workspace() {
                   expiresAt={activeWorkspace?.expires_at ?? new Date().toISOString()}
                   previewUrl={previewUrl}
                   previewRefresh={previewRefresh}
-                  isPublicPreview={activeWorkspace?.public_preview ?? false}
-                  onTogglePublicPreview={(pub) => activeWorkspaceId && update(activeWorkspaceId, { public_preview: pub })}
+                  ports={previewPorts}
+                  currentPort={currentPreviewPort}
+                  publicPreview={activeWorkspace?.public_preview ?? false}
+                  onSelectPort={handleSelectPreviewPort}
+                  onSetPortAccess={handleSetPortAccess}
+                  buildPortUrl={buildPortPublicUrl}
+                  onRescanPorts={refreshPreviewPorts}
                   logs={logs}
                   activeTab={panelTab}
                   onTabChange={setPanelTab}
@@ -1543,8 +1666,13 @@ export function Workspace() {
                   expiresAt={activeWorkspace?.expires_at ?? new Date().toISOString()}
                   previewUrl={previewUrl}
                   previewRefresh={previewRefresh}
-                  isPublicPreview={activeWorkspace?.public_preview ?? false}
-                  onTogglePublicPreview={(pub) => activeWorkspaceId && update(activeWorkspaceId, { public_preview: pub })}
+                  ports={previewPorts}
+                  currentPort={currentPreviewPort}
+                  publicPreview={activeWorkspace?.public_preview ?? false}
+                  onSelectPort={handleSelectPreviewPort}
+                  onSetPortAccess={handleSetPortAccess}
+                  buildPortUrl={buildPortPublicUrl}
+                  onRescanPorts={refreshPreviewPorts}
                   logs={logs}
                   activeTab={panelTab}
                   onTabChange={setPanelTab}

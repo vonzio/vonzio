@@ -64,6 +64,13 @@ export const workspaces = pgTable(
     volume_id: text("volume_id"),
     volume_expires_at: text("volume_expires_at"),
     public_preview: boolean("public_preview").notNull().default(false),
+    // Per-port public exposure. A port string present here is reachable through
+    // the preview proxy without auth (independent of which port the iframe
+    // shows). `public_preview` stays as the legacy "expose everything" master.
+    public_ports: jsonb("public_ports").$type<string[]>().notNull().default([]),
+    // Ports gated behind a shared access code ("public with code"). Maps port
+    // string → { code_enc, code_version }. Code stored encrypted, never plain.
+    preview_codes: jsonb("preview_codes").$type<Record<string, { code_enc: string; code_version: number }>>().notNull().default({}),
     model_override: text("model_override"),
     // Per-conversation key override (cross-key model selection). Null = profile key.
     api_key_id_override: text("api_key_id_override"),

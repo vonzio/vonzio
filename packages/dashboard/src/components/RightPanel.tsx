@@ -6,7 +6,7 @@ import { LogsTab } from "./LogsTab.js";
 import { TerminalTab } from "./TerminalTab.js";
 import { KnowledgeSection } from "./KnowledgeSection.js";
 import { useApi } from "../hooks/useApi.js";
-import { fetchProfiles, fetchUserAnthropicKeys, type ProfileSummary, type UserAnthropicKey } from "../api/client.js";
+import { fetchProfiles, fetchUserAnthropicKeys, type ProfileSummary, type UserAnthropicKey, type WorkspacePort, type PreviewPortMode } from "../api/client.js";
 
 type TabId = "preview" | "files" | "console" | "logs" | "knowledge" | "info";
 
@@ -23,8 +23,16 @@ interface Props {
   expiresAt: string;
   previewUrl: string | null;
   previewRefresh?: number;
-  isPublicPreview?: boolean;
-  onTogglePublicPreview?: (isPublic: boolean) => void;
+  /** Detected listening services + per-port public state. */
+  ports?: WorkspacePort[];
+  /** Port currently shown in the preview iframe. */
+  currentPort?: number | null;
+  /** Legacy container-wide "expose everything" master (read-only hint). */
+  publicPreview?: boolean;
+  onSelectPort?: (port: number) => void;
+  onSetPortAccess?: (port: number, mode: PreviewPortMode) => void;
+  buildPortUrl?: (port: number) => string;
+  onRescanPorts?: () => void;
   logs: string[];
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
@@ -219,7 +227,8 @@ const tabDefs: Array<{ value: TabId; label: string; icon: typeof Globe }> = [
 
 export function RightPanel({
   workspaceId, containerId, containerName, profileName, profileId, workspaceStatus, persistent, createdAt, expiresAt,
-  previewUrl, previewRefresh, isPublicPreview, onTogglePublicPreview, logs, activeTab, onTabChange, onClose,
+  previewUrl, previewRefresh, ports, currentPort, publicPreview, onSelectPort, onSetPortAccess, buildPortUrl, onRescanPorts,
+  logs, activeTab, onTabChange, onClose,
 }: Props) {
   // The Console mounts lazily on first open, then stays mounted (hidden when
   // another tab is active) so its shells survive tab switches.
@@ -280,7 +289,17 @@ export function RightPanel({
 
       <div className="flex-1 min-h-0 flex flex-col">
         {activeTab === "preview" && (
-          <PreviewTab url={previewUrl} refreshTrigger={previewRefresh} isPublic={isPublicPreview} onTogglePublic={onTogglePublicPreview} />
+          <PreviewTab
+            url={previewUrl}
+            refreshTrigger={previewRefresh}
+            ports={ports}
+            currentPort={currentPort}
+            publicPreview={publicPreview}
+            onSelectPort={onSelectPort}
+            onSetPortAccess={onSetPortAccess}
+            buildPortUrl={buildPortUrl}
+            onRescanPorts={onRescanPorts}
+          />
         )}
         {activeTab === "files" && (
           // flex column (not overflow-auto) so FilesTab's `flex-1` fills the full

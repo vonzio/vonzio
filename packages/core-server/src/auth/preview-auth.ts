@@ -3,7 +3,9 @@ import { fromNodeHeaders } from "better-auth/node";
 import type { Auth } from "./better-auth.js";
 import type { AuthUser } from "./user-auth.js";
 import { isOwnerOrAdmin } from "./user-auth.js";
+import { decrypt } from "./crypto.js";
 import type { SessionRegistry } from "../container/session-registry.js";
+import type { PreviewPortMode } from "@vonzio/shared";
 
 /** Cached session: maps session token → AuthUser */
 interface CachedSession {
@@ -13,6 +15,22 @@ interface CachedSession {
 
 const SESSION_CACHE_TTL = 60_000; // 60 seconds
 const PREVIEW_TOKEN_TTL = 3600_000; // 1 hour
+// Code-access cookies last longer than owner tokens — a shared viewer enters
+// the code once and keeps access for the session's lifetime, within reason.
+const CODE_TOKEN_TTL = 7 * 24 * 3600_000; // 7 days
+/** Cookie a viewer carries after unlocking a code-protected port. */
+export const CODE_COOKIE_NAME = "vonzio_preview_code";
+
+/** Generate a friendly, reasonably-strong share code (no ambiguous chars). */
+export function generatePreviewCode(): string {
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no I/L/O/0/1
+  let out = "";
+  // 8 chars from a 31-char alphabet ≈ 40 bits — fine paired with rate limiting.
+  const bytes = new Uint8Array(8);
+  globalThis.crypto.getRandomValues(bytes);
+  for (const b of bytes) out += alphabet[b % alphabet.length];
+  return out;
+}
 
 export interface PreviewAuthChecker {
   /**
@@ -36,15 +54,31 @@ export interface PreviewAuthChecker {
   signToken(fullContainerId: string, userId: string): string;
 
   /**
-   * Check if the container's workspace has public_preview enabled.
+   * Whether a given container port is publicly reachable without auth — true
+   * when the workspace exposes that specific port (`public_ports`) or has the
+   * legacy `public_preview` "expose everything" master flag on.
    */
-  isPublic(fullContainerId: string): boolean;
+  isPublic(fullContainerId: string, port?: number | string): boolean;
+
+  /** Resolve the access mode for a container port: private | public | code. */
+  portMode(fullContainerId: string, port: number | string): PreviewPortMode;
+
+  /** Constant-time check that `code` matches the stored code for this port. */
+  checkCode(fullContainerId: string, port: number | string, code: string): boolean;
+
+  /** Mint a code-access cookie value after a correct code (carries the port +
+   *  code_version so rotating the code invalidates outstanding cookies). */
+  signCodeToken(fullContainerId: string, port: number | string): string | null;
+
+  /** Validate a code-access cookie/token for this container + port. */
+  checkCodeToken(token: string, fullContainerId: string, port: number | string): boolean;
 }
 
 export function createPreviewAuthChecker(
   auth: Auth,
   sessionRegistry: SessionRegistry,
   secret: string,
+  encryptionKey: string,
 ): PreviewAuthChecker {
   const sessionCache = new Map<string, CachedSession>();
 
@@ -143,9 +177,66 @@ export function createPreviewAuthChecker(
       return `${payload}:${sig}`;
     },
 
-    isPublic(fullContainerId: string): boolean {
+    isPublic(fullContainerId: string, port?: number | string): boolean {
       const workspace = sessionRegistry.getByContainer(fullContainerId);
-      return workspace?.public_preview === true;
+      if (!workspace) return false;
+      if (workspace.public_preview === true) return true;
+      if (port === undefined) return false;
+      return (workspace.public_ports ?? []).includes(String(port));
+    },
+
+    portMode(fullContainerId: string, port: number | string): PreviewPortMode {
+      const workspace = sessionRegistry.getByContainer(fullContainerId);
+      if (!workspace) return "private";
+      if (workspace.public_preview === true || (workspace.public_ports ?? []).includes(String(port))) return "public";
+      if ((workspace.preview_codes ?? {})[String(port)]) return "code";
+      return "private";
+    },
+
+    checkCode(fullContainerId: string, port: number | string, code: string): boolean {
+      const workspace = sessionRegistry.getByContainer(fullContainerId);
+      const entry = workspace?.preview_codes?.[String(port)];
+      if (!entry) return false;
+      let actual: string;
+      try {
+        actual = decrypt(entry.code_enc, encryptionKey);
+      } catch {
+        return false;
+      }
+      const a = Buffer.from(code);
+      const b = Buffer.from(actual);
+      if (a.length !== b.length) return false;
+      try { return timingSafeEqual(a, b); } catch { return false; }
+    },
+
+    signCodeToken(fullContainerId: string, port: number | string): string | null {
+      const workspace = sessionRegistry.getByContainer(fullContainerId);
+      const entry = workspace?.preview_codes?.[String(port)];
+      if (!entry) return null;
+      const expires = Date.now() + CODE_TOKEN_TTL;
+      const payload = `${fullContainerId}:${port}:${entry.code_version}:${expires}`;
+      return `${payload}:${hmac(payload)}`;
+    },
+
+    checkCodeToken(token: string, fullContainerId: string, port: number | string): boolean {
+      const parts = token.split(":");
+      if (parts.length !== 5) return false;
+      const [tokenContainer, tokenPort, versionStr, expiresStr, sig] = parts;
+      const expires = parseInt(expiresStr, 10);
+      if (isNaN(expires) || Date.now() > expires) return false;
+      if (tokenContainer !== fullContainerId || tokenPort !== String(port)) return false;
+      const workspace = sessionRegistry.getByContainer(fullContainerId);
+      const entry = workspace?.preview_codes?.[String(port)];
+      if (!entry) return false;
+      // Reject cookies minted against a now-rotated code.
+      if (String(entry.code_version) !== versionStr) return false;
+      const payload = `${tokenContainer}:${tokenPort}:${versionStr}:${expiresStr}`;
+      const expected = hmac(payload);
+      try {
+        return timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"));
+      } catch {
+        return false;
+      }
     },
   };
 }
@@ -194,6 +285,51 @@ export function brandedErrorHtml(opts: {
       <span aria-hidden="true">→</span>
     </a>
   </div>
+</body>
+</html>`;
+}
+
+/** Gate page for a code-protected preview. POSTs the entered code to `action`
+ *  (an unlock endpoint same-origin with the preview) along with the return URL.
+ *  Self-contained — no external CSS/JS beyond the shared font. */
+export function previewCodeGateHtml(opts: {
+  action: string;
+  container: string;
+  port: string;
+  returnUrl: string;
+  error?: boolean;
+}): string {
+  const { action, container, port, returnUrl, error } = opts;
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Protected preview · vonzio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0A0E14;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#E6E9EE;">
+  <form method="GET" action="${esc(action)}" style="text-align:center;max-width:380px;padding:40px 24px;width:100%;box-sizing:border-box;">
+    <svg viewBox="0 0 64 64" width="44" height="44" aria-hidden="true" style="display:block;margin:0 auto 22px;">
+      <rect width="64" height="64" rx="14" fill="#0E1116" stroke="#1F2630" stroke-width="1"/>
+      <path d="M18 22 L32 44 L46 22" fill="none" stroke="#FF5722" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="22" y="49" width="20" height="3.5" rx="1.75" fill="#FF5722"/>
+    </svg>
+    <div style="font-family:'DM Mono',ui-monospace,monospace;font-size:11px;font-weight:500;letter-spacing:0.18em;text-transform:uppercase;color:#FF5722;margin-bottom:12px;">// Protected preview</div>
+    <h1 style="margin:0 0 8px;font-size:21px;font-weight:600;color:#E6E9EE;">Enter access code</h1>
+    <p style="margin:0 0 22px;font-size:13.5px;line-height:1.6;color:#7A8290;">This preview is shared with a code. Ask whoever sent you the link.</p>
+    <input type="hidden" name="container" value="${esc(container)}">
+    <input type="hidden" name="port" value="${esc(port)}">
+    <input type="hidden" name="return" value="${esc(returnUrl)}">
+    <input name="code" autofocus autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Access code"
+      style="width:100%;box-sizing:border-box;padding:12px 14px;font-family:'DM Mono',ui-monospace,monospace;font-size:16px;letter-spacing:0.12em;text-align:center;text-transform:uppercase;background:#0E1116;color:#E6E9EE;border:1px solid ${error ? "#E5484D" : "#1F2630"};border-radius:8px;outline:none;">
+    ${error ? `<p style="margin:10px 0 0;font-size:12px;color:#E5484D;">Incorrect code — try again.</p>` : ""}
+    <button type="submit" style="margin-top:16px;width:100%;padding:11px 22px;background:#FF5722;color:#fff;border:0;border-radius:8px;font-size:13px;font-weight:600;font-family:'DM Mono',ui-monospace,monospace;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;">Unlock</button>
+    <div style="margin-top:24px;font-size:11px;color:#3A4250;">powered by vonzio</div>
+  </form>
 </body>
 </html>`;
 }
