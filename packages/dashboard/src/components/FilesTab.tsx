@@ -28,6 +28,7 @@ export function FilesTab({ workspaceId, containerId }: Props) {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [previewFile, setPreviewFile] = useState<FileEntry | null>(null);
   const [currentPath, setCurrentPath] = useState("/workspace/");
@@ -107,12 +108,22 @@ export function FilesTab({ workspaceId, containerId }: Props) {
   async function handleUpload(fileList: FileList | File[]) {
     const arr = Array.from(fileList);
     if (arr.length === 0) return;
+    setUploadError(null);
+    // Shared upload cap (config.MAX_UPLOAD_MB, published in /api/config). Reject
+    // oversized files up front with a clear message — the server enforces the
+    // same limit, but failing here avoids a wasted multipart round-trip.
+    const maxMb = (typeof window !== "undefined" && (window as unknown as { __VONZIO_MAX_UPLOAD_MB?: number }).__VONZIO_MAX_UPLOAD_MB) || 100;
+    const tooBig = arr.find((f) => f.size > maxMb * 1024 * 1024);
+    if (tooBig) {
+      setUploadError(`"${tooBig.name}" is too large (max ${maxMb} MB).`);
+      return;
+    }
     setUploading(true);
     try {
       await uploadFiles(workspaceId, arr, currentPath);
       await load();
     } catch (err) {
-      console.error("Upload failed:", err);
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
     }
@@ -221,6 +232,15 @@ export function FilesTab({ workspaceId, containerId }: Props) {
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false); }}
       onDrop={handleDrop}
     >
+      {uploadError && (
+        <div
+          className="px-3 py-1.5 text-xs flex items-center justify-between gap-2"
+          style={{ background: "var(--vz-mute)", borderBottom: "1px solid var(--vz-fail)", color: "var(--vz-fail)" }}
+        >
+          <span>{uploadError}</span>
+          <button onClick={() => setUploadError(null)} style={{ color: "var(--vz-fail)" }}>✕</button>
+        </div>
+      )}
       {/* Header */}
       <div
         className="flex items-center justify-between px-3 py-1.5 text-xs"

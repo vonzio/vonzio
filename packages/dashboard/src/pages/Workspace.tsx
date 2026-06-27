@@ -140,6 +140,7 @@ export function Workspace() {
   });
   const [pendingNew, setPendingNew] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
   // Composer history: ArrowUp/ArrowDown recall your previous messages (shell
   // style). -1 = not navigating. Index counts back from the most recent.
   const [historyIdx, setHistoryIdx] = useState(-1);
@@ -555,6 +556,16 @@ export function Workspace() {
 
   // ─── Attachments ─────────────────────────────────────────────────
   const processFile = useCallback((file: File) => {
+    // Shared upload cap (config.MAX_UPLOAD_MB, published in /api/config). Chat
+    // attachments ride the WebSocket inline as base64, so an oversized file
+    // would blow past the WS frame limit and leave the turn stuck "Working…"
+    // looping on reconnect. Reject it up front with a clear message instead.
+    const maxMb = (typeof window !== "undefined" && (window as unknown as { __VONZIO_MAX_UPLOAD_MB?: number }).__VONZIO_MAX_UPLOAD_MB) || 100;
+    if (file.size > maxMb * 1024 * 1024) {
+      setAttachError(`"${file.name}" is too large (max ${maxMb} MB). Use the Files panel for large files.`);
+      return;
+    }
+    setAttachError(null);
     const isImage = file.type.startsWith("image/");
     const reader = new FileReader();
     reader.onload = () => {
@@ -1210,6 +1221,14 @@ export function Workspace() {
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                 >
                   {/* Attachment preview chips */}
+                  {attachError && (
+                    <div
+                      className="mb-2 px-2.5 py-1.5 rounded-lg text-xs"
+                      style={{ background: "var(--vz-mute)", border: "1px solid var(--vz-fail)", color: "var(--vz-fail)" }}
+                    >
+                      {attachError}
+                    </div>
+                  )}
                   {attachments.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mb-2">
                       {attachments.map((att, idx) => (

@@ -437,6 +437,11 @@ export async function buildServer(deps: ServerDeps) {
       maxTurns: config.MAX_TURNS,
       ollamaEnabled: config.OLLAMA_ENABLED,
       maxDocumentMb: config.MAX_DOCUMENT_MB,
+      // Shared cap for chat attachments + Files-panel uploads. The client
+      // enforces this before sending so an oversized file fails fast with a
+      // clear message instead of blowing past the WS frame limit (infinite
+      // resubmit loop) or the multipart limit (silent drop).
+      maxUploadMb: config.MAX_UPLOAD_MB,
       // Whether agent egress allowlists are enforced at the network layer
       // (feature 0005). Drives the Network panel banner: "enforced" vs the
       // advisory note when off.
@@ -627,7 +632,15 @@ export async function buildServer(deps: ServerDeps) {
   });
 
   // WebSocket support (must be registered before WS routes)
-  server.register(websocket);
+  // Size the WS frame limit from the shared upload cap. A chat turn carries
+  // attachments inline as base64 (~1.34x) plus the JSON envelope; 4x the cap
+  // gives headroom (incl. a couple of files) so a within-cap attachment never
+  // trips ws's maxPayload — the failure mode that left the turn stuck
+  // "Working…" and looped on reconnect. The client guard keeps per-file size
+  // ≤ the cap regardless.
+  server.register(websocket, {
+    options: { maxPayload: config.MAX_UPLOAD_MB * 1024 * 1024 * 4 },
+  });
 
   // /v1/* routes — user auth scoped here only
   server.register(async (v1) => {
@@ -654,7 +667,7 @@ export async function buildServer(deps: ServerDeps) {
           : Promise.resolve(null),
     });
     v1.register(workspaceRoutes, { workspaceService, profileService, apiKeyService, eventLog, orchestrator });
-    v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager });
+    v1.register(workspaceFilesRoutes, { sessionRegistry, containerManager, maxUploadBytes: config.MAX_UPLOAD_MB * 1024 * 1024 });
     v1.register(workspaceTerminalRoutes, { sessionRegistry, containerManager });
     v1.register(profileRoutes, {
       profileService,
