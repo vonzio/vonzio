@@ -43,7 +43,7 @@ import type {
   SessionEvents,
 } from "@vonzio/plugin-api";
 import type { TelegramService } from "../services/telegram-service.js";
-import { markdownToTelegram, splitTelegramMessage } from "../services/telegram-service.js";
+import { toTelegramHtml, chunkMarkdown, stripTelegramHtml } from "../services/telegram-service.js";
 import { PlatformBotService } from "../services/platform-bot-service.js";
 import type { TelegramConfig } from "../types.js";
 import {
@@ -278,6 +278,10 @@ interface StreamingState {
   chatId: number | string;
 }
 const streamingState = new Map<string, StreamingState>();
+// Trimmed text of the most recently FINALIZED assistant block per session.
+// Used to dedupe the task:done final message when the last block was already
+// finalized by a trailing tool boundary (so result_text == that block).
+const lastFinalizedBlock = new Map<string, string>();
 // Guards a race where two rapid token events both try to create the
 // placeholder message simultaneously and we end up with duplicates.
 const streamInitInFlight = new Set<string>();
@@ -2052,11 +2056,55 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     ).catch(() => {});
   }
 
+  // Finalize the current assistant text block: re-render its FULL accumulated
+  // text as formatted HTML into the streaming message (it becomes a permanent,
+  // formatted message) and clear the streaming state so the next tokens start a
+  // fresh message. Called on tool-call boundaries so each assistant block
+  // between tools persists on its own — instead of one ever-edited message that
+  // task:done overwrites with just the final block.
+  async function finalizeStreamBlock(sessionId: string) {
+    const state = streamingState.get(sessionId);
+    if (!state) return;
+    if (state.pendingEdit) clearTimeout(state.pendingEdit);
+    streamingState.delete(sessionId);
+    const text = state.rawText.trim();
+    if (!text) return; // nothing streamed into this block; leave placeholder as-is
+    lastFinalizedBlock.set(sessionId, text);
+    const chunks = chunkMarkdown(text, 3800).map((c) => toTelegramHtml(c));
+    const first = chunks[0];
+    try {
+      await telegramService.editMessageText(
+        state.botToken, state.chatId, state.messageId, first, { parse_mode: "HTML" },
+      );
+    } catch {
+      await telegramService.editMessageText(
+        state.botToken, state.chatId, state.messageId, stripTelegramHtml(first),
+      ).catch(() => {});
+    }
+    for (const chunk of chunks.slice(1)) {
+      try {
+        await telegramService.sendMessage(state.botToken, {
+          chat_id: state.chatId, text: chunk, parse_mode: "HTML", disable_web_page_preview: true,
+        });
+      } catch {
+        await telegramService.sendMessage(state.botToken, {
+          chat_id: state.chatId, text: stripTelegramHtml(chunk),
+        }).catch(() => {});
+      }
+    }
+  }
+
   sessionEvents.on("task:tool_use", (taskId: string, sessionId: string | undefined, tool: string) => {
     if (!sessionId) return;
     if (suppressForDashboard(sessionId, taskId)) return;
     const buffer = sessionBuffers.get(sessionId);
     if (buffer) buffer.toolCalls.push(tool);
+    // A tool call ends the assistant text block before it. Finalize that block
+    // as its own formatted message so it persists; the next tokens open a new
+    // message. Fire-and-forget — the handler stays synchronous.
+    finalizeStreamBlock(sessionId).catch((err) => {
+      server.log.warn({ err, sessionId }, "Telegram block finalize failed");
+    });
   });
 
   sessionEvents.on("task:ask_user", async (taskId: string, sessionId: string | undefined, input: unknown) => {
@@ -2113,11 +2161,13 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
       // task (which may fire after they disconnect) starts clean.
       clearStreamingState(sessionId);
       sessionBuffers.delete(sessionId);
+      lastFinalizedBlock.delete(sessionId);
       return;
     }
     const ctx = await getTelegramContext(sessionId);
     if (!ctx) {
       clearStreamingState(sessionId);
+      lastFinalizedBlock.delete(sessionId);
       return;
     }
 
@@ -2139,11 +2189,20 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
       let body = result?.text ?? buffer?.tokens.join("") ?? "";
       if (!body.trim()) body = "_Agent completed with no text output._";
 
-      let prefix = "";
-      if (buffer?.toolCalls.length) {
-        const unique = [...new Set(buffer.toolCalls)];
-        prefix = `_Used: ${unique.join(", ")}_\n\n`;
+      // Dedup: if the last assistant block was already finalized by a trailing
+      // tool boundary (so no active stream remains) and the final result_text is
+      // that same block, it's already on screen — don't repost it.
+      const alreadyShown = lastFinalizedBlock.get(sessionId);
+      lastFinalizedBlock.delete(sessionId);
+      if (!stream && alreadyShown && alreadyShown === body.trim()) {
+        generateWorkspaceTitle(sessionId, result?.text).catch(() => {});
+        return;
       }
+
+      // Tool calls aren't surfaced as their own messages; with per-block
+      // finalization a "Used: …" prefix would also be misattributed to the
+      // final block. Keep the final message clean.
+      const prefix = "";
 
       // Telegram doesn't render inline `![]()` markdown. Strip image refs
       // from the body and queue them up for sendPhoto follow-ups. The
@@ -2160,28 +2219,28 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
       // unreadable; one document is a click away.
       if (body.length > LONG_OUTPUT_THRESHOLD) {
         const preview = body.slice(0, LONG_OUTPUT_PREVIEW).replace(/\s+\S*$/, "");
-        const formattedPreview = markdownToTelegram(prefix + preview + "\n\n…");
+        const formattedPreview = toTelegramHtml(prefix + preview + "\n\n…");
         const filename = `response-${sessionId.slice(0, 8)}.md`;
         if (stream) {
           await telegramService.editMessageText(
             stream.botToken, stream.chatId, stream.messageId, formattedPreview,
-            { parse_mode: "MarkdownV2" },
+            { parse_mode: "HTML" },
           ).catch(async () => {
             await telegramService.editMessageText(
               stream.botToken, stream.chatId, stream.messageId,
-              preview + "\n\n…",
+              stripTelegramHtml(formattedPreview),
             ).catch(() => {});
           });
         } else {
           await telegramService.sendMessage(ctx.botToken, {
             chat_id: ctx.chatId,
             text: formattedPreview,
-            parse_mode: "MarkdownV2",
+            parse_mode: "HTML",
             disable_web_page_preview: true,
           }).catch(async () => {
             await telegramService.sendMessage(ctx.botToken, {
               chat_id: ctx.chatId,
-              text: preview + "\n\n…",
+              text: stripTelegramHtml(formattedPreview),
             }).catch(() => {});
           });
         }
@@ -2195,8 +2254,9 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
         return;
       }
 
-      const formatted = markdownToTelegram(prefix + body);
-      const chunks = splitTelegramMessage(formatted, 4000);
+      // Chunk the SOURCE markdown at block boundaries, then render each chunk
+      // to standalone HTML — so a split never cuts inside a tag or code fence.
+      const chunks = chunkMarkdown(prefix + body, 3800).map((c) => toTelegramHtml(c));
 
       // If a streaming placeholder exists AND the final message fits in
       // one chunk, edit it in place — the user just sees their growing
@@ -2209,15 +2269,15 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
         try {
           await telegramService.editMessageText(
             stream.botToken, stream.chatId, stream.messageId, firstChunk,
-            { parse_mode: "MarkdownV2" },
+            { parse_mode: "HTML" },
           );
           editedInPlace = true;
         } catch (err) {
-          // MarkdownV2 parse error → retry as plain text.
-          server.log.warn({ err, sessionId }, "Telegram MarkdownV2 edit failed, retrying as plain text");
+          // HTML parse error → retry as plain text.
+          server.log.warn({ err, sessionId }, "Telegram HTML edit failed, retrying as plain text");
           await telegramService.editMessageText(
             stream.botToken, stream.chatId, stream.messageId,
-            firstChunk.replace(/\\([_*[\]()~`>#+\-=|{}.!\\])/g, "$1"),
+            stripTelegramHtml(firstChunk),
           ).catch(() => { /* placeholder may be gone; fall through to send */ });
           editedInPlace = true;
         }
@@ -2229,15 +2289,15 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
           await telegramService.sendMessage(ctx.botToken, {
             chat_id: ctx.chatId,
             text: chunk,
-            parse_mode: "MarkdownV2",
+            parse_mode: "HTML",
             disable_web_page_preview: true,
           });
         } catch (err) {
-          // Fallback: if MarkdownV2 parse fails (escape miss), send as plain text.
-          server.log.warn({ err, sessionId }, "Telegram MarkdownV2 send failed, retrying as plain text");
+          // Fallback: if HTML parse fails (bad entities), send as plain text.
+          server.log.warn({ err, sessionId }, "Telegram HTML send failed, retrying as plain text");
           await telegramService.sendMessage(ctx.botToken, {
             chat_id: ctx.chatId,
-            text: chunk.replace(/\\([_*[\]()~`>#+\-=|{}.!\\])/g, "$1"),
+            text: stripTelegramHtml(chunk),
           }).catch(() => {});
         }
       }
@@ -2266,6 +2326,7 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     if (!sessionId) return;
     stopTypingRefresh(sessionId);
     clearStreamingState(sessionId);
+    lastFinalizedBlock.delete(sessionId);
     const wasTelegramOrigin = telegramOriginTasks.delete(taskId);
     if (dashboardIsLive(sessionId) && !wasTelegramOrigin) {
       sessionBuffers.delete(sessionId);

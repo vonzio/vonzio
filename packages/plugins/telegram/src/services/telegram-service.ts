@@ -13,6 +13,7 @@
  */
 
 import type { PluginHttp } from "@vonzio/plugin-api";
+import { marked, type Token, type Tokens } from "marked";
 
 export interface TelegramSendMessage {
   chat_id: number | string;
@@ -282,6 +283,165 @@ export function markdownToTelegram(text: string): string {
   work = work.replace(/ (\d+) /g, (_m, idx: string) => placeholders[Number(idx)]);
 
   return work;
+}
+
+// ── Telegram HTML formatter ───────────────────────────────────────────────
+// The MarkdownV2 path above is a fragile hand-rolled converter (numeric
+// placeholder collisions corrupt code/links, no nesting, an 18-char escape
+// minefield where one miss drops the whole message). The HTML path renders
+// GitHub-flavored markdown through marked's token AST into Telegram's supported
+// tag subset — escaping is just `& < >`, code never auto-links, nesting and
+// lists work. New code uses these; the MarkdownV2 funcs stay for the existing
+// re-export + tests.
+
+/** Escape text-node content for Telegram HTML (Bot API special-cases & < >). */
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+/** Escape an href attribute value (text escape + quotes). */
+function escAttr(s: string): string {
+  return escHtml(s).replace(/"/g, "&quot;");
+}
+
+function renderInline(tokens: Token[] | undefined): string {
+  if (!tokens) return "";
+  let out = "";
+  for (const t of tokens) {
+    switch (t.type) {
+      case "text": {
+        const tt = t as Tokens.Text;
+        out += tt.tokens ? renderInline(tt.tokens) : escHtml(tt.text);
+        break;
+      }
+      case "escape":
+        out += escHtml((t as Tokens.Escape).text);
+        break;
+      case "strong":
+        out += `<b>${renderInline((t as Tokens.Strong).tokens)}</b>`;
+        break;
+      case "em":
+        out += `<i>${renderInline((t as Tokens.Em).tokens)}</i>`;
+        break;
+      case "del":
+        out += `<s>${renderInline((t as Tokens.Del).tokens)}</s>`;
+        break;
+      case "codespan":
+        out += `<code>${escHtml((t as Tokens.Codespan).text)}</code>`;
+        break;
+      case "br":
+        out += "\n";
+        break;
+      case "link": {
+        const lt = t as Tokens.Link;
+        out += `<a href="${escAttr(lt.href)}">${renderInline(lt.tokens)}</a>`;
+        break;
+      }
+      case "image": {
+        // Images are handled separately (image-rewriter → sendPhoto); keep alt.
+        const it = t as Tokens.Image;
+        out += escHtml(it.text || it.title || "");
+        break;
+      }
+      default:
+        out += escHtml((t as { raw?: string }).raw ?? "");
+    }
+  }
+  return out;
+}
+
+function renderBlocks(tokens: Token[]): string {
+  let out = "";
+  for (const t of tokens) {
+    switch (t.type) {
+      case "space":
+        break;
+      case "heading":
+        out += `<b>${renderInline((t as Tokens.Heading).tokens)}</b>\n\n`;
+        break;
+      case "paragraph":
+        out += `${renderInline((t as Tokens.Paragraph).tokens)}\n\n`;
+        break;
+      case "text": {
+        const tt = t as Tokens.Text;
+        out += `${tt.tokens ? renderInline(tt.tokens) : escHtml(tt.text)}\n\n`;
+        break;
+      }
+      case "code": {
+        const ct = t as Tokens.Code;
+        const lang = ct.lang ? ct.lang.split(/\s+/)[0] : "";
+        const cls = lang ? ` class="language-${escAttr(lang)}"` : "";
+        out += `<pre><code${cls}>${escHtml(ct.text)}</code></pre>\n\n`;
+        break;
+      }
+      case "blockquote": {
+        const inner = renderBlocks((t as Tokens.Blockquote).tokens).trim().replace(/\n{2,}/g, "\n");
+        out += `<blockquote>${inner}</blockquote>\n\n`;
+        break;
+      }
+      case "list": {
+        const lt = t as Tokens.List;
+        lt.items.forEach((item, i) => {
+          const marker = lt.ordered ? `${(Number(lt.start) || 1) + i}.` : "•";
+          const check = item.task ? (item.checked ? "☑ " : "☐ ") : "";
+          // Items hold block tokens; collapse to a single line and indent
+          // continuation/nested content under the marker.
+          const content = renderBlocks(item.tokens).trim().replace(/\n{2,}/g, "\n").replace(/\n/g, "\n   ");
+          out += `${marker} ${check}${content}\n`;
+        });
+        out += "\n";
+        break;
+      }
+      case "table": {
+        const tb = t as Tokens.Table;
+        out += `<b>${tb.header.map((c) => renderInline(c.tokens)).join(" | ")}</b>\n`;
+        for (const row of tb.rows) out += `${row.map((c) => renderInline(c.tokens)).join(" | ")}\n`;
+        out += "\n";
+        break;
+      }
+      case "hr":
+        out += "———\n\n";
+        break;
+      default:
+        out += escHtml((t as { raw?: string }).raw ?? "");
+    }
+  }
+  return out;
+}
+
+/** Render GitHub-flavored markdown to Telegram-supported HTML. */
+export function toTelegramHtml(markdown: string): string {
+  return renderBlocks(marked.lexer(markdown)).replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Strip Telegram HTML tags + unescape entities — the plain-text fallback when
+ *  a send is rejected for bad entities. */
+export function stripTelegramHtml(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&");
+}
+
+/** Split source markdown into chunks under maxLen at block boundaries, so each
+ *  chunk renders to standalone, balanced HTML (no mid-tag/mid-fence splits). A
+ *  single oversized block falls back to a newline-preferring hard split. */
+export function chunkMarkdown(markdown: string, maxLen = 3800): string[] {
+  const tokens = marked.lexer(markdown);
+  const groups: string[] = [];
+  let cur = "";
+  for (const t of tokens) {
+    const raw = t.raw ?? "";
+    if (cur && cur.length + raw.length > maxLen) {
+      groups.push(cur);
+      cur = raw;
+    } else {
+      cur += raw;
+    }
+  }
+  if (cur) groups.push(cur);
+  return groups.length > 0 ? groups : [markdown];
 }
 
 /** Split a long message into <=4096 char chunks, preferring newline boundaries. */
