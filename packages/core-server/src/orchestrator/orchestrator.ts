@@ -36,7 +36,7 @@ import type { GitProviderService } from "../services/git-provider-service.js";
 import type { MemoryService } from "../services/memory-service.js";
 import type { SecretVaultService } from "../services/secret-vault-service.js";
 import type { IntegrationService } from "../services/integration-service.js";
-import type { Profile, ResolvedProfile, McpServerConfig } from "@vonzio/shared";
+import type { Profile, ResolvedProfile, McpServerConfig, Workspace } from "@vonzio/shared";
 import type { Memory } from "@vonzio/shared";
 import { nanoid } from "nanoid";
 
@@ -55,6 +55,14 @@ const SIDECAR_TEARDOWN_GRACE_MS = 60_000;
 // (ollama/openai providers bake ANTHROPIC_BASE_URL=127.0.0.1:11434 at container
 // creation) when a turn runs on a native Anthropic credential.
 const ANTHROPIC_NATIVE_BASE_URL = "https://api.anthropic.com";
+
+// Docker's exec-into-a-stopped/paused-container error. Surfaces as a 409 with
+// "container <id> is not running" when a session container died or was paused
+// (e.g. an idle-sweep race) between the pre-flight status check and the exec.
+function isContainerNotRunningError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("is not running") || msg.includes("HTTP code 409");
+}
 
 // Provider-routing env vars that select the model endpoint + credential. On a
 // reused session container these must each be set explicitly every turn — an
@@ -756,6 +764,64 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Bring a persistent session's container back after the exec 409'd with
+   * "container is not running". The pre-flight status read can be stale, so
+   * inspect for real: a paused container (idle-sweep race) just unpauses; an
+   * OOM kill is surfaced (a retry would only OOM again); any other dead state
+   * is rebuilt from the surviving volume. Returns the container id to retry on.
+   * Caller must have verified session.persistent && session.volume_id.
+   */
+  private async reviveSessionContainer(
+    task: Task,
+    session: Workspace,
+    profile: ResolvedProfile,
+    env: Record<string, string>,
+    containerId: string,
+  ): Promise<string> {
+    const status = await this.deps.containerManager.getContainerStatus(containerId);
+    if (status === "running") return containerId;
+    if (status === "paused") {
+      await this.deps.containerManager.unpauseContainer(containerId);
+      return containerId;
+    }
+    const exit = await this.deps.containerManager.getContainerExit(containerId).catch(() => null);
+    if (exit?.oomKilled) {
+      throw new Error("workspace container was OOM-killed (out of memory) — raise CONTAINER_MEMORY_LIMIT_SESSION");
+    }
+    return this.recoverPersistentContainer(task, session, profile, env);
+  }
+
+  /**
+   * Rebuild a persistent session's container from its surviving volume after
+   * the old one died or was paused-then-reaped. The workspace files + SDK
+   * session live on the named volume, so the conversation resumes; only the
+   * container is fresh, so setup commands re-run. Returns the new container id.
+   * Caller must have verified session.persistent && session.volume_id.
+   */
+  private async recoverPersistentContainer(
+    task: Task,
+    session: Workspace,
+    profile: ResolvedProfile,
+    env: Record<string, string>,
+  ): Promise<string> {
+    this.log.info(
+      { taskId: task.id, sessionId: task.session_id, oldContainerId: session.container_id, volumeId: session.volume_id },
+      "Recovering persistent session with new container",
+    );
+    if (session.container_id) {
+      await this.safeRemoveContainer(session.container_id);
+    }
+    const containerId = await this.createSessionContainer(task.session_id!, profile, env, session.volume_id!);
+    await this.deps.sessionRegistry.reassignContainer(task.session_id!, containerId);
+    session.container_id = containerId;
+    // Re-run setup commands since it's a fresh container (workspace files are preserved via volume)
+    if (profile.setup_commands?.length) {
+      await this.runSetupCommands(containerId, profile.setup_commands, env);
+    }
+    return containerId;
+  }
+
   private async dispatchSession(task: Task): Promise<void> {
     if (!task.session_id) {
       throw new Error("Session mode requires session_id");
@@ -772,7 +838,11 @@ export class Orchestrator extends EventEmitter {
       const status = await this.deps.containerManager.getContainerStatus(session.container_id);
 
       if (status === "running") {
-        // Container is alive — reuse it
+        // Container is alive — reuse it. Refresh activity so a concurrent idle
+        // sweep doesn't pause/evict the container out from under this task in
+        // the window between here and the exec (the source of the 409
+        // "container is not running" mid-task failures).
+        this.deps.sessionRegistry.updateActivity(task.session_id);
         containerId = session.container_id;
       } else if (status === "paused") {
         // Container is paused — unpause and reuse
@@ -781,18 +851,7 @@ export class Orchestrator extends EventEmitter {
         containerId = session.container_id;
       } else if (session.persistent && session.volume_id) {
         // Dead container but volumes survive — recover with a new container
-        this.log.info(
-          { taskId: task.id, sessionId: task.session_id, oldContainerId: session.container_id, volumeId: session.volume_id },
-          "Recovering persistent session with new container",
-        );
-        await this.safeRemoveContainer(session.container_id);
-        containerId = await this.createSessionContainer(task.session_id, profile, env, session.volume_id);
-        await this.deps.sessionRegistry.reassignContainer(task.session_id, containerId);
-        session.container_id = containerId;
-        // Re-run setup commands since it's a fresh container (workspace files are preserved via volume)
-        if (profile.setup_commands?.length) {
-          await this.runSetupCommands(containerId, profile.setup_commands, env);
-        }
+        containerId = await this.recoverPersistentContainer(task, session, profile, env);
       } else {
         // Dead container, no volumes — create fresh. Remove the old one first:
         // getContainerStatus reporting non-running can be stale/transient (proxy
@@ -856,7 +915,30 @@ export class Orchestrator extends EventEmitter {
     this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
     this.emit("task:container", task.id, containerId);
 
-    let result = await this.runAgent(task, containerId, profile, env, !needsInit);
+    let result: TaskResult;
+    try {
+      result = await this.runAgent(task, containerId, profile, env, !needsInit);
+    } catch (err) {
+      // The pre-flight getContainerStatus reads through the docker-socket-proxy
+      // and can be stale: it may report "running" while the container was just
+      // paused by an idle sweep or died. The exec is the real source of truth —
+      // it 409s with "container is not running". For a persistent session the
+      // volume survives, so recover the container and retry the turn ONCE as a
+      // resume (the SDK session is on the volume). Don't retry an OOM kill —
+      // ensureContainerRunning surfaces that with an actionable message, and a
+      // retry would just OOM again.
+      if (
+        !isContainerNotRunningError(err) ||
+        !session.persistent ||
+        !session.volume_id
+      ) {
+        throw err;
+      }
+      containerId = await this.reviveSessionContainer(task, session, profile, env, containerId);
+      this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
+      this.emit("task:container", task.id, containerId);
+      result = await this.runAgent(task, containerId, profile, env, true);
+    }
     this.deps.sessionRegistry.updateActivity(task.session_id);
 
     // Goal loop: keep working the warm session until an INDEPENDENT judge
