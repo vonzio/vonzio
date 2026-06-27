@@ -42,7 +42,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new ApiError(res.status, body.error ?? "Request failed");
+    const raw = body.error ?? body.message;
+    const message =
+      typeof raw === "string"
+        ? raw
+        : typeof raw?.message === "string"
+          ? raw.message
+          : raw != null
+            ? JSON.stringify(raw)
+            : `Request failed (${res.status})`;
+    throw new ApiError(res.status, message);
   }
   return res.json();
 }
