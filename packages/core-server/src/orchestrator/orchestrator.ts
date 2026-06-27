@@ -18,7 +18,7 @@ import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
-import { CONTAINER_MODE_LABEL, ContainerMode } from "../container/docker-manager.js";
+import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID } from "../container/docker-manager.js";
 import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
@@ -1650,6 +1650,7 @@ export class Orchestrator extends EventEmitter {
       await this.drainExec(containerId, ["mkdir", "-p", uploadDir]);
       const savedFiles: string[] = [];
       const usedNames = new Set<string>();
+      const archiveFiles: { name: string; content: Buffer; uid: number; gid: number }[] = [];
 
       for (let i = 0; i < task.attachments.length; i++) {
         const att = task.attachments[i];
@@ -1667,10 +1668,13 @@ export class Orchestrator extends EventEmitter {
         }
         usedNames.add(baseName);
 
-        const filePath = `${uploadDir}/${baseName}`;
-        await this.drainExec(containerId, ["sh", "-c", `base64 -d > ${filePath}`], att.data);
-        savedFiles.push(filePath);
+        // Decode once and copy in via the tar archive endpoint instead of
+        // streaming base64 through exec stdin (which crawled for large files
+        // and blocked the turn the whole time).
+        archiveFiles.push({ name: baseName, content: Buffer.from(att.data, "base64"), uid: AGENT_UID, gid: AGENT_GID });
+        savedFiles.push(`${uploadDir}/${baseName}`);
       }
+      await this.deps.containerManager.copyToContainer(containerId, uploadDir, archiveFiles);
 
       const fileList = savedFiles.join("\n  - ");
       const hasPdf = savedFiles.some(f => f.toLowerCase().endsWith('.pdf'));

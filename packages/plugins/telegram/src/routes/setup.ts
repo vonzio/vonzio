@@ -456,19 +456,18 @@ export const telegramSetupRoutes = fp(
         if (!workspace || workspace.user_id !== user.id) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
         }
+        // Show the control whenever any bot is connected — the QR/deep-link
+        // exists precisely to drive the Start handshake, so we don't require
+        // owner_tg_user_id to be set yet.
         const bots = await integrationService.listByUserAndType(user.id, "telegram");
-        const linked = bots.filter((b) => {
-          const cfg = b.config as unknown as TelegramConfig;
-          return !!cfg.owner_tg_user_id;
-        });
-        if (linked.length === 0) return { bot: null };
+        if (bots.length === 0) return { bot: null };
 
         // Prefer the bot whose binding matches the workspace's profile.
-        const matched = linked.find((b) => {
+        const matched = bots.find((b) => {
           const cfg = b.config as unknown as TelegramConfig;
           return cfg.bound_profile_id === workspace.profile_id;
         });
-        const chosen = matched ?? linked[0];
+        const chosen = matched ?? bots[0];
         const cfg = chosen.config as unknown as TelegramConfig;
         // Deep links the dashboard can target. tg:// opens the native
         // app directly; https://t.me/ works in browsers and redirects.

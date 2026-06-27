@@ -135,6 +135,8 @@ export interface WorkspaceSummary {
   archived: boolean;
   persistent: boolean;
   public_preview: boolean;
+  /** Container ports exposed publicly through the preview proxy (per-port). */
+  public_ports: string[];
   status: string;
   last_active_at: string;
   created_at: string;
@@ -177,11 +179,45 @@ export function restartWorkspace(id: string): Promise<{ status: string; session_
 
 export function updateWorkspace(
   id: string,
-  fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; api_key_id_override?: string | null },
+  fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; public_ports?: string[]; model_override?: string | null; api_key_id_override?: string | null },
 ): Promise<WorkspaceSummary> {
   return request(`/workspaces/${id}`, {
     method: "PATCH",
     body: JSON.stringify(fields),
+  });
+}
+
+export type PreviewPortMode = "private" | "public" | "code";
+
+/** A port the workspace container is currently listening on, with its access
+ *  mode — powers the preview/expose service picker. */
+export interface WorkspacePort {
+  port: number;
+  mode: PreviewPortMode;
+  public: boolean;
+  /** The share code (decrypted, owner-only) when mode === "code". */
+  code: string | null;
+}
+
+export interface WorkspacePortsResponse {
+  ports: WorkspacePort[];
+  public_preview: boolean;
+}
+
+/** Live-probe the container for listening services (the preview port picker). */
+export function fetchWorkspacePorts(id: string): Promise<WorkspacePortsResponse> {
+  return request(`/workspaces/${id}/ports`);
+}
+
+/** Set a preview port's access mode. For "code", omit `code` to auto-generate;
+ *  the response carries the plaintext code (only returned here, stored hashed). */
+export function setPreviewAccess(
+  id: string,
+  body: { port: number | string; mode: PreviewPortMode; code?: string },
+): Promise<{ port: string; mode: PreviewPortMode; code: string | null }> {
+  return request(`/workspaces/${id}/preview-access`, {
+    method: "PUT",
+    body: JSON.stringify(body),
   });
 }
 

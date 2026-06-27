@@ -61,6 +61,7 @@
     "pino": "^10.3.1",
     "resend": "^6.12.3",
     "slackify-markdown": "^5.0.0",
+    "tar-stream": "^2.2.0",
     "tsx": "^4.19.4",
     "undici": "^8.5.0",
     "ws": "^8.18.2",
@@ -72,6 +73,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/dockerode": "^4.0.1",
     "@types/pg": "^8.15.4",
+    "@types/tar-stream": "^2.2.3",
     "@types/ws": "^8.18.1",
     "better-sqlite3": "^12.10.0",
     "drizzle-kit": "^0.31.10"

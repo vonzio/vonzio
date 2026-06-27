@@ -1489,16 +1489,17 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
     // Default profile resolution priority:
     //   1. explicit `@slug` in the prompt
     //   2. bot's bound_profile_id (Option A: direct-access agent bots)
-    //   3. user's first profile (legacy behavior)
+    //   3. user's default profile (is_default), else first profile
     // Bound profile may reference a deleted profile — silently fall
     // through to (3) in that case so the bot stays usable.
+    const fallbackProfile = profiles.find((p) => p.is_default) ?? profiles[0];
     let profile: typeof profiles[number] | undefined;
     if (slug) {
       profile = profiles.find((p) => p.slug === slug);
     } else if (cfg.bound_profile_id) {
-      profile = profiles.find((p) => p.id === cfg.bound_profile_id) ?? profiles[0];
+      profile = profiles.find((p) => p.id === cfg.bound_profile_id) ?? fallbackProfile;
     } else {
-      profile = profiles[0];
+      profile = fallbackProfile;
     }
     if (!profile) {
       // Same anti-auto-link treatment as listAgents — slugs with hyphens

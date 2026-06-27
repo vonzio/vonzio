@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import tar from "tar-stream";
 import type {
   ContainerManager,
   ContainerCreateOptions,
@@ -9,6 +10,13 @@ import type {
 
 const MANAGED_LABEL = "managed-by";
 const MANAGED_VALUE = "vonzio";
+
+/** The non-root `agent` user inside the agent image (docker/Dockerfile.agent.base).
+ *  Files copied into a workspace are owned by this user so the agent can read
+ *  AND modify them — Docker's archive extraction would otherwise leave them
+ *  root-owned. */
+export const AGENT_UID = 1001;
+export const AGENT_GID = 1001;
 
 /**
  * Docker label key carrying a managed container's role, and its allowed values.
@@ -370,6 +378,29 @@ export class DockerManager implements ContainerManager {
     return Buffer.concat(chunks);
   }
 
+  async copyToContainer(
+    id: string,
+    destDir: string,
+    files: { name: string; content: Buffer; mode?: number; uid?: number; gid?: number }[],
+  ): Promise<void> {
+    // Build a tar in memory and push it through Docker's archive endpoint
+    // (PUT /containers/{id}/archive). This is a binary bulk transfer — no
+    // base64 inflation, no per-byte exec-stdin overhead — so it's dramatically
+    // faster than `base64 -d > file` for large uploads. uid/gid default to the
+    // caller's value so files land owned by the agent user, not root (Docker
+    // extracts the archive as root).
+    const pack = tar.pack();
+    for (const f of files) {
+      pack.entry(
+        { name: f.name, mode: f.mode ?? 0o644, size: f.content.length, uid: f.uid, gid: f.gid },
+        f.content,
+      );
+    }
+    pack.finalize();
+    const container = this.docker.getContainer(id);
+    await container.putArchive(pack as unknown as NodeJS.ReadableStream, { path: destDir });
+  }
+
   async resolveContainerId(identifier: string): Promise<string | null> {
     const containers = await this.docker.listContainers({
       all: true,
@@ -386,6 +417,29 @@ export class DockerManager implements ContainerManager {
       return names.includes(identifier);
     });
     return byName?.Id ?? null;
+  }
+
+  async listListeningPorts(id: string): Promise<number[]> {
+    // Read the kernel's TCP tables directly (always present, no `ss`/`netstat`
+    // dependency in the image). Each row: col[1]=local_address "HEXIP:HEXPORT",
+    // col[3]=st where 0A = LISTEN. We skip loopback-only binds (127.0.0.1 / ::1)
+    // because those aren't reachable through the preview proxy, which dials the
+    // container's IP — only 0.0.0.0/:: services can be previewed or exposed.
+    const ports = new Set<number>();
+    const V4_LOOPBACK = "0100007F";
+    const V6_LOOPBACK = "00000000000000000000000001000000";
+    try {
+      for await (const line of this.execInContainer(id, ["cat", "/proc/net/tcp", "/proc/net/tcp6"])) {
+        const cols = line.trim().split(/\s+/);
+        if (cols.length < 4 || cols[3] !== "0A") continue;
+        const [ipHex, portHex] = cols[1].split(":");
+        if (!portHex) continue;
+        if (ipHex.toUpperCase() === V4_LOOPBACK || ipHex.toUpperCase() === V6_LOOPBACK) continue;
+        const port = parseInt(portHex, 16);
+        if (port > 0 && port <= 65535) ports.add(port);
+      }
+    } catch { /* container gone / proc unreadable — return what we have */ }
+    return Array.from(ports).sort((a, b) => a - b);
   }
 
   async pauseContainer(id: string): Promise<void> {

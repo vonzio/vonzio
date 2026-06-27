@@ -6,6 +6,7 @@ import type { SessionRegistry } from "../container/session-registry.js";
 import type { ContainerManager } from "@vonzio/shared";
 import { ErrorCodes, errorResponse } from "../errors.js";
 import { authorizeTenantAccess } from "../auth/user-auth.js";
+import { AGENT_UID, AGENT_GID } from "../container/docker-manager.js";
 
 export interface WorkspaceFilesRoutesOptions {
   sessionRegistry: SessionRegistry;
@@ -176,10 +177,10 @@ export const workspaceFilesRoutes = fp(
             .send(errorResponse(ErrorCodes.BAD_REQUEST, `"${safeName}" exceeds the ${maxUploadMb} MB upload limit`));
         }
         const buffer = Buffer.concat(chunks);
-        const base64 = buffer.toString("base64");
 
-        // Create the target directory (base dest + any subdir in the filename),
-        // then write the file there.
+        // Ensure the target subdir exists (base dest + any subdir in the
+        // filename), then stream the file in via the tar archive endpoint —
+        // a binary bulk copy, far faster than base64-over-exec for big files.
         const dirPart = safeName.includes("/") ? safeName.slice(0, safeName.lastIndexOf("/")) : "";
         const targetDir = dirPart ? `${destDir}/${dirPart}` : destDir;
         const mkdirCmd = ["mkdir", "-p", targetDir];
@@ -187,10 +188,9 @@ export const workspaceFilesRoutes = fp(
           // drain
         }
 
-        const cmd = ["sh", "-c", `base64 -d > ${shellQuote(`${destDir}/${safeName}`)}`];
-        for await (const _ of containerManager.execInContainer(workspace.container_id, cmd, base64)) {
-          // drain
-        }
+        await containerManager.copyToContainer(workspace.container_id, destDir, [
+          { name: safeName, content: buffer, uid: AGENT_UID, gid: AGENT_GID },
+        ]);
 
         uploaded.push({ name: safeName, size: buffer.length });
        }

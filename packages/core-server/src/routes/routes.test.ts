@@ -72,6 +72,8 @@ function createMockManager(): ContainerManager {
     async getContainerName() { return "testcontainer"; },
     async resolveContainerId() { return null; },
     async readFile() { return Buffer.from(""); },
+    async copyToContainer() {},
+    async listListeningPorts() { return []; },
     async pauseContainer() {},
     async unpauseContainer() {},
     async ensureNetwork() {},

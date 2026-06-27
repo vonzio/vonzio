@@ -94,6 +94,19 @@ export interface ContainerManager {
   resolveContainerId(identifier: string): Promise<string | null>;
   /** Read a file from a container as raw bytes */
   readFile(id: string, path: string): Promise<Buffer>;
+  /** Copy files into a directory in the container via the archive (tar)
+   *  endpoint. Far faster + lighter than streaming base64 through exec stdin
+   *  for large files — no ~1.34x base64 inflation and a binary bulk transfer.
+   *  destDir must already exist. */
+  copyToContainer(
+    id: string,
+    destDir: string,
+    files: { name: string; content: Buffer; mode?: number; uid?: number; gid?: number }[],
+  ): Promise<void>;
+  /** List TCP ports currently being listened on inside the container (the
+   *  running web services), so the dashboard can offer a preview/expose picker
+   *  beyond whatever single port the agent happened to print. */
+  listListeningPorts(id: string): Promise<number[]>;
   /** Pause a running container (freezes all processes) */
   pauseContainer(id: string): Promise<void>;
   /** Unpause a paused container */

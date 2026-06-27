@@ -101,7 +101,7 @@ export class WorkspaceService {
     };
   }
 
-  async update(sessionId: string, fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; model_override?: string | null; api_key_id_override?: string | null; last_run_model?: string | null }, opts: { orgId?: string } = {}): Promise<Workspace | null> {
+  async update(sessionId: string, fields: { name?: string; starred?: boolean; pinned?: boolean; archived?: boolean; tags?: string[]; public_preview?: boolean; public_ports?: string[]; preview_codes?: Record<string, { code_enc: string; code_version: number }>; model_override?: string | null; api_key_id_override?: string | null; last_run_model?: string | null }, opts: { orgId?: string } = {}): Promise<Workspace | null> {
     // Expired sessions live only in the DB (SessionRegistry deletes them
     // from its in-memory Map on reap). The old early-return here meant
     // the user couldn't change `model_override`, `name`, `starred`, etc.
@@ -116,6 +116,8 @@ export class WorkspaceService {
       if (fields.archived !== undefined) workspace.archived = fields.archived;
       if (fields.tags !== undefined) workspace.tags = fields.tags;
       if (fields.public_preview !== undefined) workspace.public_preview = fields.public_preview;
+      if (fields.public_ports !== undefined) workspace.public_ports = fields.public_ports;
+      if (fields.preview_codes !== undefined) workspace.preview_codes = fields.preview_codes;
       if (fields.model_override !== undefined) workspace.model_override = fields.model_override;
       if (fields.api_key_id_override !== undefined) workspace.api_key_id_override = fields.api_key_id_override || null;
       if (fields.last_run_model !== undefined) workspace.last_run_model = fields.last_run_model;
@@ -128,6 +130,8 @@ export class WorkspaceService {
     if (fields.archived !== undefined) dbUpdate.archived = fields.archived;
     if (fields.tags !== undefined) dbUpdate.tags = fields.tags;
     if (fields.public_preview !== undefined) dbUpdate.public_preview = fields.public_preview;
+    if (fields.public_ports !== undefined) dbUpdate.public_ports = fields.public_ports;
+    if (fields.preview_codes !== undefined) dbUpdate.preview_codes = fields.preview_codes;
     if (fields.model_override !== undefined) dbUpdate.model_override = fields.model_override;
     if (fields.api_key_id_override !== undefined) dbUpdate.api_key_id_override = fields.api_key_id_override || null;
     if (fields.last_run_model !== undefined) dbUpdate.last_run_model = fields.last_run_model;
@@ -169,6 +173,8 @@ export class WorkspaceService {
           volume_id: row.volume_id ?? null,
           volume_expires_at: row.volume_expires_at ?? null,
           public_preview: row.public_preview,
+          public_ports: row.public_ports ?? [],
+          preview_codes: row.preview_codes ?? {},
           model_override: row.model_override ?? null,
           api_key_id_override: row.api_key_id_override ?? null,
           last_run_model: row.last_run_model ?? null,

@@ -50,6 +50,9 @@ export function TelegramSettings() {
   const [popupHint, setPopupHint] = useState<{ botId: string; state: "opened" | "blocked" } | null>(null);
 
   const [error, setError] = useState("");
+  // Connect-modal-local error so the failure renders inside the dialog the
+  // user is looking at, not on the page behind it.
+  const [connectError, setConnectError] = useState("");
   const [testResult, setTestResult] = useState<{ id: string; status: "success" | "error"; message: string } | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
 
@@ -71,6 +74,7 @@ export function TelegramSettings() {
 
   async function handleConnectBYO() {
     setSaving(true);
+    setConnectError("");
     try {
       const result = await connectTelegram(token.trim(), {
         bound_profile_id: boundProfileId || null,
@@ -78,7 +82,7 @@ export function TelegramSettings() {
       setToken(""); setBoundProfileId(""); setShowConnectModal(false);
       refetchTelegram(); refetchIntegrations();
       await attemptPopup(result.id, result.link_url);
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect"); }
+    } catch (e) { setConnectError(e instanceof Error ? e.message : "Failed to connect"); }
     setSaving(false);
   }
 
@@ -197,7 +201,7 @@ export function TelegramSettings() {
                 <Button
                   size="sm"
                   variant={telegramConfig?.platformBot ? "ghost" : "primary"}
-                  onClick={() => setShowConnectModal(true)}
+                  onClick={() => { setConnectError(""); setShowConnectModal(true); }}
                   disabled={!telegramConfig?.publicReachable}
                 >
                   {telegramConfig?.publicReachable
@@ -318,7 +322,7 @@ export function TelegramSettings() {
                       {saving ? "Pairing…" : `Pair @${telegramConfig.platformBot.bot_username}`}
                     </Button>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => setShowConnectModal(true)} disabled={!telegramConfig?.publicReachable}>
+                  <Button size="sm" variant="ghost" onClick={() => { setConnectError(""); setShowConnectModal(true); }} disabled={!telegramConfig?.publicReachable}>
                     {telegramConfig?.publicReachable ? "Add bot" : "Public URL required"}
                   </Button>
                 </>
@@ -332,7 +336,7 @@ export function TelegramSettings() {
       {/* BYO-token connect modal */}
       <Modal
         open={showConnectModal}
-        onClose={() => setShowConnectModal(false)}
+        onClose={() => { setConnectError(""); setShowConnectModal(false); }}
         size="md"
         dismissable={false}
         title="Connect Telegram bot"
@@ -346,6 +350,9 @@ export function TelegramSettings() {
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {connectError && (
+            <ErrorBanner message={connectError} onDismiss={() => setConnectError("")} />
+          )}
           <ol style={{ fontSize: 12.5, color: "var(--vz-muted)", paddingLeft: 18, lineHeight: 1.6, margin: 0 }}>
             <li>Open Telegram and message <b>@BotFather</b>.</li>
             <li>Send <code>/newbot</code> and follow the prompts to choose a name + username.</li>
