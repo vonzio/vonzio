@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import {
   Bot, Plus, Trash2, Pencil, Key as KeyIcon, Wrench, BookOpen, Copy, Sparkles, Star, Upload,
-  Eye, Download, FileText,
+  Download, FileText,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi.js";
@@ -14,7 +14,7 @@ import {
   fetchProfiles, deleteProfile, setDefaultProfile,
   fetchUserTools, createUserTool, deleteUserTool,
   fetchUserSkills, createUserSkill, deleteUserSkill, uploadSkillFile,
-  fetchSkillFile, skillFileRawUrl,
+  fetchSkillFile, skillFileRawUrl, skillDownloadUrl,
   fetchUserAgents, createUserAgent, deleteUserAgent,
   type ProfileSummary, type SkillFile,
 } from "../api/client.js";
@@ -539,18 +539,11 @@ function SkillSection() {
     {
       key: "_actions",
       label: "",
-      width: "92px",
+      width: "96px",
       align: "right",
       render: (s) => (
         <span style={{ display: "inline-flex", gap: 4, justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            className="vz-action-btn"
-            title="View contents"
-            onClick={(e) => { e.stopPropagation(); setViewSkill(s); }}
-          >
-            <Eye size={13} />
-          </button>
+          <SkillDownloadLink id={s.id as string} />
           <button
             type="button"
             className="vz-action-btn vz-action-btn--danger"
@@ -583,17 +576,12 @@ function SkillSection() {
     {
       key: "_actions",
       label: "",
-      width: "44px",
+      width: "52px",
       align: "right",
       render: (s) => (
-        <button
-          type="button"
-          className="vz-action-btn"
-          title="View contents"
-          onClick={(e) => { e.stopPropagation(); setViewSkill(s); }}
-        >
-          <Eye size={13} />
-        </button>
+        <span style={{ display: "inline-flex", gap: 4, justifyContent: "flex-end" }}>
+          <SkillDownloadLink id={s.id as string} />
+        </span>
       ),
     },
   ];
@@ -626,6 +614,7 @@ function SkillSection() {
       yoursTitle="Yours"
       bundledTitle="Bundled"
       bundledDescription="Shipped with the platform — read only."
+      onRowClick={(s) => setViewSkill(s)}
       onDelete={(id) => setConfirmDeleteId(id)}
       emptyIcon={<BookOpen size={20} />}
       emptyTitle="No skills yet"
@@ -674,6 +663,23 @@ function SkillSection() {
 
       {viewSkill && <SkillViewerModal skill={viewSkill} onClose={() => setViewSkill(null)} />}
     </CatalogLayout>
+  );
+}
+
+/** Icon-only "download the whole skill (.zip)" link used in the skill rows.
+ *  Stops row-click propagation so it doesn't also open the viewer. */
+function SkillDownloadLink({ id }: { id: string }) {
+  return (
+    <a
+      href={skillDownloadUrl(id)}
+      download
+      className="vz-action-btn"
+      title="Download skill (.zip)"
+      onClick={(e) => e.stopPropagation()}
+      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "inherit" }}
+    >
+      <Download size={13} />
+    </a>
   );
 }
 
@@ -757,17 +763,27 @@ function SkillViewerModal({ skill, onClose }: { skill: Record<string, unknown>; 
             <code style={{ fontSize: 11.5, color: "var(--vz-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {selected}{file && !loading ? ` · ${formatBytes(file.size)}` : ""}
             </code>
-            {hasBundle && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+              {hasBundle && (
+                <a
+                  href={skillFileRawUrl(id, selected)}
+                  download
+                  className="vz-action-btn"
+                  title="Download just this file"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "0 8px", fontSize: 11.5, color: "var(--vz-muted)", textDecoration: "none", whiteSpace: "nowrap" }}
+                >
+                  <Download size={12} /> File
+                </a>
+              )}
               <a
-                href={skillFileRawUrl(id, selected)}
+                href={skillDownloadUrl(id)}
                 download
-                className="vz-action-btn"
-                title="Download this file"
-                style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--vz-muted)", textDecoration: "none", flexShrink: 0 }}
+                title={hasBundle ? "Download the whole skill as a .zip" : "Download this skill as a .zip"}
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", fontSize: 11.5, fontWeight: 500, lineHeight: 1, color: "#fff", background: "var(--vz-sodium)", borderRadius: "var(--vz-radius-sm)", textDecoration: "none", whiteSpace: "nowrap" }}
               >
-                <Download size={12} /> download
+                <Download size={12} /> Download skill
               </a>
-            )}
+            </div>
           </div>
           <div style={{ flex: 1, overflow: "auto", background: "var(--vz-mute)", border: "1px solid var(--vz-border)", borderRadius: "var(--vz-radius-sm)" }}>
             {loading ? (
@@ -978,6 +994,7 @@ function CatalogLayout({
   emptyIcon,
   emptyTitle,
   emptyDescription,
+  onRowClick,
   children,
 }: {
   error: string;
@@ -997,6 +1014,7 @@ function CatalogLayout({
   emptyIcon: ReactNode;
   emptyTitle: string;
   emptyDescription: string;
+  onRowClick?: (row: Record<string, unknown>) => void;
   children?: ReactNode;
 }) {
   return (
@@ -1009,6 +1027,7 @@ function CatalogLayout({
         columns={yoursColumns()}
         rows={yours}
         rowKey={(t) => t.id as string}
+        onRowClick={onRowClick}
         loading={loading}
         actions={
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -1046,6 +1065,7 @@ function CatalogLayout({
             columns={bundledColumns()}
             rows={bundled}
             rowKey={(t) => t.id as string}
+            onRowClick={onRowClick}
           />
         </div>
       )}

@@ -240,6 +240,50 @@ export class SkillService {
     return { path: filePath, size, content, binary: false, truncated };
   }
 
+  /**
+   * Package a whole skill as a downloadable .zip. Bundle skills return their
+   * stored (re-rooted) archive as-is; single-file skills are zipped around
+   * their SKILL.md; filesystem skills zip their entire on-disk directory (so
+   * supporting scripts/assets come along, not just the SKILL.md). Enforces the
+   * same ownership rule as the file routes. Returns null if not found/owned.
+   */
+  async downloadSkill(id: string, userId?: string): Promise<{ filename: string; bytes: Buffer } | null> {
+    if (id.startsWith("fs_")) {
+      const dir = id.slice(3);
+      const skillDir = path.resolve(this.skillsDir, dir);
+      // Containment guard: a crafted id like `fs_../../etc` must not escape the
+      // skills root and zip arbitrary server directories.
+      const root = path.resolve(this.skillsDir);
+      if (skillDir !== root && !skillDir.startsWith(root + path.sep)) return null;
+      try {
+        if (!fs.statSync(skillDir).isDirectory()) return null;
+      } catch {
+        return null;
+      }
+      const zip = new AdmZip();
+      zip.addLocalFolder(skillDir);
+      return { filename: `${sanitizeName(dir)}.zip`, bytes: zip.toBuffer() };
+    }
+
+    const rows = await this.db.select().from(schema.skills).where(eq(schema.skills.id, id));
+    if (rows.length === 0) return null;
+    const existing = rows[0];
+    if (userId && existing.user_id && existing.user_id !== userId) return null;
+
+    if (existing.archive_key) {
+      try {
+        const buf = await this.storage.get(existing.archive_key);
+        return { filename: `${sanitizeName(existing.name)}.zip`, bytes: buf };
+      } catch {
+        // Archive missing — fall back to zipping the SKILL.md body below.
+      }
+    }
+
+    const zip = new AdmZip();
+    zip.addFile("SKILL.md", Buffer.from(existing.content, "utf-8"));
+    return { filename: `${sanitizeName(existing.name)}.zip`, bytes: zip.toBuffer() };
+  }
+
   /** Raw bytes of one bundle file, for download (text or binary). */
   async readBundleFileRaw(id: string, filePath: string, userId?: string): Promise<Buffer | null> {
     const loaded = await this.loadOwnedArchive(id, userId, filePath);
