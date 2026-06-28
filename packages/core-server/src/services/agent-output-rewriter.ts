@@ -137,9 +137,54 @@ export function rewriteAgentImages(text: string, ctx: RewriteContext): Rewritten
   // Collapse the blank space the removed images left behind.
   textWithoutImages = textWithoutImages.replace(/\n{3,}/g, "\n\n").trim();
 
+  // Sign clickable preview LINKS too (not just images) so a URL the agent posts
+  // in a chat surface opens without a session cookie. Same host-scoped `_pvt`
+  // token. Covers markdown links `[label](url)` and bare `http(s)://…` URLs.
+  textWithUrls = signPreviewLinks(textWithUrls, hostMatcher, tokenFor);
+  textWithoutImages = signPreviewLinks(textWithoutImages, hostMatcher, tokenFor);
+
   return {
     textWithUrls,
     textWithoutImages,
     images: Array.from(imagesByOriginal.values()),
   };
+}
+
+// `[label](url)` but NOT image syntax `![label](url)` (negative lookbehind on !).
+const MARKDOWN_LINK_RE = /(?<!!)\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g;
+// Bare URLs not already inside a markdown-link paren or an html attribute
+// (lookbehind excludes `(`, quotes, `=`, `]`), so we don't double-process those.
+const BARE_URL_RE = /(?<![("'=\]])\bhttps?:\/\/[^\s<>()[\]]+/g;
+
+/** Append the `_pvt` token to preview-host URLs in clickable links + bare URLs.
+ *  Host-scoped so external URLs are never touched; idempotent (replaces _pvt). */
+function signPreviewLinks(
+  text: string,
+  hostMatcher: RegExp,
+  tokenFor: () => string,
+): string {
+  const sign = (rawUrl: string): string | null => {
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return null;
+    }
+    if (!hostMatcher.test(parsed.host)) return null;
+    parsed.searchParams.set("_pvt", tokenFor());
+    return parsed.toString();
+  };
+
+  let out = text.replace(MARKDOWN_LINK_RE, (full, label: string, url: string) => {
+    const signed = sign(url);
+    return signed ? `[${label}](${signed})` : full;
+  });
+  out = out.replace(BARE_URL_RE, (match: string) => {
+    // Don't swallow trailing sentence punctuation into the URL.
+    const trail = /[.,;:!?]+$/.exec(match)?.[0] ?? "";
+    const core = trail ? match.slice(0, match.length - trail.length) : match;
+    const signed = sign(core);
+    return signed ? signed + trail : match;
+  });
+  return out;
 }

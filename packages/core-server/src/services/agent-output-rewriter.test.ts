@@ -141,3 +141,37 @@ describe("rewriteAgentImages", () => {
     expect(signCalls).toBe(0);
   });
 });
+
+describe("rewriteAgentImages — clickable link signing", () => {
+  it("signs a markdown link to a preview URL", () => {
+    const out = rewriteAgentImages(
+      "Open it at [the app](http://hardcorewright-3000.vonz.localhost/users)",
+      baseCtx,
+    );
+    expect(out.textWithoutImages).toContain("[the app](http://hardcorewright-3000.vonz.localhost/users?_pvt=");
+  });
+
+  it("signs a bare preview URL", () => {
+    const out = rewriteAgentImages(
+      "It's live: http://hardcorewright-3000.vonz.localhost/api",
+      baseCtx,
+    );
+    expect(out.textWithoutImages).toMatch(/http:\/\/hardcorewright-3000\.vonz\.localhost\/api\?_pvt=/);
+  });
+
+  it("keeps trailing sentence punctuation out of the signed URL", () => {
+    const out = rewriteAgentImages(
+      "See http://hardcorewright-3000.vonz.localhost/api.",
+      baseCtx,
+    );
+    // Trailing period preserved, not absorbed into the URL.
+    expect(out.textWithoutImages.endsWith(".")).toBe(true);
+    expect(out.textWithoutImages).toContain("/api?_pvt=");
+  });
+
+  it("does not sign external links", () => {
+    const text = "Docs at [here](https://example.com/guide) and https://google.com";
+    const out = rewriteAgentImages(text, baseCtx);
+    expect(out.textWithoutImages).toBe(text);
+  });
+});
