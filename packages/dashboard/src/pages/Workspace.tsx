@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot, Gamepad2, BarChart3, Search, Rocket, Globe } from "lucide-react";
+import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot, Gamepad2, BarChart3, Search, Rocket, Globe, Plus, PanelLeftOpen } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
@@ -212,7 +212,11 @@ export function Workspace() {
     } catch {}
     return PANEL_DEFAULT;
   });
-  const [isResizing, setIsResizing] = useState(false);
+  // Which divider is being dragged, if any. Kept as a discriminator (not two
+  // booleans) so each handle only highlights when it's the one in use — a
+  // shared `isResizing` flag used to light up both the rail and Deck handles.
+  const [resizeTarget, setResizeTarget] = useState<"sidebar" | "panel" | null>(null);
+  const isResizing = resizeTarget !== null;
 
   // Workspace-rail (task list) resize state. Width is global (not per-route)
   // since the rail is the same across workspaces; persisted in localStorage.
@@ -227,9 +231,23 @@ export function Workspace() {
     return SIDEBAR_DEFAULT;
   });
 
+  // Whether the workspace-list rail is collapsed (desktop only). When
+  // collapsed the rail (and its resize handle) is removed entirely and the
+  // "New task" + expand controls relocate into the workspace header.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem("vonzio_sidebar_collapsed") === "1"; } catch { return false; }
+  });
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem("vonzio_sidebar_collapsed", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
   const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    setIsResizing(true);
+    setResizeTarget("sidebar");
     const startX = e.clientX;
     const startWidth = sidebarWidth;
     const onMouseMove = (ev: MouseEvent) => {
@@ -237,7 +255,7 @@ export function Workspace() {
       setSidebarWidth(newWidth);
     };
     const onMouseUp = () => {
-      setIsResizing(false);
+      setResizeTarget(null);
       try { localStorage.setItem("vonzio_sidebar_width", String(sidebarWidthRef.current)); } catch { /* ignore */ }
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
@@ -252,7 +270,7 @@ export function Workspace() {
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    setIsResizing(true);
+    setResizeTarget("panel");
     const startX = e.clientX;
     const startWidth = panelWidth;
 
@@ -264,7 +282,7 @@ export function Workspace() {
     };
 
     const onMouseUp = () => {
-      setIsResizing(false);
+      setResizeTarget(null);
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
     };
@@ -988,6 +1006,7 @@ export function Workspace() {
           </SheetContent>
         </Sheet>
       ) : (
+        !sidebarCollapsed && (
         <div className="flex h-full shrink-0">
           <div className="flex flex-col h-full" style={{ width: sidebarWidth }}>
             <WorkspaceSidebar
@@ -995,6 +1014,7 @@ export function Workspace() {
               activeId={activeWorkspaceId}
               onSelect={handleSelect}
               onCreate={handleCreate}
+              onCollapse={toggleSidebarCollapsed}
               onUpdate={(id, fields) => update(id, fields)}
               onDelete={async (id) => {
                 await remove(id);
@@ -1007,12 +1027,13 @@ export function Workspace() {
           <div
             onMouseDown={handleSidebarResizeStart}
             className="w-1 cursor-col-resize flex-shrink-0 transition-colors"
-            style={{ background: isResizing ? "var(--vz-sodium)" : "transparent" }}
+            style={{ background: resizeTarget === "sidebar" ? "var(--vz-sodium)" : "transparent" }}
             onMouseEnter={(e) => { if (!isResizing) (e.currentTarget as HTMLElement).style.background = "var(--vz-border)"; }}
             onMouseLeave={(e) => { if (!isResizing) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
             title="Drag to resize"
           />
         </div>
+        )
       )}
 
       {/* Main content */}
@@ -1029,6 +1050,9 @@ export function Workspace() {
               panelOpen={panelOpen}
               onTogglePanel={() => setPanelOpen(!panelOpen)}
               onToggleSidebar={isNarrow ? () => setSidebarOpen(true) : undefined}
+              sidebarCollapsed={!isNarrow && sidebarCollapsed}
+              onExpandSidebar={toggleSidebarCollapsed}
+              onNewTask={handleCreate}
               onRename={(name) => update(activeWorkspace.session_id, { name })}
               messages={chat.messages}
               workspaceName={activeWorkspace.name ?? "workspace"}
@@ -1036,11 +1060,12 @@ export function Workspace() {
               profileIdForSlot={activeWorkspace.profile_id}
               attachedTunnel={activeWorkspace.attached_tunnel ?? null}
             />
-          ) : isNarrow && (
-            // Empty-state header on narrow viewports — without it there'd be
-            // no way to open the workspace list Sheet because the chat
-            // sidebar is hidden and the WorkspaceHeader (which has the
-            // hamburger) only renders for an active workspace.
+          ) : (isNarrow || sidebarCollapsed) && (
+            // Empty-state header — without it there'd be no way to reach the
+            // workspace list when there's no active workspace: on narrow the
+            // rail is a Sheet (hamburger), on desktop the rail is collapsed
+            // (expand chevron). The WorkspaceHeader (with these controls)
+            // only renders for an active workspace.
             <div
               className="flex items-center gap-2"
               style={{
@@ -1053,15 +1078,28 @@ export function Workspace() {
             >
               <button
                 type="button"
-                onClick={() => setSidebarOpen(true)}
+                onClick={() => (isNarrow ? setSidebarOpen(true) : toggleSidebarCollapsed())}
                 className="vz-action-btn"
                 style={{ marginLeft: -4 }}
                 aria-label="Open workspace list"
+                title="Show workspace list"
               >
-                <Menu className="w-4 h-4" />
+                {isNarrow ? <Menu className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
               </button>
+              {!isNarrow && sidebarCollapsed && (
+                <button
+                  type="button"
+                  onClick={handleCreate}
+                  className="vz-action-btn"
+                  aria-label="New task"
+                  title="New task"
+                  style={{ background: "var(--vz-sodium)", color: "#fff" }}
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              )}
               <span style={{ fontSize: 13, fontWeight: 600, color: "var(--vz-ink)" }}>
-                Workspaces
+                {!isNarrow && sidebarCollapsed ? "New" : "Workspaces"}
               </span>
             </div>
           )}
@@ -1670,9 +1708,9 @@ export function Workspace() {
               {/* Drag handle */}
               <div
                 onMouseDown={handleResizeStart}
-                className={`w-1 cursor-col-resize transition-colors flex-shrink-0 ${isResizing ? "" : ""}`}
+                className="w-1 cursor-col-resize transition-colors flex-shrink-0"
                 style={{
-                  background: isResizing ? "var(--vz-sodium)" : "transparent",
+                  background: resizeTarget === "panel" ? "var(--vz-sodium)" : "transparent",
                 }}
                 onMouseEnter={(e) => { if (!isResizing) (e.currentTarget as HTMLElement).style.background = "var(--vz-sodium-25)"; }}
                 onMouseLeave={(e) => { if (!isResizing) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
