@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, Pencil, PanelRightOpen, PanelRightClose, Download, Menu, Shield, Copy, Check, RotateCw, Wifi, WifiOff } from "lucide-react";
+import { Loader2, Pencil, PanelRightOpen, PanelRightClose, PanelLeftOpen, Plus, Download, Menu, Shield, Copy, Check, RotateCw, Wifi, WifiOff } from "lucide-react";
 import { Pill } from "@/brand/components.js";
 import { restartWorkspace } from "@/api/client.js";
 import { getWorkspaceHeaderSlots } from "@/registry/index.js";
@@ -15,6 +15,11 @@ interface Props {
   panelOpen: boolean;
   onTogglePanel: () => void;
   onToggleSidebar?: () => void;
+  /** True when the desktop workspace-list rail is collapsed — surfaces the
+   *  expand + New task controls at the front of the header. */
+  sidebarCollapsed?: boolean;
+  onExpandSidebar?: () => void;
+  onNewTask?: () => void;
   onRename: (name: string) => void;
   messages: ChatMessage[];
   workspaceName: string;
@@ -75,6 +80,7 @@ export function WorkspaceHeader({
   panelOpen, onTogglePanel, onToggleSidebar, onRename,
   messages, workspaceName, profileName,
   attachedTunnel, profileIdForSlot,
+  sidebarCollapsed, onExpandSidebar, onNewTask,
 }: Props) {
   const entitlements = useEntitlements();
   const headerSlots = getWorkspaceHeaderSlots().filter(
@@ -122,6 +128,32 @@ export function WorkspaceHeader({
       }}
     >
       <div className="flex items-center gap-2.5 min-w-0">
+        {/* Rail collapsed (desktop) — expand + New task move into the header */}
+        {sidebarCollapsed && (
+          <>
+            <button
+              type="button"
+              onClick={onExpandSidebar}
+              className="vz-action-btn"
+              style={{ marginLeft: -4 }}
+              title="Show workspace list"
+              aria-label="Show workspace list"
+            >
+              <PanelLeftOpen className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onNewTask}
+              className="vz-action-btn"
+              title="New task"
+              aria-label="New task"
+              style={{ background: "var(--vz-sodium)", color: "#fff" }}
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </>
+        )}
+
         {/* Sidebar toggle — mobile only */}
         {onToggleSidebar && (
           <button

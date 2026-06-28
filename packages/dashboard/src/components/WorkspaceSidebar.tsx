@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, ChevronRight, Pin, Archive, Trash2, MessageSquare, CheckCircle2, Clock, ListChecks, CheckSquare, Square, X, Search } from "lucide-react";
+import { Plus, ChevronRight, Pin, Archive, Trash2, MessageSquare, CheckCircle2, Clock, ListChecks, CheckSquare, Square, X, Search, PanelLeftClose } from "lucide-react";
 import type { GroupedWorkspaces } from "../hooks/useWorkspaces.js";
 import type { WorkspaceSummary } from "../api/client.js";
 import { Modal, Button } from "@/brand/components.js";
@@ -12,6 +12,8 @@ interface Props {
   onCreate: () => void;
   onUpdate: (id: string, fields: Record<string, unknown>) => void;
   onDelete: (id: string) => void;
+  /** Collapse the rail (desktop only). Omitted in the mobile Sheet. */
+  onCollapse?: () => void;
   inSheet?: boolean;
 }
 
@@ -100,7 +102,7 @@ function isFinished(w: WorkspaceSummary): boolean {
 
 // ─── Component ────────────────────────────────────────────────────────
 
-export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpdate, onDelete, inSheet }: Props) {
+export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpdate, onDelete, onCollapse, inSheet }: Props) {
   // No section is collapsed by default. The user's complaint on v0.1.79
   // was "can't see past workspaces" — pre-collapsing the section that
   // actually contains them was half the problem (the other half was the
@@ -350,17 +352,30 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
     >
       {/* New task CTA */}
       <div className="p-3">
-        <button
-          type="button"
-          onClick={onCreate}
-          className="vz-new-task"
-        >
-          <span className="vz-new-task__plus">
-            <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
-          </span>
-          <span>New task</span>
-          <span className="vz-kbd vz-new-task__kbd">⌘K</span>
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onCreate}
+            className="vz-new-task flex-1"
+          >
+            <span className="vz-new-task__plus">
+              <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
+            </span>
+            <span>New task</span>
+            <span className="vz-kbd vz-new-task__kbd">⌘K</span>
+          </button>
+          {onCollapse && (
+            <button
+              type="button"
+              onClick={onCollapse}
+              className="vz-action-btn shrink-0"
+              title="Collapse list"
+              aria-label="Collapse workspace list"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+          )}
+        </div>
 
         {/* Search */}
         <div className="relative mt-2">
