@@ -168,3 +168,33 @@ describe("readBundleFileRaw", () => {
     expect(await svc.readBundleFileRaw("skill_1", "secret", "user_1")).toBeNull();
   });
 });
+
+describe("downloadSkill", () => {
+  it("returns the stored archive for a bundle skill", async () => {
+    const archive = makeBundle();
+    const svc = serviceFor({ id: "skill_1" }, archive);
+    const out = await svc.downloadSkill("skill_1", "user_1");
+    expect(out?.filename).toBe("drama-cover-kit.zip");
+    expect(Array.from(new AdmZip(out!.bytes).getEntries().map((e) => e.entryName)).sort())
+      .toEqual(["SKILL.md", "assets/font.ttf", "scripts/make_cover.py"]);
+  });
+
+  it("zips SKILL.md for a single-file skill", async () => {
+    const svc = serviceFor({ id: "skill_1", archive_key: null }, null);
+    const out = await svc.downloadSkill("skill_1", "user_1");
+    const entries = new AdmZip(out!.bytes).getEntries();
+    expect(entries.map((e) => e.entryName)).toEqual(["SKILL.md"]);
+    expect(entries[0].getData().toString("utf-8")).toBe(SKILL_MD);
+  });
+
+  it("rejects a non-owner", async () => {
+    const svc = serviceFor({ id: "skill_1", user_id: "owner" }, makeBundle());
+    expect(await svc.downloadSkill("skill_1", "someone_else")).toBeNull();
+  });
+
+  it("refuses a path-traversal filesystem id (containment guard)", async () => {
+    const svc = serviceFor({ id: "fs_x" }, null);
+    // `/nonexistent` is the skillsDir; a `..`-laden id must not escape it.
+    expect(await svc.downloadSkill("fs_../../../../etc", "user_1")).toBeNull();
+  });
+});

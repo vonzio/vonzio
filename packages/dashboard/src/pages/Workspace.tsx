@@ -146,6 +146,15 @@ export function Workspace() {
   const [pendingNew, setPendingNew] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
+  // Mirror of `attachments` for revoking blob: preview URLs from places that
+  // can't read the latest state (workspace switch, unmount).
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  const revokePreviews = (atts: Attachment[]) => {
+    for (const a of atts) {
+      if (a.preview?.startsWith("blob:")) URL.revokeObjectURL(a.preview);
+    }
+  };
   // Composer history: ArrowUp/ArrowDown recall your previous messages (shell
   // style). -1 = not navigating. Index counts back from the most recent.
   const [historyIdx, setHistoryIdx] = useState(-1);
@@ -694,7 +703,11 @@ export function Workspace() {
         media_type: file.type,
         data: base64,
         name: file.name,
-        preview: isImage ? (reader.result as string) : undefined,
+        // Thumbnail uses a lightweight object URL, NOT the full base64 data URL.
+        // A multi-MB data URL as an <img src> forces the browser to base64-decode
+        // the whole string on the main thread (visible jank while a file is
+        // attached); a blob: URL is cheap to render.
+        preview: isImage ? URL.createObjectURL(file) : undefined,
       }]);
     };
     reader.readAsDataURL(file);
@@ -722,13 +735,19 @@ export function Workspace() {
   }, [processFile]);
 
   function removeAttachment(idx: number) {
+    const att = attachmentsRef.current[idx];
+    if (att) revokePreviews([att]);
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   }
+
+  // Revoke any outstanding composer preview URLs when the page unmounts.
+  useEffect(() => () => revokePreviews(attachmentsRef.current), []);
 
   // ─── Navigation ──────────────────────────────────────────────────
 
   /** Reset all workspace-specific state when switching or creating */
   function resetWorkspaceState() {
+    revokePreviews(attachmentsRef.current);
     setAttachments([]);
     setInput("");
     setPreviewUrl(null);
@@ -854,6 +873,10 @@ export function Workspace() {
     const atts = attachments.length > 0
       ? attachments.map(({ type, media_type, data, name }) => ({ type, media_type, data, name }))
       : undefined;
+    // Captured so a confirmed dispatch can revoke the composer preview URLs.
+    // NOT revoked on the optimistic clear below — restoreComposer may put these
+    // same attachments (and their URLs) back if the send never dispatches.
+    const sentAttachments = attachments;
     setInput("");
     setHistoryIdx(-1);
     if (activeWorkspaceId) clearDraft(activeWorkspaceId);
@@ -926,12 +949,15 @@ export function Workspace() {
       // somehow doesn't dispatch.
       const dispatched = chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList }, sessionId);
       if (!dispatched) restoreComposer();
+      else revokePreviews(sentAttachments);
       refetch();
       return;
     }
 
     if (!chat.send(text, atts, { goal_mode: effectiveGoalMode, acceptance_criteria: goalCriteriaList })) {
       restoreComposer();
+    } else {
+      revokePreviews(sentAttachments);
     }
   }
 
@@ -1398,6 +1424,7 @@ export function Workspace() {
                   }}
                   onDrop={handleDrop}
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
                 >
                   {/* Attachment preview chips */}
                   {attachError && (

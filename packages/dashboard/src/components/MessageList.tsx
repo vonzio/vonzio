@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Image, FileText, Loader2, Target, Check, Copy, BookOpen } from "lucide-react";
 import { type ChatMessage, ToolBlock, MarkdownContent, detectCSV, TableView, extractCitations } from "./ChatCore.js";
 import { ResponseFeedback } from "./ResponseFeedback.js";
@@ -282,6 +282,35 @@ export function MessageList({
   sessionId?: string | null;
 }) {
   const [sourceViewer, setSourceViewer] = useState<DocViewerTarget | null>(null);
+
+  // Sent images arrive as base64 data URLs. Rendering them (and re-opening
+  // them in the viewer) re-base64-decodes a multi-MB string on the main thread
+  // every time — slow to open the lightbox and janky when the list re-renders.
+  // Decode each ONCE into a blob: object URL (cached by data URL), so thumbnails
+  // and the viewer reuse the same already-decoded Blob. Revoked on unmount.
+  const objectUrlCache = useRef<Map<string, string>>(new Map());
+  const asObjectUrl = useCallback((src: string): string => {
+    if (!src.startsWith("data:")) return src;
+    const hit = objectUrlCache.current.get(src);
+    if (hit) return hit;
+    try {
+      const comma = src.indexOf(",");
+      const mime = /data:([^;]+)/.exec(src.slice(0, comma))?.[1] ?? "application/octet-stream";
+      const bin = atob(src.slice(comma + 1));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      objectUrlCache.current.set(src, url);
+      return url;
+    } catch {
+      return src;
+    }
+  }, []);
+  useEffect(() => {
+    const cache = objectUrlCache.current;
+    return () => { for (const u of cache.values()) URL.revokeObjectURL(u); };
+  }, []);
+
   // Re-render every 30s so relative timestamps update
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -557,13 +586,14 @@ export function MessageList({
                     const imageNames = (msg.files ?? []).filter((f) => f.type === "image").map((f) => f.name);
                     const name = imageNames[i] ?? "image";
                     const mediaType = /^data:([^;]+);/.exec(src)?.[1] ?? "image/png";
+                    const url = asObjectUrl(src);
                     return (
                       <img
                         key={i}
-                        src={src}
+                        src={url}
                         alt={name}
                         title="Click to view"
-                        onClick={() => setSourceViewer({ url: src, mediaType, name })}
+                        onClick={() => setSourceViewer({ url, mediaType, name })}
                         className="rounded-md object-cover cursor-zoom-in transition-opacity hover:opacity-90"
                         style={{
                           maxWidth: 200,

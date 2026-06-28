@@ -462,6 +462,11 @@ export function skillFileRawUrl(id: string, path: string): string {
   return `${BASE}/skills/${id}/file/raw?path=${encodeURIComponent(path)}`;
 }
 
+/** Same-origin URL for downloading the whole skill as a .zip (cookie-authed). */
+export function skillDownloadUrl(id: string): string {
+  return `${BASE}/skills/${id}/download`;
+}
+
 /**
  * Upload a skill from a file: a .zip bundle (SKILL.md + scripts/assets) or a
  * lone .md / SKILL.md (saved as a single-file skill). Dispatches by extension.

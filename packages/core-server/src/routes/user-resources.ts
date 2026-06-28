@@ -225,6 +225,22 @@ export const userResourceRoutes = fp(
       },
     );
 
+    // Download the whole skill as a .zip (bundle archive, single-file SKILL.md,
+    // or the full on-disk directory for filesystem skills). Ownership enforced
+    // in the service.
+    server.get<{ Params: { id: string } }>(
+      "/v1/skills/:id/download",
+      async (request, reply) => {
+        const result = await skillService.downloadSkill(request.params.id, request.user!.id);
+        if (!result) return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Skill not found"));
+        const filename = result.filename.replace(/["\r\n]/g, "");
+        return reply
+          .type("application/zip")
+          .header("content-disposition", `attachment; filename="${filename}"`)
+          .send(result.bytes);
+      },
+    );
+
     // ─── Documents (per-agent knowledge) ────────────────────
     // Mounted read-only into every container the profile spawns at /knowledge;
     // the agent reads them on the fly with Read/Grep/Glob.
