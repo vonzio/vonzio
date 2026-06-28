@@ -550,19 +550,29 @@ export function MessageList({
             >
               {msg.images && msg.images.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-2">
-                  {msg.images.map((src, i) => (
-                    <img
-                      key={i}
-                      src={src}
-                      alt=""
-                      className="rounded-md object-cover"
-                      style={{
-                        maxWidth: 200,
-                        maxHeight: 200,
-                        border: "1px solid var(--vz-border)",
-                      }}
-                    />
-                  ))}
+                  {msg.images.map((src, i) => {
+                    // Names for image attachments arrive in order on msg.files
+                    // (which also includes documents); line them up so the
+                    // lightbox shows the real filename.
+                    const imageNames = (msg.files ?? []).filter((f) => f.type === "image").map((f) => f.name);
+                    const name = imageNames[i] ?? "image";
+                    const mediaType = /^data:([^;]+);/.exec(src)?.[1] ?? "image/png";
+                    return (
+                      <img
+                        key={i}
+                        src={src}
+                        alt={name}
+                        title="Click to view"
+                        onClick={() => setSourceViewer({ url: src, mediaType, name })}
+                        className="rounded-md object-cover cursor-zoom-in transition-opacity hover:opacity-90"
+                        style={{
+                          maxWidth: 200,
+                          maxHeight: 200,
+                          border: "1px solid var(--vz-border)",
+                        }}
+                      />
+                    );
+                  })}
                 </div>
               )}
               <div

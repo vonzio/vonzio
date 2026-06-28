@@ -1766,16 +1766,26 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
     }
     if (!userText.trim() && !assistantText.trim()) return false;
 
+    // Render each side's markdown through the same HTML formatter as the live
+    // relay so bold/lists/code render (not raw **…**).
     const parts: string[] = [];
-    if (userText.trim()) parts.push(`<b>You</b>\n${htmlEscape(trimForReplay(userText))}`);
-    if (assistantText.trim()) parts.push(`<b>Agent</b>\n${htmlEscape(trimForReplay(assistantText))}`);
+    if (userText.trim()) parts.push(`<b>You</b>\n${toTelegramHtml(trimForReplay(userText))}`);
+    if (assistantText.trim()) parts.push(`<b>Agent</b>\n${toTelegramHtml(trimForReplay(assistantText))}`);
     const body = `<i>Where you left off</i>\n\n${parts.join("\n\n")}\n\n<a href="${htmlEscape(workspaceUrl(sessionId))}">Open full workspace</a>`;
-    await telegramService.sendMessage(cfg.bot_token, {
-      chat_id: String(chatId),
-      text: body,
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-    });
+    try {
+      await telegramService.sendMessage(cfg.bot_token, {
+        chat_id: String(chatId),
+        text: body,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      });
+    } catch {
+      // Bad entities (e.g. truncation split a tag) → resend as plain text.
+      await telegramService.sendMessage(cfg.bot_token, {
+        chat_id: String(chatId),
+        text: stripTelegramHtml(body),
+      });
+    }
     return true;
   }
 
@@ -2067,9 +2077,12 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     if (!state) return;
     if (state.pendingEdit) clearTimeout(state.pendingEdit);
     streamingState.delete(sessionId);
-    const text = state.rawText.trim();
-    if (!text) return; // nothing streamed into this block; leave placeholder as-is
-    lastFinalizedBlock.set(sessionId, text);
+    const rawText = state.rawText.trim();
+    if (!rawText) return; // nothing streamed into this block; leave placeholder as-is
+    lastFinalizedBlock.set(sessionId, rawText);
+    // Strip inline images + sign preview links (cookieless _pvt) for this block.
+    const rewritten = await imageRewriterService.forSession(sessionId, rawText).catch(() => null);
+    const text = rewritten?.textWithoutImages || rawText;
     const chunks = chunkMarkdown(text, 3800).map((c) => toTelegramHtml(c));
     const first = chunks[0];
     try {
@@ -2204,14 +2217,14 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
       // final block. Keep the final message clean.
       const prefix = "";
 
-      // Telegram doesn't render inline `![]()` markdown. Strip image refs
-      // from the body and queue them up for sendPhoto follow-ups. The
-      // sendPhoto API accepts a URL — Telegram's servers fetch it, so a
-      // signed _pvt token is enough auth.
+      // Rewrite agent output: strip inline `![]()` images (queued for sendPhoto
+      // follow-ups) AND sign clickable preview links with the cookieless _pvt
+      // token so the user can open them from Telegram. Always adopt the
+      // rewritten text (not just when images exist) so link-signing applies.
       const rewriter = await imageRewriterService.forSession(sessionId, body).catch(() => null);
       const agentImages = rewriter?.images ?? [];
-      if (rewriter && agentImages.length > 0) {
-        body = rewriter.textWithoutImages || "_(image attached)_";
+      if (rewriter) {
+        body = rewriter.textWithoutImages || (agentImages.length > 0 ? "_(image attached)_" : body);
       }
 
       // Long-output path: send a short preview + the full text as a .md

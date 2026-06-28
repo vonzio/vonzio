@@ -844,8 +844,10 @@ function setupSlackRelay(
       let rawBody = result?.text ?? buffer?.tokens.join("") ?? "";
       const rewriter = await imageRewriterService.forSession(sessionId, rawBody).catch(() => null);
       const agentImages = rewriter?.images ?? [];
-      if (rewriter && agentImages.length > 0) {
-        rawBody = rewriter.textWithoutImages;
+      // Always adopt the rewritten text (not just when images exist) so the
+      // cookieless _pvt link-signing applies to clickable preview URLs too.
+      if (rewriter) {
+        rawBody = rewriter.textWithoutImages || rawBody;
       }
 
       // Build response text — convert GitHub markdown to Slack mrkdwn

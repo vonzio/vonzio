@@ -122,6 +122,7 @@ jobs:
             packages/core-server/src/orchestrator/agent-comms.test.ts \
             packages/core-server/src/queue/queue.test.ts \
             packages/core-server/src/services/format-message.test.ts \
+            packages/core-server/src/services/agent-output-rewriter.test.ts \
             packages/core-server/src/services/telegram-service.test.ts \
             packages/core-server/src/services/scope.test.ts \
             packages/core-server/src/services/title-service.test.ts \

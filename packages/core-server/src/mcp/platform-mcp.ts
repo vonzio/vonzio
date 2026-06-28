@@ -28,6 +28,8 @@ import type { EventLog } from "../events/event-log.js";
 import AdmZip from "adm-zip";
 import type { Workspace, WorkspaceStatus } from "@vonzio/shared";
 import { WORKSPACE_STATUSES } from "@vonzio/shared";
+import { generatePreviewCode } from "../auth/preview-auth.js";
+import { encrypt } from "../auth/crypto.js";
 
 interface PlatformMcpSession {
   userId: string;
@@ -57,6 +59,9 @@ export interface PlatformMcpOptions {
   documentService: DocumentService;
   eventLog: EventLog;
   resolveSession: (token: string) => PlatformMcpSession | null;
+  /** Vault key for encrypting preview access codes (code mode). Empty string
+   *  disables code mode (private/public still work). */
+  encryptionKey: string;
 }
 
 interface JsonRpcRequest {
@@ -296,6 +301,25 @@ const TOOL_DEFINITIONS: ToolDef[] = [
       },
       required: ["session_id"],
     },
+  },
+  {
+    name: "preview_set_access",
+    description:
+      "Set the access mode for a preview port of a workspace (a web service the agent is running, e.g. a dev server on port 3000). " +
+      "Modes: 'private' (owner only — the default), 'public' (anyone with the link), or 'code' (anyone with the link plus a short access code). " +
+      "Use this to share a running service with someone. For 'code' mode the server generates a code (or accepts your own) and returns it; share the link AND the code. " +
+      "This controls EXTERNAL reachability of the preview proxy — it does not start or stop the service itself.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", description: "The workspace session ID" },
+        port: { type: ["string", "number"], description: "The container port the service listens on (e.g. 3000)" },
+        mode: { type: "string", enum: ["private", "public", "code"], description: "private | public | code" },
+        code: { type: "string", description: "Optional: a specific access code for 'code' mode (4–64 chars). Omit to auto-generate." },
+      },
+      required: ["session_id", "port", "mode"],
+    },
+    group: "preview_access",
   },
   {
     name: "workspace_events",
@@ -598,6 +622,7 @@ async function handleToolCall(
   subagentService: SubagentService,
   documentService: DocumentService,
   eventLog: EventLog,
+  encryptionKey: string,
   session: PlatformMcpSession,
   toolName: string,
   args: Record<string, unknown>,
@@ -943,6 +968,52 @@ async function handleToolCall(
       const ok = await workspaceService.terminate(existing.session_id);
       if (!ok) return toolResult("Workspace not found", true);
       return toolResult(`Workspace ${existing.session_id} terminated.`);
+    }
+
+    case "preview_set_access": {
+      const r = requireOwnedWorkspace(args);
+      if ("error" in r) return r.error;
+      const { workspace } = r;
+
+      const port = String(args.port ?? "").trim();
+      if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+        return toolResult("Invalid port — pass the container port number the service listens on (1–65535)", true);
+      }
+      const mode = args.mode;
+      if (mode !== "private" && mode !== "public" && mode !== "code") {
+        return toolResult("mode must be one of: private, public, code", true);
+      }
+
+      const publicPorts = new Set((workspace.public_ports ?? []).map(String));
+      const codes: Record<string, { code_enc: string; code_version: number }> = { ...(workspace.preview_codes ?? {}) };
+      let issuedCode: string | null = null;
+
+      if (mode === "private") {
+        publicPorts.delete(port); delete codes[port];
+      } else if (mode === "public") {
+        publicPorts.add(port); delete codes[port];
+      } else {
+        if (!encryptionKey) {
+          return toolResult("Code mode is unavailable on this deployment (no encryption key configured). Use 'public' or 'private'.", true);
+        }
+        const code = (typeof args.code === "string" ? args.code.trim() : "") || generatePreviewCode();
+        if (code.length < 4 || code.length > 64) {
+          return toolResult("code must be 4–64 characters", true);
+        }
+        const prevVersion = codes[port]?.code_version ?? 0;
+        codes[port] = { code_enc: encrypt(code, encryptionKey), code_version: prevVersion + 1 };
+        publicPorts.delete(port);
+        issuedCode = code;
+      }
+
+      const updated = await workspaceService.update(
+        workspace.session_id,
+        { public_ports: Array.from(publicPorts), preview_codes: codes },
+        { orgId: scopedOrgId },
+      );
+      if (!updated) return toolResult("Workspace not found", true);
+      audit("preview_set_access", { session_id: workspace.session_id, port, mode });
+      return toolResult(JSON.stringify({ session_id: workspace.session_id, port, mode, code: issuedCode }, null, 2));
     }
 
     case "workspace_events": {
@@ -1394,7 +1465,7 @@ async function handleToolCall(
 
 export const platformMcpPlugin = fp(
   async (server: FastifyInstance, opts: PlatformMcpOptions) => {
-    const { playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, subagentService, documentService, eventLog, resolveSession } = opts;
+    const { playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, subagentService, documentService, eventLog, resolveSession, encryptionKey } = opts;
 
     server.post("/mcp/platform", async (request, reply) => {
       const body = request.body as JsonRpcRequest;
@@ -1452,7 +1523,7 @@ export const platformMcpPlugin = fp(
             if (def?.group && !session.capabilities.includes(def.group)) {
               return reply.send(rpcResult(id, toolResult(`Tool "${params.name}" is not enabled for this agent. Enable the "${def.group}" capability in the agent's settings.`, true)));
             }
-            const result = await handleToolCall(playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, subagentService, documentService, eventLog, session, params.name, params.arguments ?? {});
+            const result = await handleToolCall(playbookService, taskService, chainRunner, integrationService, workspaceService, profileService, skillService, subagentService, documentService, eventLog, encryptionKey, session, params.name, params.arguments ?? {});
             return reply.send(rpcResult(id, result));
           } catch (err) {
             const message = err instanceof Error ? err.message : "Unknown error";

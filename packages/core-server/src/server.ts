@@ -843,6 +843,7 @@ export async function buildServer(deps: ServerDeps) {
     subagentService,
     documentService,
     eventLog,
+    encryptionKey: config.ENCRYPTION_KEY,
     resolveSession: (token: string) => {
       const session = orchestrator.resolvePlatformToken(token);
       return session

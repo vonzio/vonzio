@@ -65,6 +65,11 @@ const PLATFORM_CAPABILITY_GROUPS: { group: string; label: string; description: s
     label: "Manage agents",
     description: "Let this agent create, edit, and delete agents (profiles) — including changing its own configuration.",
   },
+  {
+    group: "preview_access",
+    label: "Change preview exposure",
+    description: "Let this agent make a workspace's web service publicly reachable (public, or public-with-code). Off by default — turn on only if you want agents to expose ports to the internet.",
+  },
 ];
 type TabValue = (typeof TAB_VALUES)[number];
 
