@@ -233,7 +233,7 @@ export function WorkspaceSidebar({ grouped, activeId, onSelect, onCreate, onUpda
         >
           {index}
         </span>
-        {workspace.pinned && <Pin className="w-3 h-3 shrink-0" style={{ color: "var(--vz-sodium)", fill: "var(--vz-sodium)" }} />}
+        {workspace.pinned && <Pin className={cn("w-3 h-3 shrink-0", !selectMode && "group-hover:hidden")} style={{ color: "var(--vz-sodium)", fill: "var(--vz-sodium)" }} />}
         <span className="flex-1 truncate">{name}</span>
 
         {/* Status word ("stuck" / "failed") OR time — hide when hovering to surface actions */}
