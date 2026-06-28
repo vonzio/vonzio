@@ -357,9 +357,12 @@ export class Orchestrator extends EventEmitter {
   /**
    * Tear down a workspace's container so the NEXT message recreates a fresh one.
    * Used to apply config that's baked at container-creation time (egress
-   * allowlist, network, env) to a running session without losing the chat — the
-   * SDK session id persists, so the conversation resumes on the new container
-   * (workspace files survive too for persistent sessions, via the volume).
+   * allowlist, network, env) to a running session without losing the chat. For
+   * a persistent session the SDK session storage lives on a named volume, so the
+   * conversation (and workspace files) resume on the new container. A
+   * non-persistent session keeps that storage in the container's ephemeral fs,
+   * which the recreate wipes — so we flag it for an EventLog replay (below) to
+   * rebuild the conversation, mirroring resurrect().
    * No-op-safe if the session has no live container.
    */
   async restartWorkspaceContainer(sessionId: string): Promise<void> {
@@ -389,13 +392,21 @@ export class Orchestrator extends EventEmitter {
     const oldContainerId = session.container_id;
     await this.safeRemoveContainer(oldContainerId);
     this.log.info({ sessionId, containerId: oldContainerId }, "Workspace container removed for restart");
+    // A non-persistent session's SDK session storage (/home/agent/.claude) died
+    // with the container just removed — the next container (eager below, or lazy
+    // on the next message if eager fails) has no memory of the prior turns. Flag
+    // it now, independent of recreate success, so dispatchSession replays the
+    // EventLog transcript into the next prompt. Persistent sessions keep that
+    // storage on the volume and resume natively, so flagging them would
+    // double-inject the history.
+    if (!session.persistent) session.needs_context_replay = true;
     try {
       const profile = await this.deps.profileService.getResolved(session.profile_id, {
         apiKeyIdOverride: session.api_key_id_override ?? null,
       });
       if (profile) {
         await this.wakeWorkspaceContainer(sessionId, profile);
-        this.log.info({ sessionId }, "Workspace container recreated on restart with current settings");
+        this.log.info({ sessionId, persistent: session.persistent }, "Workspace container recreated on restart with current settings");
       }
     } catch (err) {
       this.log.warn({ err, sessionId }, "Eager restart recreation failed; will recreate on next message");
@@ -1624,7 +1635,7 @@ export class Orchestrator extends EventEmitter {
       const transcript = this.deps.eventLog.buildTranscript(task.session_id);
       if (transcript) {
         const reasonLabel = isResurrectedSession
-          ? "the workspace was paused for a while and the runtime was reaped"
+          ? "the workspace runtime was restarted, so the prior turns aren't in the live session"
           : "the previous turns ran on a different model";
         crossModelReplay = `[Conversation so far in this workspace — ${reasonLabel}. Continue this conversation as if it were yours.]\n\n${transcript}\n\n---\n\nThe user now says:\n\n`;
         this.log.info(
