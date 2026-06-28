@@ -6,11 +6,11 @@
  * anything hands off into the Workspace (the composer lives there); a short
  * draft / chosen-agent are passed via localStorage and picked up on /w mount.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, Sparkles, Send, Clock, Wrench, ArrowRight } from "lucide-react";
+import { Bot, Sparkles, Send, Clock, Wrench, ArrowRight, Pin } from "lucide-react";
 import { useApi } from "../hooks/useApi.js";
-import { fetchProfiles, fetchWorkspaces, type ProfileSummary, type WorkspaceListResponse } from "../api/client.js";
+import { fetchProfiles, fetchWorkspaces, type ProfileSummary, type WorkspaceListResponse, type WorkspaceSummary } from "../api/client.js";
 import { Button } from "../brand/components.js";
 import { formatRelative } from "../lib/utils.js";
 
@@ -26,7 +26,10 @@ export function Home() {
 
   const agents = profiles ?? [];
   const allWorkspaces = workspaces?.workspaces ?? [];
-  const recent = allWorkspaces.slice(0, 6);
+  // Pinned workspaces get their own section above Recent; keep them out of
+  // Recent so they don't show twice.
+  const pinned = allWorkspaces.filter((w) => w.pinned);
+  const recent = allWorkspaces.filter((w) => !w.pinned).slice(0, 6);
 
   // Derive each agent's last-used from actual workspaces — profile.last_used_at
   // isn't reliably written by the runtime, so it reads "Never used" even when it
@@ -96,36 +99,62 @@ export function Home() {
         </Button>
       </div>
 
+      {pinned.length > 0 && (
+        <div>
+          <SectionLabel>Pinned</SectionLabel>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {pinned.map((w) => (
+              <WorkspaceRow
+                key={w.session_id}
+                w={w}
+                icon={<Pin size={13} style={{ color: "var(--vz-sodium)", fill: "var(--vz-sodium)", flexShrink: 0 }} />}
+                onOpen={() => navigate(`/w/${w.session_id}`)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {recent.length > 0 && (
         <div>
           <SectionLabel>Recent</SectionLabel>
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {recent.map((w) => {
-              const id = w.session_id;
-              if (!id) return null;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => navigate(`/w/${id}`)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 9, padding: "8px 10px", textAlign: "left",
-                    borderRadius: "var(--vz-radius-sm)", cursor: "pointer", fontSize: 13, fontFamily: "inherit",
-                    background: "none", border: 0, color: "var(--vz-ink)",
-                  }}
-                >
-                  <Clock size={13} style={{ color: "var(--vz-muted-2)", flexShrink: 0 }} />
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{w.name || "Untitled"}</span>
-                  {w.last_active_at && (
-                    <span style={{ flexShrink: 0, fontSize: 11, color: "var(--vz-muted-2)" }}>{formatRelative(w.last_active_at)}</span>
-                  )}
-                </button>
-              );
-            })}
+            {recent.map((w) => (
+              <WorkspaceRow
+                key={w.session_id}
+                w={w}
+                icon={<Clock size={13} style={{ color: "var(--vz-muted-2)", flexShrink: 0 }} />}
+                onOpen={() => navigate(`/w/${w.session_id}`)}
+              />
+            ))}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+function WorkspaceRow({ w, icon, onOpen }: { w: WorkspaceSummary; icon: ReactNode; onOpen: () => void }) {
+  const [hover, setHover] = useState(false);
+  if (!w.session_id) return null;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: 9, padding: "8px 10px", textAlign: "left",
+        borderRadius: "var(--vz-radius-sm)", cursor: "pointer", fontSize: 13, fontFamily: "inherit",
+        background: hover ? "var(--vz-mute)" : "none", border: 0, color: "var(--vz-ink)",
+      }}
+    >
+      {icon}
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{w.name || "Untitled"}</span>
+      {w.last_active_at && (
+        <span style={{ flexShrink: 0, fontSize: 11, color: "var(--vz-muted-2)" }}>{formatRelative(w.last_active_at)}</span>
+      )}
+    </button>
   );
 }
 
