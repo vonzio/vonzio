@@ -612,6 +612,29 @@ export function Workspace() {
   const previewHost = chat.containerName || (previewContainerId ? previewContainerId.slice(0, 12) : null);
   useEffect(() => { containerNameRef.current = chat.containerName; }, [chat.containerName]);
 
+  // After a container restart/recreate the vanity name changes, but the displayed
+  // preview URL may have been restored from localStorage or parsed out of older
+  // agent text — pointing at the now-dead OLD name. Whenever the probe gives us a
+  // live container name, rewrite the preview URL's host to the current one
+  // (preserving port + path) so the Deck always targets the running container.
+  useEffect(() => {
+    if (!previewUrl || !previewHost) return;
+    const m = previewUrl.match(PREVIEW_URL_REGEX);
+    if (!m || !m[1]) return;
+    let canonical: string;
+    try {
+      const cur = new URL(previewUrl);
+      const fresh = new URL(buildPreviewUrl(previewHost, m[1]));
+      fresh.pathname = cur.pathname;
+      fresh.search = cur.search;
+      fresh.hash = cur.hash;
+      canonical = fresh.toString();
+    } catch {
+      return;
+    }
+    if (canonical !== previewUrl) setPreviewUrl(canonical);
+  }, [previewUrl, previewHost, buildPreviewUrl, PREVIEW_URL_REGEX]);
+
   const handleSelectPreviewPort = useCallback((port: number) => {
     if (!previewHost) return;
     setPreviewUrl(buildPreviewUrl(previewHost, String(port)));
