@@ -55,11 +55,12 @@ function formatShortDate(dateStr: string): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-// "Stuck" reads better than "paused" for ambiguous mid-states (resumable
-// containers, idle sessions waiting on input).
+// "Paused" reads as a safe, reversible idle state (the container was slept to
+// free resources; sending a message wakes it) — clearer than the old "stuck",
+// which implied something was broken. Covers both resumable + paused statuses.
 function statusLabel(status: string): string | null {
   switch (status) {
-    case "paused": case "resumable": return "stuck";
+    case "paused": case "resumable": return "paused";
     case "failed": return "failed";
     case "completed": return null; // green pip is enough
     default: return null;
