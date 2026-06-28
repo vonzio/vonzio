@@ -652,10 +652,17 @@ export function setupWsHandler(
         // the goal-mode acceptance criteria too (when present) so the criteria
         // chips render under the user bubble on refresh, not just live.
         const turnCriteria = (msg as Record<string, unknown>).acceptance_criteria as string[] | undefined;
+        // Persist attachment FILE METADATA (name + type) so the attachment chips
+        // survive a refresh — same as the Telegram surface. We deliberately do
+        // NOT persist the base64 image bytes (that would bloat the JSONL and the
+        // orchestrator already wrote the files into the container).
+        const turnAttachments = (msg as Record<string, unknown>).attachments as TaskAttachment[] | undefined;
+        const turnFiles = turnAttachments?.map((a) => ({ name: a.name ?? "attachment", type: a.type }));
         eventLog.append(msg.session_id, "user_message", {
           type: "user_message",
           session_id: msg.session_id,
           text: msg.message,
+          ...(turnFiles && turnFiles.length > 0 && { files: turnFiles }),
           ...(turnCriteria && turnCriteria.length > 0 && { acceptance_criteria: turnCriteria }),
         });
 
@@ -676,7 +683,7 @@ export function setupWsHandler(
             model: msg.model,
             // session.turn isn't in ClientMessage's discriminated union yet —
             // the field is validated by submitTaskSchema upstream.
-            attachments: (msg as Record<string, unknown>).attachments as TaskAttachment[] | undefined,
+            attachments: turnAttachments,
             // Per-message goal-loop override (composer "Run until done" toggle +
             // acceptance criteria). Undefined goal_mode → profile default decides.
             goal_mode: (msg as Record<string, unknown>).goal_mode as boolean | undefined,

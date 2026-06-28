@@ -36,6 +36,28 @@ function initialOf(name?: string): string {
 // indent to this width so they line up under the name, like the template.
 const ROW_INDENT = 40;
 
+/** Best-effort filename from an image URL (strips query + path). */
+function nameFromUrl(url: string): string {
+  if (url.startsWith("data:")) return "image";
+  try {
+    const path = new URL(url, window.location.origin).pathname;
+    return decodeURIComponent(path.split("/").pop() || "image") || "image";
+  } catch {
+    return "image";
+  }
+}
+
+/** Best-effort image media type from a URL's extension. */
+function mediaTypeFromUrl(url: string): string {
+  const m = /data:([^;]+)[;,]/.exec(url);
+  if (m) return m[1];
+  const ext = (nameFromUrl(url).match(/\.([a-z0-9]+)$/i)?.[1] || "").toLowerCase();
+  if (!ext) return "image/png";
+  if (ext === "jpg") return "image/jpeg";
+  if (ext === "svg") return "image/svg+xml";
+  return `image/${ext}`;
+}
+
 function MsgRow({
   avatar,
   name,
@@ -44,6 +66,7 @@ function MsgRow({
   trailing,
   divider = false,
   compact = false,
+  anchorId,
 }: {
   avatar: React.ReactNode;
   name: React.ReactNode;
@@ -51,6 +74,8 @@ function MsgRow({
   children: React.ReactNode;
   trailing?: React.ReactNode;
   divider?: boolean;
+  /** DOM id for the row wrapper — used as a scroll anchor by the thread navigator. */
+  anchorId?: string;
   // When true, suppress the avatar/name/time header row and render the
   // body directly — useful for stacking content rows under a single
   // shared header (e.g. multiple agent events in one turn).
@@ -58,6 +83,7 @@ function MsgRow({
 }) {
   return (
     <div
+      id={anchorId}
       className="group/msg animate-[fadeIn_0.2s_ease-out]"
       style={{
         padding: compact ? "0 0 14px 0" : "14px 0",
@@ -567,6 +593,7 @@ export function MessageList({
           return (
             <MsgRow
               key={msg.id}
+              anchorId={`vz-turn-${msg.id}`}
               avatar={<UserAvatar letter={userInitial} />}
               name="You"
               time={msg.timestamp}
@@ -694,8 +721,20 @@ export function MessageList({
               }
             >
               <div
-                className={`${proseClass} prose-sm max-w-none prose-pre:bg-[var(--vz-mute)] prose-pre:border prose-pre:border-[var(--vz-border)] prose-code:before:content-none prose-code:after:content-none [&_code]:text-[color:var(--vz-sodium)] [&_pre_code]:text-[color:var(--vz-ink-2)] [&_pre_code]:bg-transparent [&_pre_code]:border-0 [&_pre_code]:p-0 [&_a]:text-[color:var(--vz-sodium)] [&_a]:underline [&_a]:break-all hover:[&_a]:opacity-80 [&_h1]:text-[color:var(--vz-ink)] [&_h2]:text-[color:var(--vz-ink)] [&_h3]:text-[color:var(--vz-ink)] [&_h4]:text-[color:var(--vz-ink)] [&_strong]:text-[color:var(--vz-ink)] [&_blockquote]:not-italic [&_blockquote]:border-l-2 [&_blockquote]:border-[color:var(--vz-sodium)] [&_blockquote]:bg-[var(--vz-mute)] [&_blockquote]:rounded-r-md [&_blockquote]:px-4 [&_blockquote]:py-2 [&_blockquote]:my-3 [&_blockquote]:text-[color:var(--vz-ink-2)] [&_blockquote_p]:my-1 [&_blockquote_p]:before:content-none [&_blockquote_p]:after:content-none`}
+                className={`${proseClass} prose-sm max-w-none [&_img]:cursor-zoom-in prose-pre:bg-[var(--vz-mute)] prose-pre:border prose-pre:border-[var(--vz-border)] prose-code:before:content-none prose-code:after:content-none [&_code]:text-[color:var(--vz-sodium)] [&_pre_code]:text-[color:var(--vz-ink-2)] [&_pre_code]:bg-transparent [&_pre_code]:border-0 [&_pre_code]:p-0 [&_a]:text-[color:var(--vz-sodium)] [&_a]:underline [&_a]:break-all hover:[&_a]:opacity-80 [&_h1]:text-[color:var(--vz-ink)] [&_h2]:text-[color:var(--vz-ink)] [&_h3]:text-[color:var(--vz-ink)] [&_h4]:text-[color:var(--vz-ink)] [&_strong]:text-[color:var(--vz-ink)] [&_blockquote]:not-italic [&_blockquote]:border-l-2 [&_blockquote]:border-[color:var(--vz-sodium)] [&_blockquote]:bg-[var(--vz-mute)] [&_blockquote]:rounded-r-md [&_blockquote]:px-4 [&_blockquote]:py-2 [&_blockquote]:my-3 [&_blockquote]:text-[color:var(--vz-ink-2)] [&_blockquote_p]:my-1 [&_blockquote_p]:before:content-none [&_blockquote_p]:after:content-none`}
                 style={{ fontSize: 14, lineHeight: 1.65, color: "var(--vz-ink)" }}
+                // Open any agent-rendered markdown image in the media viewer
+                // (same lightbox as uploaded attachments), instead of letting a
+                // wrapping link navigate away.
+                onClick={(e) => {
+                  const el = e.target as HTMLElement;
+                  if (el.tagName !== "IMG") return;
+                  const url = (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src;
+                  if (!url) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSourceViewer({ url, mediaType: mediaTypeFromUrl(url), name: nameFromUrl(url) });
+                }}
               >
                 <MarkdownContent content={cleanContent} isStreaming={isLastStreaming} />
                 {isLastStreaming && (
