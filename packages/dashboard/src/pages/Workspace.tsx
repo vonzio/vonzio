@@ -16,6 +16,7 @@ import { RightPanel, type TabId } from "../components/RightPanel.js";
 import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet.js";
 import { UserMenu } from "../components/UserMenu.js";
 import { MessageList } from "../components/MessageList.js";
+import { ThreadNavigator } from "../components/ThreadNavigator.js";
 import { QuestionPicker } from "../components/ChatCore.js";
 import { HOME_DRAFT_KEY, HOME_AGENT_KEY } from "./Home.js";
 import { reopenOnboarding } from "../components/OnboardingHost.js";
@@ -830,6 +831,18 @@ export function Workspace() {
     return out;
   }, [chat.messages, persistedHistory]);
 
+  // User questions for the thread navigator — id (anchor) + a one-line label.
+  const navTurns = useMemo(
+    () =>
+      chat.messages
+        .filter((m) => m.role === "user")
+        .map((m) => ({
+          id: String(m.id),
+          label: (typeof m.content === "string" ? m.content : "").trim().replace(/\s+/g, " ").slice(0, 80),
+        })),
+    [chat.messages],
+  );
+
   // ArrowUp/ArrowDown composer history. Only engages when the caret is at the
   // very start (so multi-line editing/normal cursor movement is unaffected) or
   // when already navigating. Returns true if it handled the key.
@@ -1286,6 +1299,14 @@ export function Workspace() {
                 <div style={{ color: "var(--vz-sodium)", fontWeight: 500, fontSize: 14 }}>Drop files here</div>
               </div>
             )}
+
+            {/* Thread navigator — jump between questions in long threads.
+                Self-hides for short/unscrollable threads. */}
+            <ThreadNavigator
+              scrollRef={scrollRef}
+              turns={navTurns}
+              onScrollToBottom={() => scrollToBottom()}
+            />
 
             {/* Scroll to bottom button */}
             {showScrollBtn && (
