@@ -18,7 +18,13 @@
     "backendEntry": "./src/index.ts",
     "frontendEntry": "./src/frontend.tsx",
     "schemaPrefix": "telegram",
-    "routePrefix": { "kind": "absolute", "prefix": ["/v1/integrations/telegram", "/api/telegram"] },
+    "routePrefix": {
+      "kind": "absolute",
+      "prefix": [
+        "/v1/integrations/telegram",
+        "/api/telegram"
+      ]
+    },
     "capabilities": [
       "db.access",
       "encryption.encrypt",
@@ -48,7 +54,10 @@
       "scheduler.run",
       "http.outbound"
     ],
-    "outboundHosts": ["api.telegram.org", "api.anthropic.com"]
+    "outboundHosts": [
+      "api.telegram.org",
+      "api.anthropic.com"
+    ]
   },
   "exports": {
     ".": {
@@ -83,11 +92,13 @@
     "zod": "^3.24.4"
   },
   "peerDependencies": {
-    "fastify": "^5.0.0",
+    "fastify": "^5.9.0",
     "lucide-react": "^0.474.0",
     "react": "^19.0.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true }
+    "react": {
+      "optional": true
+    }
   }
 }
