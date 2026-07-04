@@ -38,7 +38,7 @@ describe("ApiKeyService.list — org-scoped shared-key visibility", () => {
     expect(await idsFor("testeur", "user", null)).toContain(key.id);
   });
 
-  it("still org-gates a key the grantee IS a member of (no cross-tenant leak)", async () => {
+  it("keeps an org-materialized granted key visible from ANY of the member's org contexts (union model)", async () => {
     const key = await runWithOrgId("org-team", () =>
       svc.create({ name: "team-key", provider: "api_key", api_key: "sk-y", allowed_user_ids: ["member1"] }),
     );
@@ -46,10 +46,23 @@ describe("ApiKeyService.list — org-scoped shared-key visibility", () => {
     // member1 is a member of the team org (org-materialized share).
     svc.setOrgMembershipResolver(async () => new Set(["org-team", "org-personal"]));
 
-    // Hidden when acting in their personal org…
-    expect(await idsFor("member1", "user", "org-personal")).not.toContain(key.id);
-    // …visible when the team org is active.
+    // The explicit grant wins: visible from their personal org context…
+    expect(await idsFor("member1", "user", "org-personal")).toContain(key.id);
+    // …from the team org, and with no active org pinned.
     expect(await idsFor("member1", "user", "org-team")).toContain(key.id);
+    expect(await idsFor("member1", "user", null)).toContain(key.id);
+  });
+
+  it("still org-gates the implicit admin path (admin of another org, no grant)", async () => {
+    // Fully-shared key in org-team; admin_x has NO junction grant and is a
+    // member of org-team — role-based visibility must not cross org contexts.
+    const key = await runWithOrgId("org-team", () =>
+      svc.create({ name: "team-key", provider: "api_key", api_key: "sk-t" }),
+    );
+    svc.setOrgMembershipResolver(async () => new Set(["org-team", "org-personal"]));
+
+    expect(await idsFor("admin_x", "admin", "org-personal")).not.toContain(key.id);
+    expect(await idsFor("admin_x", "admin", "org-team")).toContain(key.id);
   });
 
   it("does not show a shared key to a user without a junction grant", async () => {

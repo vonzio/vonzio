@@ -89,17 +89,17 @@ export class ApiKeyService {
 
   /** List keys visible to a user: their own + shared keys where they are in api_key_users.
    *
-   * Active-org scoping: an org-materialized shared key (org_id set, grantee
-   * is a MEMBER of that org) is only included when the active org matches —
-   * this prevents cross-tenant leak (a member of Vonzio + their own personal
-   * org sees the Vonzio team key only when active org IS Vonzio). But an
-   * explicit admin cross-user share (org_id incidentally stamped to the
-   * admin's org, grantee NOT a member of it) is visible regardless of active
-   * org — otherwise the grantee, whose active org is their own, could never
-   * see a key an admin deliberately shared with them. Personal-scope keys
-   * (user_id matches) and legacy admin-shared keys (user_id null AND org_id
-   * null) are always visible. OSS has no membership resolver → org-tagged
-   * shared keys behave as before for the (single-tenant) default.
+   * Grant-based visibility (union model): an explicit api_key_users grant IS
+   * the sharing intent, so a granted key is visible regardless of the active
+   * org — a member invited to a team sees the team's shared keys even while
+   * their active org is their personal one (they should never have to
+   * context-switch to use a key deliberately shared with them). The active-org
+   * check only gates the implicit admin path (admins see fully-shared keys
+   * without a grant, but only inside the org the key belongs to — that keeps
+   * an admin of org A from listing org B's keys just by role). Personal-scope
+   * keys (user_id matches) and legacy admin-shared keys (user_id null AND
+   * org_id null) are always visible. OSS has no membership resolver →
+   * org-tagged shared keys behave as before for the (single-tenant) default.
    */
   async list(userId?: string, userRole?: string): Promise<AnthropicKey[]> {
     const rows = await this.db.select().from(schema.anthropicKeys);
@@ -135,9 +135,10 @@ export class ApiKeyService {
         const grantedByJunction = (junctionMap.get(r.id) ?? []).includes(userId);
         const adminShared = userRole === "admin" && !r.user_id;
         if (!grantedByJunction && !adminShared) return false;
-        // Org-tagged key not in the active org → hide ONLY if the user is a
-        // member of that org (a real org-context switch). A non-member with
-        // an explicit grant is a cross-user share → keep it.
+        if (grantedByJunction) return true; // explicit grant wins in any org context
+        // Implicit admin visibility only: org-tagged key outside the active
+        // org → hide when the admin is a member of that org (a real
+        // org-context switch shouldn't surface another org's keys by role).
         if (r.org_id && r.org_id !== activeOrgId && memberOrgIds.has(r.org_id)) return false;
         return true;
       })
