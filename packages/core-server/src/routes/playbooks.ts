@@ -339,40 +339,81 @@ export interface PlaybookWebhookOptions {
   chainRunner: ChainRunner;
 }
 
+// Cap the raw body we buffer for a trigger. The prompt injection caps at
+// 16KB anyway, but bound the socket read so a huge POST can't balloon
+// memory before we truncate.
+const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
+
+// Content-Type → a short, SAFE source label. The header is attacker-
+// controlled, so we never interpolate it raw into the prompt framing;
+// strip to a conservative charset and cap length so it can't forge the
+// payload block's delimiter line.
+function safeSourceLabel(contentType: string | undefined): string {
+  const ct = (contentType ?? "").split(";")[0].trim().toLowerCase();
+  const clean = ct.replace(/[^a-z0-9._/+-]/g, "").slice(0, 64);
+  return clean ? `webhook:${clean}` : "webhook";
+}
+
 export const playbookWebhookRoute = fp(
   async (server: FastifyInstance, opts: PlaybookWebhookOptions) => {
     const { playbookService, chainRunner } = opts;
 
-    // This route lives OUTSIDE the /v1 auth scope and is reachable by
-    // anyone holding (or guessing) a token, so it needs its own
-    // throttle. ~30 requests/minute per key, keyed by token + client IP
-    // so a single token or a single IP can't flood the chain runner.
-    const webhookRateLimiter = new SlidingWindowRateLimiter(60_000, 30);
+    // Encapsulated child scope so the catch-all body parser below applies
+    // ONLY to the webhook route, not the whole server.
+    await server.register(async (scope) => {
+      // Webhook senders use every content type (JSON, form-encoded, XML,
+      // vendor types). Fastify parses only json/text by default and 415s
+      // the rest — which would silently drop the trigger. Buffer ANY body
+      // as a raw string; the agent gets the payload verbatim.
+      scope.removeAllContentTypeParsers();
+      scope.addContentTypeParser("*", { parseAs: "string", bodyLimit: MAX_WEBHOOK_BODY_BYTES }, (_req, body, done) => {
+        if (typeof body !== "string" || body.length === 0) return done(null, null);
+        // Try JSON so the agent sees structured data; otherwise raw text.
+        try {
+          done(null, JSON.parse(body));
+        } catch {
+          done(null, body);
+        }
+      });
 
-    server.post<{ Params: { token: string } }>(
-      "/v1/webhook/playbook/:token",
-      async (request, reply) => {
-        const rateKey = `${request.params.token}:${request.ip ?? "unknown"}`;
-        const limit = webhookRateLimiter.tryConsume(rateKey);
-        if (!limit.allowed) {
-          if (limit.retryAfter !== undefined) {
-            reply.header("Retry-After", String(limit.retryAfter));
+      // This route lives OUTSIDE the /v1 auth scope and is reachable by
+      // anyone holding (or guessing) a token, so it needs its own
+      // throttle. ~30 requests/minute per key, keyed by token + client IP
+      // so a single token or a single IP can't flood the chain runner.
+      const webhookRateLimiter = new SlidingWindowRateLimiter(60_000, 30);
+
+      scope.post<{ Params: { token: string } }>(
+        "/v1/webhook/playbook/:token",
+        async (request, reply) => {
+          const rateKey = `${request.params.token}:${request.ip ?? "unknown"}`;
+          const limit = webhookRateLimiter.tryConsume(rateKey);
+          if (!limit.allowed) {
+            if (limit.retryAfter !== undefined) {
+              reply.header("Retry-After", String(limit.retryAfter));
+            }
+            return reply.code(429).send({ error: "Too many requests" });
           }
-          return reply.code(429).send({ error: "Too many requests" });
-        }
-        const playbook = await playbookService.getByWebhookToken(request.params.token);
-        if (!playbook) {
-          return reply.code(404).send({ error: "Not found" });
-        }
-        if (!playbook.enabled || playbook.trigger_type !== "webhook") {
-          return reply.code(400).send({ error: "Playbook not configured for webhook triggers" });
-        }
+          const playbook = await playbookService.getByWebhookToken(request.params.token);
+          if (!playbook) {
+            return reply.code(404).send({ error: "Not found" });
+          }
+          if (!playbook.enabled || playbook.trigger_type !== "webhook") {
+            return reply.code(400).send({ error: "Playbook not configured for webhook triggers" });
+          }
 
-        // Fire in background
-        chainRunner.execute(playbook, playbook.user_id).catch(() => {});
-        return reply.code(202).send({ status: "triggered", playbook_id: playbook.id });
-      },
-    );
+          // Inject the request body into the run so the agent acts on it.
+          const source = safeSourceLabel(request.headers["content-type"]);
+          // Fire in background — triggers are fire-and-forget (202). Log
+          // failures so a broken run isn't invisible despite the 202.
+          chainRunner
+            .execute(playbook, playbook.user_id, { source, payload: request.body ?? null })
+            .catch((err) => {
+              request.log.error({ err, playbookId: playbook.id }, "webhook-triggered playbook run failed");
+            });
+          return reply.code(202).send({ status: "triggered", playbook_id: playbook.id });
+        },
+      );
+    });
   },
   { name: "playbook-webhook-route" },
 );
