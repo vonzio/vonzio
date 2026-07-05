@@ -23,6 +23,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { encodeThreadClaim, encodeThreadDismiss } from "@vonzio/shared";
 import type { NotificationHandler, PluginContext } from "@vonzio/plugin-api";
 import type { TelegramConfig } from "./types.js";
+import type { PlatformBotService } from "./services/platform-bot-service.js";
 import {
   TelegramService,
   toTelegramHtml,
@@ -40,7 +41,10 @@ interface TelegramNotifyMetadata {
  * Build a NotificationHandler bound to the plugin's services + context.
  * Called from init().
  */
-export function buildTelegramNotifyHandler(ctx: PluginContext): NotificationHandler {
+export function buildTelegramNotifyHandler(
+  ctx: PluginContext,
+  platformBotService: PlatformBotService,
+): NotificationHandler {
   const telegramService = new TelegramService(ctx.http);
 
   return async function notifyTelegram(req) {
@@ -74,6 +78,21 @@ export function buildTelegramNotifyHandler(ctx: PluginContext): NotificationHand
     }
 
     const config = integration.config as unknown as TelegramConfig;
+    // Platform-owned rows persist an empty bot_token (env is the source
+    // of truth) — same splice as the inbound webhook path. Without this,
+    // notifications to platform-bot-paired users send with "" and fail.
+    const botToken = config.is_platform_owned
+      ? platformBotService.getToken()
+      : config.bot_token;
+    if (!botToken) {
+      return {
+        ok: false,
+        error: config.is_platform_owned
+          ? "platform bot token unavailable"
+          : "Telegram bot token missing",
+        retryable: Boolean(config.is_platform_owned),
+      };
+    }
     if (!config.owner_tg_user_id) {
       return {
         ok: false,
@@ -107,7 +126,7 @@ export function buildTelegramNotifyHandler(ctx: PluginContext): NotificationHand
           : undefined;
 
       try {
-        const sent = await telegramService.sendMessage(config.bot_token, {
+        const sent = await telegramService.sendMessage(botToken, {
           chat_id: config.owner_tg_user_id,
           text: chunk,
           parse_mode: "HTML",
@@ -119,7 +138,7 @@ export function buildTelegramNotifyHandler(ctx: PluginContext): NotificationHand
         // HTML parse rejection from the API -- retry as plain text after
         // stripping tags. Surfaces a failure result if even that fails.
         try {
-          const sent = await telegramService.sendMessage(config.bot_token, {
+          const sent = await telegramService.sendMessage(botToken, {
             chat_id: config.owner_tg_user_id,
             text: stripTelegramHtml(chunk),
             ...(replyMarkup ? { reply_markup: replyMarkup } : {}),

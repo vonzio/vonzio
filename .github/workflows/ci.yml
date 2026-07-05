@@ -118,6 +118,7 @@ jobs:
           npx vitest run \
             packages/shared \
             packages/plugin-api \
+            packages/plugins/telegram/src/routes/stranger-cta.test.ts \
             packages/core-server/src/orchestrator/retry.test.ts \
             packages/core-server/src/orchestrator/agent-comms.test.ts \
             packages/core-server/src/queue/queue.test.ts \

@@ -6,6 +6,7 @@ export default defineConfig({
       "packages/shared/vitest.config.ts",
       "packages/plugin-api/vitest.config.ts",
       "packages/core-server/vitest.config.ts",
+      "packages/plugins/telegram/vitest.config.ts",
       "agent-runner/vitest.config.ts",
     ],
   },

@@ -33,6 +33,9 @@ import { telegramMigrations } from "./db/migrations.js";
 const configSchema = z.object({
   PLATFORM_TELEGRAM_BOT_TOKEN: z.string().optional(),
   PLATFORM_TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  // Where the stranger-CTA reply points people who message the platform
+  // bot without a linked account. Defaults to BETTER_AUTH_URL (the app).
+  PLATFORM_TELEGRAM_CTA_URL: z.string().optional(),
   // BETTER_AUTH_URL is a CORE env var (not telegram-specific). We
   // re-validate it here so the plugin's webhook construction has it
   // typed -- core has already loaded process.env.dotenv so the
@@ -113,7 +116,10 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
     // PluginSessionLifecycle (register / extendExpiry / setStatus /
     // getConnectedSessionIds).
     await ctx.server.register(telegramEventsRoutes, {
-      config: { BETTER_AUTH_URL: ctx.config.BETTER_AUTH_URL },
+      config: {
+        BETTER_AUTH_URL: ctx.config.BETTER_AUTH_URL,
+        PLATFORM_TELEGRAM_CTA_URL: ctx.config.PLATFORM_TELEGRAM_CTA_URL,
+      },
       db: ctx.core.db as NodePgDatabase<Record<string, never>>,
       integrationService: ctx.core.integrations,
       telegramService,
@@ -138,7 +144,7 @@ const plugin: VonzioPlugin<TelegramPluginConfig> = {
     // Real notification handler -- resolves req.recipient (integration
     // id) -> bot_token + chat -> chunked MarkdownV2 send with
     // plain-text fallback -> thread-claim row persistence.
-    ctx.notificationBus.registerHandler("telegram", buildTelegramNotifyHandler(ctx));
+    ctx.notificationBus.registerHandler("telegram", buildTelegramNotifyHandler(ctx, platformBotService));
 
     // Chat-surface presence provider. Replaces the three places where
     // core used to read schema.telegram* directly.
