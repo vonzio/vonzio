@@ -248,6 +248,13 @@ export function TelegramSettings() {
                         )}
                         {bot.linked && (
                           <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => { try { window.open(`https://t.me/${bot.bot_username}`, "_blank", "noopener,noreferrer"); } catch { /* no-op */ } }}
+                            >
+                              Open chat
+                            </Button>
                             <Select
                               value={bot.bound_profile_id ?? ""}
                               onChange={(v) => handleUpdateBinding(bot.id, v || null)}

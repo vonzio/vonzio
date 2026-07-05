@@ -113,9 +113,18 @@ export const integrationRoutes = fp(
         if (!integration || integration.user_id !== user.id) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Integration not found"));
         }
+        // Route to the EXACT integration that was clicked. The bare
+        // channel form resolves the user's default integration of that
+        // type — with multiple Telegram bots (platform + agent-bound)
+        // that sent every "Test" through the default bot regardless of
+        // which row the button was on.
+        const channel =
+          integration.type === "telegram"
+            ? `telegram:${integration.id}`
+            : (integration.type as NotificationChannel);
         const result = await notificationService.send({
           userId: user.id,
-          channel: integration.type as NotificationChannel,
+          channel,
           message: "This is a test notification from Vonzio. If you received this, your integration is working correctly.",
           urgency: "normal",
           source: "platform",
