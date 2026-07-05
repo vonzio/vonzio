@@ -28,6 +28,14 @@ jobs:
     name: changes
     runs-on: ${{ vars.CI_RUNNER_LABELS || 'ubuntu-latest' }}
     timeout-minutes: 5
+    # paths-filter calls the PR list-files API. Repos with restricted
+    # default GITHUB_TOKEN permissions (the private cloud mirror) fail
+    # with "Resource not accessible by integration" without this —
+    # which also silently disabled image build+scan on Docker-touching
+    # PRs there, since the filter died before it could say "rebuild".
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       agent: ${{ steps.filter.outputs.agent }}
     steps:
