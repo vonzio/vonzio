@@ -81,6 +81,7 @@ import { memoryRoutes } from "./routes/memories.js";
 import { memoryMcpPlugin } from "./mcp/memory-mcp.js";
 import { notifyMcpPlugin } from "./mcp/notify-mcp.js";
 import { mailMcpPlugin } from "./mcp/mail-mcp.js";
+import { calendarMcpPlugin } from "./mcp/calendar-mcp.js";
 import { platformMcpPlugin } from "./mcp/platform-mcp.js";
 import { localFsMcpPlugin } from "./mcp/local-fs-mcp.js";
 import { ErrorCodes, errorResponse } from "./errors.js";
@@ -814,6 +815,15 @@ export async function buildServer(deps: ServerDeps) {
     integrationService,
     resolveSession: (token: string) => {
       const session = orchestrator.resolveMailToken(token);
+      return session ? { userId: session.userId, sessionId: session.sessionId, profileId: session.profileId } : null;
+    },
+  });
+
+  // Calendar MCP endpoint (token-based auth — used by agent containers)
+  server.register(calendarMcpPlugin, {
+    integrationService,
+    resolveSession: (token: string) => {
+      const session = orchestrator.resolveCalendarToken(token);
       return session ? { userId: session.userId, sessionId: session.sessionId, profileId: session.profileId } : null;
     },
   });
