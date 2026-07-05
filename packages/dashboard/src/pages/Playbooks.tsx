@@ -571,12 +571,34 @@ export function Playbooks() {
                   />
                 </Field>
               )}
-              {triggerType === "webhook" && editingId && (
+              {triggerType === "webhook" && editingId && webhookToken && (
+                <Field label="Webhook URL" hint="POST here to run this playbook. The request body is handed to your agent.">
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <Input value={`${window.location.origin}/v1/webhook/playbook/${webhookToken}`} readOnly style={{ flex: 1 }} />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { void navigator.clipboard?.writeText(`${window.location.origin}/v1/webhook/playbook/${webhookToken}`).catch(() => {}); }}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </Field>
+              )}
+              {triggerType === "webhook" && (!editingId || !webhookToken) && (
                 <Field label="Webhook URL">
-                  <Input value={`${window.location.origin}/v1/webhook/playbook/${webhookToken}`} readOnly />
+                  <div style={{ fontSize: 12, color: "var(--vz-muted)" }}>
+                    Save the playbook to generate its webhook URL, then reopen to copy it.
+                  </div>
                 </Field>
               )}
             </Row>
+            {triggerType === "webhook" && editingId && webhookToken && (
+              <div style={{ fontSize: 11, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)", marginTop: 4 }}>
+                Example: curl -X POST -H "Content-Type: application/json" -d {'\'{"event":"..."}\''} &lt;url&gt;
+              </div>
+            )}
 
             <SectionLabel>Chain config</SectionLabel>
             <Row>
