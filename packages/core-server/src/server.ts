@@ -994,11 +994,18 @@ export async function buildServer(deps: ServerDeps) {
       // frame-ancestors: 'self' + any operator-listed widget origins, so the
       // embeddable chat can be iframed on the vonzio origin (and approved
       // external sites) but nowhere else.
+      // frame-src: previews, plus the Cloudflare Turnstile challenge iframe
+      // when captcha is configured — without it the login widget renders a
+      // blocked frame and sign-in dead-ends with Turnstile error 300030.
+      let frameSrc = previewFrameSrc(
+        config.PREVIEW_MODE === "hostname" ? config.PREVIEW_DOMAIN : undefined,
+      );
+      if (config.TURNSTILE_SITE_KEY) frameSrc += " https://challenges.cloudflare.com";
       return serveDashboardIndex(
         reply,
         indexTemplate,
         widgetFrameAncestors(config.WIDGET_ALLOWED_ORIGINS),
-        previewFrameSrc(config.PREVIEW_MODE === "hostname" ? config.PREVIEW_DOMAIN : undefined),
+        frameSrc,
       );
     });
   }
