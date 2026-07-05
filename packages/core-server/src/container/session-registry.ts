@@ -124,20 +124,61 @@ export class SessionRegistry {
 
     this.sessions.set(sessionId, session);
 
-    await this.db
-      .insert(schema.workspaces)
-      .values({
-        session_id: sessionId,
+    // Revive-or-insert. A workspace row may already exist for this
+    // session id with status "expired" — expired rows are retained for
+    // history, and chat surfaces (Telegram active-session mappings,
+    // playbook threads) can legitimately re-dispatch under the same id
+    // long after expiry. A blind insert then dies on workspaces_pkey
+    // (surfaced 2026-07-05: agent-bound Telegram bot replying into a
+    // chat mapped to an expired pb-* session). Reviving preserves the
+    // row's identity fields (name, tags, created_at) and refreshes the
+    // lifecycle columns. Guard: never revive a row owned by a DIFFERENT
+    // user — a session id is not a capability.
+    const revived = await this.db
+      .update(schema.workspaces)
+      .set({
         container_id: containerId,
-        user_id: userId,
-        org_id: effectiveOrgId,
         profile_id: profileId,
         persistent,
         status: "active",
         last_active_at: now,
-        created_at: now,
         expires_at: expiresAt,
-      });
+      })
+      .where(
+        and(
+          eq(schema.workspaces.session_id, sessionId),
+          eq(schema.workspaces.user_id, userId),
+        ),
+      )
+      .returning({ session_id: schema.workspaces.session_id });
+    if (revived.length === 0) {
+      try {
+        await this.db
+          .insert(schema.workspaces)
+          .values({
+            session_id: sessionId,
+            container_id: containerId,
+            user_id: userId,
+            org_id: effectiveOrgId,
+            profile_id: profileId,
+            persistent,
+            status: "active",
+            last_active_at: now,
+            created_at: now,
+            expires_at: expiresAt,
+          });
+      } catch (err) {
+        // Insert lost a race OR the row belongs to another user. The
+        // update above already excludes other-user rows, so a conflict
+        // here after a failed revive means cross-user session-id reuse —
+        // fail loudly rather than attach to someone else's workspace.
+        this.sessions.delete(sessionId);
+        throw new Error(
+          `session ${sessionId} already exists and is not owned by user ${userId}`,
+          { cause: err },
+        );
+      }
+    }
 
     return session;
   }
