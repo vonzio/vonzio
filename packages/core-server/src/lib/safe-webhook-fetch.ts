@@ -552,3 +552,33 @@ export async function safeFetchCore(
 
 // Exported for tests
 export const __test = { isBlockedIp, isAllowlisted };
+
+
+/**
+ * SSRF guard for raw-socket protocols (IMAP/SMTP — feature 0035) that
+ * can't go through safeFetch. Resolves `host` and rejects if it is an
+ * IP literal in, or resolves to, a blocked range. Returns the pinned IP
+ * so the caller connects to THAT (defeating rebinding) while presenting
+ * the original hostname as the TLS servername for cert validation.
+ * Throws SsrfBlockedError on any blocked/invalid host.
+ */
+export async function assertSocketHostAllowed(host: string): Promise<{ pinnedIp: string; family: 4 | 6 }> {
+  const bare = bareHostname(host);
+  if (!bare) throw new SsrfBlockedError("missing host", host);
+  const literal = isIP(bare);
+  if (literal) {
+    if (isBlockedIp(bare)) throw new SsrfBlockedError(`IP ${bare} in blocked range`, host);
+    return { pinnedIp: bare, family: literal as 4 | 6 };
+  }
+  let records: { address: string; family: number }[];
+  try {
+    records = await dnsLookup(bare, { all: true });
+  } catch (err) {
+    throw new SsrfBlockedError(`DNS resolution failed: ${err instanceof Error ? err.message : String(err)}`, host);
+  }
+  if (records.length === 0) throw new SsrfBlockedError("no DNS records", host);
+  for (const r of records) {
+    if (isBlockedIp(r.address)) throw new SsrfBlockedError(`resolved IP ${r.address} is blocked`, host);
+  }
+  return { pinnedIp: records[0].address, family: records[0].family as 4 | 6 };
+}

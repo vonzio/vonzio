@@ -3,6 +3,7 @@ import fp from "fastify-plugin";
 import type { IntegrationService } from "../services/integration-service.js";
 import type { NotificationService } from "../services/notification-service.js";
 import type { ProfileService } from "../services/profile-service.js";
+import { MailService, type MailConfig } from "../services/mail-service.js";
 import type { NotificationChannel } from "@vonzio/shared";
 import type { Scope } from "../services/scope.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
@@ -37,16 +38,46 @@ export const integrationRoutes = fp(
       Body: { type: string; config: Record<string, unknown>; is_default?: boolean };
     }>("/v1/integrations", async (request, reply) => {
       const user = request.user!;
-      const { type, config, is_default } = request.body;
+      const { type, is_default } = request.body;
+      let { config } = request.body;
 
-      if (!["email", "webhook"].includes(type)) {
-        return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Type must be 'email' or 'webhook'. Use OAuth for Slack."));
+      if (!["email", "webhook", "mail"].includes(type)) {
+        return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Type must be 'email', 'webhook', or 'mail'. Use OAuth for Slack."));
       }
       if (type === "email" && (!config.api_key || !config.from_address)) {
         return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Email requires api_key and from_address"));
       }
       if (type === "webhook" && !config.url) {
         return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Webhook requires url"));
+      }
+      if (type === "mail") {
+        // Universal IMAP/SMTP connector (feature 0035). Coerce ports and
+        // live-verify BOTH protocols before persisting — a saved-but-dead
+        // mailbox is worse than an upfront error in the modal.
+        const required = ["imap_host", "smtp_host", "username", "password"] as const;
+        for (const k of required) {
+          if (typeof config[k] !== "string" || !(config[k] as string).trim()) {
+            return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, `Mail requires ${k}`));
+          }
+        }
+        const mailCfg: MailConfig = {
+          imap_host: (config.imap_host as string).trim(),
+          imap_port: Number(config.imap_port) || 993,
+          smtp_host: (config.smtp_host as string).trim(),
+          smtp_port: Number(config.smtp_port) || 465,
+          username: (config.username as string).trim(),
+          password: config.password as string,
+          security: config.security === "starttls" ? "starttls" : "tls",
+          from_address: typeof config.from_address === "string" && config.from_address.trim() ? (config.from_address as string).trim() : undefined,
+          from_name: typeof config.from_name === "string" && config.from_name.trim() ? (config.from_name as string).trim() : undefined,
+          allow_send: config.allow_send !== false,
+        };
+        try {
+          await new MailService().verify(mailCfg);
+        } catch (err) {
+          return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, err instanceof Error ? err.message : "Mail verification failed"));
+        }
+        config = mailCfg as unknown as Record<string, unknown>;
       }
 
       // Check for existing
@@ -112,6 +143,21 @@ export const integrationRoutes = fp(
         const integration = await integrationService.get(request.params.id);
         if (!integration || integration.user_id !== user.id) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Integration not found"));
+        }
+        if (integration.type === "mail") {
+          // Mail isn't a notification channel — test by sending the user
+          // an email to their own address THROUGH the connector itself.
+          const cfg = integration.config as unknown as MailConfig;
+          try {
+            await new MailService().send(cfg, {
+              to: cfg.from_address || cfg.username,
+              subject: "Vonzio mail connector test",
+              body: "This is a test email from Vonzio. If you received this, your mail integration is working correctly.",
+            });
+            return { status: "sent", channel: "mail" };
+          } catch (err) {
+            return reply.code(502).send(errorResponse(ErrorCodes.BAD_GATEWAY, err instanceof Error ? err.message : "Mail test failed"));
+          }
         }
         // Route to the EXACT integration that was clicked. The bare
         // channel form resolves the user's default integration of that
