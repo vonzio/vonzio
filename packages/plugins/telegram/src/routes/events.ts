@@ -46,6 +46,7 @@ import type { TelegramService } from "../services/telegram-service.js";
 import { toTelegramHtml, chunkMarkdown, stripTelegramHtml } from "../services/telegram-service.js";
 import { PlatformBotService } from "../services/platform-bot-service.js";
 import type { TelegramConfig } from "../types.js";
+import { createStrangerCtaGate } from "./stranger-cta.js";
 import {
   telegramSessions,
   telegramActiveSessions,
@@ -85,7 +86,7 @@ function resolveWorkspaceModel(
 type DrizzleDB = NodePgDatabase<Record<string, never>>;
 
 export interface TelegramEventsRoutesOptions {
-  config: { BETTER_AUTH_URL: string };
+  config: { BETTER_AUTH_URL: string; PLATFORM_TELEGRAM_CTA_URL?: string };
   db: DrizzleDB;
   integrationService: PluginIntegrationLookup;
   telegramService: TelegramService;
@@ -249,6 +250,13 @@ const pendingAskSessions = new Set<string>();
 // the same one. Set is bounded by TTL: at Telegram's documented 30-
 // updates/sec/bot limit, the steady-state size is at most ~9000
 // entries — trivial.
+// Stranger-CTA throttle (see stranger-cta.ts for the rationale).
+const strangerCtaGate = createStrangerCtaGate();
+// Separate, lighter throttle for "your pair code is invalid" replies:
+// someone actively trying to pair needs feedback on retry within the
+// same minute, not a 6h wall of silence.
+const badPairCodeGate = createStrangerCtaGate({ perChatMs: 60_000, perMinuteMax: 20 });
+
 const seenUpdateIds = new Set<number>();
 const UPDATE_DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes — well past
 // Telegram's per-update retry window.
@@ -589,9 +597,67 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
           fromId !== undefined ? String(fromId) : undefined,
           text,
         );
-        // Strangers messaging the platform bot get a silent drop — no
-        // reply (we already ACKed) but also no row to act on.
-        if (!integration) return;
+        // Strangers messaging the platform bot: no row to act on (we
+        // already ACKed). Instead of a silent drop, private chats from
+        // humans get a rate-limited pointer to the app — the platform
+        // bot doubles as an acquisition funnel (feature 0033). Groups,
+        // bots, and non-message updates stay silent.
+        if (!integration) {
+          const msg = update.message;
+          const chatType = msg?.chat?.type;
+          const isHumanPrivate = Boolean(
+            msg && chatType === "private" && msg.from && !msg.from.is_bot,
+          );
+          // Someone actively pairing whose code didn't match any pending
+          // row (expired, typo, already-claimed): tell them, don't feed
+          // them the generic signup CTA — they already have an account.
+          const attemptedPair =
+            isHumanPrivate && /^\/(?:start|link)(?:@\w+)?\s+\S+/.test(msg?.text ?? "");
+          if (attemptedPair && msg && badPairCodeGate.allow(String(msg.chat.id))) {
+            const token = opts.platformBotService.getToken();
+            if (token) {
+              try {
+                await opts.telegramService.sendMessage(token, {
+                  chat_id: msg.chat.id,
+                  text:
+                    "That pair code is invalid or expired. Open Settings → Telegram in the dashboard, regenerate the code, and try again.",
+                  disable_web_page_preview: true,
+                });
+              } catch (err) {
+                server.log.warn({ err }, "bad-pair-code reply failed");
+              }
+            }
+            return;
+          }
+          if (
+            msg &&
+            isHumanPrivate &&
+            strangerCtaGate.allow(String(msg.chat.id))
+          ) {
+            const token = opts.platformBotService.getToken();
+            if (token) {
+              const appUrl =
+                opts.config.PLATFORM_TELEGRAM_CTA_URL || opts.config.BETTER_AUTH_URL;
+              const botUsername = opts.platformBotService.getMetadata()?.botUsername;
+              const connectHint = botUsername
+                ? `Settings → Telegram → “Connect with @${botUsername}”`
+                : "Settings → Telegram → Connect";
+              try {
+                await opts.telegramService.sendMessage(token, {
+                  chat_id: msg.chat.id,
+                  text:
+                    `Hi! I'm the official assistant for ${appUrl}.\n\n` +
+                    `To chat here, link your account: open ${appUrl}, then ${connectHint}.\n` +
+                    `New here? Create an account at ${appUrl} — it takes a minute.`,
+                  disable_web_page_preview: true,
+                });
+              } catch (err) {
+                server.log.warn({ err }, "stranger CTA send failed");
+              }
+            }
+          }
+          return;
+        }
       } else {
         integration = preResolved!;
       }
@@ -2436,7 +2502,19 @@ async function findIntegrationByBotId(
 ): Promise<{ id: string; user_id: string; config: Record<string, unknown> } | null> {
   const matches = await integrationService.listByTypeAndExternalId("telegram", botId);
 
-  if (matches.length === 1) return matches[0];
+  if (matches.length === 1) {
+    // Platform bot with a single paired row: the row is only THIS
+    // sender's if they own it, or if it's still unowned (pending pair —
+    // ensureAuthorized handles the /link · /start code claim). Returning
+    // it unconditionally routed strangers into a silent not_owner drop,
+    // which starved the stranger CTA exactly in the common one-user
+    // deployment case.
+    const cfg = matches[0].config as unknown as TelegramConfig;
+    if (!cfg.owner_tg_user_id || (fromId && cfg.owner_tg_user_id === fromId)) {
+      return matches[0];
+    }
+    return null;
+  }
 
   if (matches.length > 1) {
     // Platform bot: multi-tenant. Pick the row owned by the Telegram
