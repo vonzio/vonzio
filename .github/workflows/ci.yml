@@ -136,6 +136,7 @@ jobs:
             packages/core-server/src/services/scope.test.ts \
             packages/core-server/src/services/title-service.test.ts \
             packages/core-server/src/lib/safe-webhook-fetch.test.ts \
+            packages/core-server/src/mcp/mail-mcp.test.ts \
             packages/core-server/src/plugins/loader.test.ts \
             packages/core-server/src/plugins/policy.test.ts \
             packages/core-server/src/plugins/membrane.test.ts \

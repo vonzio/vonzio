@@ -34,6 +34,10 @@ export function IntegrationSection() {
   const [error, setError] = useState("");
 
   // Email + webhook
+  const [showMail, setShowMail] = useState(false);
+  const [mailPreset, setMailPreset] = useState("gmail");
+  const [mailForm, setMailForm] = useState({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", username: "", password: "", from_name: "" });
+  const [savingMail, setSavingMail] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
   const [emailApiKey, setEmailApiKey] = useState("");
   const [emailFrom, setEmailFrom] = useState("");
@@ -65,6 +69,7 @@ export function IntegrationSection() {
     }
   }, []);
 
+  const mail = integrations?.find((i) => i.type === "mail");
   const handleDisconnect = async (id: string) => {
     try { await deleteIntegration(id); refetch(); }
     catch (e) { setError(e instanceof Error ? e.message : "Disconnect failed"); }
@@ -78,6 +83,33 @@ export function IntegrationSection() {
   const handleSetDefault = async (id: string) => {
     try { await updateIntegration(id, { is_default: true }); refetch(); }
     catch (e) { setError(e instanceof Error ? e.message : "Failed to set default"); }
+  };
+  const MAIL_PRESETS: Record<string, { imap_host: string; imap_port: string; smtp_host: string; smtp_port: string }> = {
+    gmail: { imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465" },
+    outlook: { imap_host: "outlook.office365.com", imap_port: "993", smtp_host: "smtp.office365.com", smtp_port: "587" },
+    fastmail: { imap_host: "imap.fastmail.com", imap_port: "993", smtp_host: "smtp.fastmail.com", smtp_port: "465" },
+    icloud: { imap_host: "imap.mail.me.com", imap_port: "993", smtp_host: "smtp.mail.me.com", smtp_port: "587" },
+    custom: { imap_host: "", imap_port: "993", smtp_host: "", smtp_port: "465" },
+  };
+  const applyMailPreset = (preset: string) => {
+    setMailPreset(preset);
+    const p = MAIL_PRESETS[preset];
+    if (p && preset !== "custom") setMailForm((f) => ({ ...f, ...p }));
+  };
+  const handleSaveMail = async () => {
+    setSavingMail(true); setError("");
+    try {
+      await createIntegration({ type: "mail", config: {
+        imap_host: mailForm.imap_host, imap_port: Number(mailForm.imap_port) || 993,
+        smtp_host: mailForm.smtp_host, smtp_port: Number(mailForm.smtp_port) || 465,
+        username: mailForm.username, password: mailForm.password,
+        security: Number(mailForm.smtp_port) === 587 ? "starttls" : "tls",
+        from_name: mailForm.from_name || undefined,
+      } });
+      setMailForm({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", username: "", password: "", from_name: "" });
+      setShowMail(false); refetch();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect mailbox"); }
+    setSavingMail(false);
   };
   const handleSaveEmail = async () => {
     setSavingEmail(true);
@@ -284,6 +316,23 @@ export function IntegrationSection() {
           Data sources
         </div>
         <Card style={{ padding: 0 }}>
+          <IntegrationRow
+            badgeBg="#0EA5E9" badgeChar="M" name="Mail"
+            value={mail ? (mail.config.username as string) : "Not connected"}
+            connected={!!mail}
+            available
+            actions={
+              mail ? (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => openScopeEditor(mail)}>Scope: {scopeSummary(mail)}</Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleTest(mail.id)}>Test</Button>
+                  <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnect(mail.id)}>Disconnect</Button>
+                </>
+              ) : (
+                <Button size="sm" onClick={() => { setError(""); setShowMail(true); }}>Connect mailbox</Button>
+              )
+            }
+          />
           {/* All data-source rows are plugin-contributed via
               registerIntegrationRow(section: "data-sources") — e.g. Bank
               (@vonzio/plugin-teller). Gmail v1 was removed (feature 0034:
@@ -318,6 +367,63 @@ export function IntegrationSection() {
             setProfileIds={setScopeProfileIds}
             agentProfiles={agentProfiles ?? []}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        open={showMail}
+        onClose={() => setShowMail(false)}
+        size="md"
+        dismissable={false}
+        title="Connect a mailbox"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setShowMail(false)}>Cancel</Button>
+            <Button size="sm" onClick={handleSaveMail} disabled={savingMail || !mailForm.username || !mailForm.password || !mailForm.imap_host || !mailForm.smtp_host}>
+              {savingMail ? "Verifying…" : "Connect"}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <Field label="Provider">
+            <Select
+              value={mailPreset}
+              onChange={applyMailPreset}
+              options={[
+                { value: "gmail", label: "Gmail" },
+                { value: "outlook", label: "Outlook / Office 365" },
+                { value: "fastmail", label: "Fastmail" },
+                { value: "icloud", label: "iCloud" },
+                { value: "custom", label: "Custom (IMAP/SMTP)" },
+              ]}
+            />
+          </Field>
+          {mailPreset === "gmail" && (
+            <div style={{ fontSize: 12, color: "var(--vz-muted)" }}>
+              Gmail needs an <strong>app password</strong> (Google account → 2-Step Verification → App passwords), not your normal password. Gmail-native OAuth is coming.
+            </div>
+          )}
+          <Field label="Email address (username)">
+            <Input value={mailForm.username} onChange={(e) => setMailForm((f) => ({ ...f, username: e.target.value }))} placeholder="you@example.com" />
+          </Field>
+          <Field label="App password">
+            <Input type="password" value={mailForm.password} onChange={(e) => setMailForm((f) => ({ ...f, password: e.target.value }))} placeholder="••••••••••••" />
+          </Field>
+          <Field label="Display name (optional)">
+            <Input value={mailForm.from_name} onChange={(e) => setMailForm((f) => ({ ...f, from_name: e.target.value }))} placeholder="Your Name" />
+          </Field>
+          {mailPreset === "custom" && (
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
+              <Field label="IMAP host"><Input value={mailForm.imap_host} onChange={(e) => setMailForm((f) => ({ ...f, imap_host: e.target.value }))} placeholder="imap.example.com" /></Field>
+              <Field label="IMAP port"><Input value={mailForm.imap_port} onChange={(e) => setMailForm((f) => ({ ...f, imap_port: e.target.value }))} /></Field>
+              <Field label="SMTP host"><Input value={mailForm.smtp_host} onChange={(e) => setMailForm((f) => ({ ...f, smtp_host: e.target.value }))} placeholder="smtp.example.com" /></Field>
+              <Field label="SMTP port"><Input value={mailForm.smtp_port} onChange={(e) => setMailForm((f) => ({ ...f, smtp_port: e.target.value }))} /></Field>
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: "var(--vz-muted-2)" }}>
+            Credentials are encrypted at rest. Your agents connect through the server — they never see the password.
+          </div>
         </div>
       </Modal>
 

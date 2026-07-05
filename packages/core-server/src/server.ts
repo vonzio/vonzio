@@ -80,6 +80,7 @@ import { EventLog } from "./events/event-log.js";
 import { memoryRoutes } from "./routes/memories.js";
 import { memoryMcpPlugin } from "./mcp/memory-mcp.js";
 import { notifyMcpPlugin } from "./mcp/notify-mcp.js";
+import { mailMcpPlugin } from "./mcp/mail-mcp.js";
 import { platformMcpPlugin } from "./mcp/platform-mcp.js";
 import { localFsMcpPlugin } from "./mcp/local-fs-mcp.js";
 import { ErrorCodes, errorResponse } from "./errors.js";
@@ -805,6 +806,15 @@ export async function buildServer(deps: ServerDeps) {
       return session
         ? { userId: session.userId, profileId: session.profileId, orgId: session.orgId }
         : null;
+    },
+  });
+
+  // Mail MCP endpoint (token-based auth — used by agent containers)
+  server.register(mailMcpPlugin, {
+    integrationService,
+    resolveSession: (token: string) => {
+      const session = orchestrator.resolveMailToken(token);
+      return session ? { userId: session.userId, sessionId: session.sessionId, profileId: session.profileId } : null;
     },
   });
 

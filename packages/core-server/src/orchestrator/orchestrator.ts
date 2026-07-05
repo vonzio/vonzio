@@ -223,6 +223,7 @@ export class Orchestrator extends EventEmitter {
   private readonly EGRESS_TOKEN_TTL_SECONDS = 24 * 60 * 60;
   private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
+  private mailTokens = new Map<string, { userId: string; sessionId: string; profileId: string }>();
   private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] }>();
   // Per-task tokens for plugin-contributed MCP servers (ctx.mcpRegistry).
   private pluginMcpTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
@@ -260,6 +261,10 @@ export class Orchestrator extends EventEmitter {
 
   clearNotifyToken(token: string): void {
     this.notifyTokens.delete(token);
+  }
+
+  resolveMailToken(token: string): { userId: string; sessionId: string; profileId: string } | undefined {
+    return this.mailTokens.get(token);
   }
 
   resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] } | undefined {
@@ -1304,7 +1309,7 @@ export class Orchestrator extends EventEmitter {
     // Users can still add chrome-devtools MCP manually per profile if needed.
 
     // MCP tokens to clean up after task completes
-    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "platform" | "plugin" | "localfs"; token: string }> = [];
+    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "mail" | "platform" | "plugin" | "localfs"; token: string }> = [];
 
     // Memory integration: inject MCP server and build memory section for system prompt
     const userId = profile.user_id ?? "";
@@ -1346,6 +1351,24 @@ export class Orchestrator extends EventEmitter {
         url: notifyMcpUrl,
         headers: { Authorization: `Bearer ${notifyToken}` },
       });
+    }
+
+    // Mail connector (feature 0035): inject the /mcp/mail channel when at
+    // least one enabled mail integration is granted to this profile.
+    // Credentials stay server-side; the agent only ever holds this token.
+    if (this.deps.config.internalServerUrl && userId && this.deps.integrationService) {
+      const mailRows = await this.deps.integrationService.listForProfile(userId, "mail", profile.id);
+      if (mailRows.some((r) => r.enabled)) {
+        const mailToken = `mail_${nanoid()}`;
+        this.mailTokens.set(mailToken, { userId, sessionId: task.session_id ?? task.id, profileId: profile.id });
+        mcpTokensToClean.push({ type: "mail", token: mailToken });
+        nonSdkServers.push({
+          name: "mail",
+          type: "http",
+          url: `${this.deps.config.internalServerUrl}/mcp/mail`,
+          headers: { Authorization: `Bearer ${mailToken}` },
+        });
+      }
     }
 
     // Platform MCP: inject server for agent-initiated platform operations (playbooks, tasks)
@@ -1810,6 +1833,7 @@ export class Orchestrator extends EventEmitter {
       for (const { type, token } of mcpTokensToClean) {
         if (type === "memory") this.memoryTokens.delete(token);
         else if (type === "notify") this.notifyTokens.delete(token);
+        else if (type === "mail") this.mailTokens.delete(token);
         else if (type === "platform") this.platformTokens.delete(token);
         else if (type === "plugin") this.pluginMcpTokens.delete(token);
         else if (type === "localfs") this.localFsTokens.delete(token);
