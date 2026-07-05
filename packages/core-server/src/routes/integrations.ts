@@ -4,6 +4,7 @@ import type { IntegrationService } from "../services/integration-service.js";
 import type { NotificationService } from "../services/notification-service.js";
 import type { ProfileService } from "../services/profile-service.js";
 import { MailService, type MailConfig } from "../services/mail-service.js";
+import { CalendarService, type CalendarConfig } from "../services/calendar-service.js";
 import type { NotificationChannel } from "@vonzio/shared";
 import type { Scope } from "../services/scope.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
@@ -41,8 +42,8 @@ export const integrationRoutes = fp(
       const { type, is_default } = request.body;
       let { config } = request.body;
 
-      if (!["email", "webhook", "mail"].includes(type)) {
-        return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Type must be 'email', 'webhook', or 'mail'. Use OAuth for Slack."));
+      if (!["email", "webhook", "mail", "calendar"].includes(type)) {
+        return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Type must be 'email', 'webhook', 'mail', or 'calendar'. Use OAuth for Slack."));
       }
       if (type === "email" && (!config.api_key || !config.from_address)) {
         return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, "Email requires api_key and from_address"));
@@ -78,6 +79,27 @@ export const integrationRoutes = fp(
           return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, err instanceof Error ? err.message : "Mail verification failed"));
         }
         config = mailCfg as unknown as Record<string, unknown>;
+      }
+      if (type === "calendar") {
+        // CalDAV connector (feature 0037): validate + live-verify (login +
+        // list calendars) before persisting. SSRF guarded inside the service.
+        const required = ["caldav_url", "username", "password"] as const;
+        for (const k of required) {
+          if (typeof config[k] !== "string" || !(config[k] as string).trim()) {
+            return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, `Calendar requires ${k}`));
+          }
+        }
+        const calCfg: CalendarConfig = {
+          caldav_url: (config.caldav_url as string).trim(),
+          username: (config.username as string).trim(),
+          password: config.password as string,
+        };
+        try {
+          await new CalendarService().verify(calCfg);
+        } catch (err) {
+          return reply.code(400).send(errorResponse(ErrorCodes.VALIDATION_FAILED, err instanceof Error ? err.message : "Calendar verification failed"));
+        }
+        config = calCfg as unknown as Record<string, unknown>;
       }
 
       // Check for existing
@@ -143,6 +165,15 @@ export const integrationRoutes = fp(
         const integration = await integrationService.get(request.params.id);
         if (!integration || integration.user_id !== user.id) {
           return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Integration not found"));
+        }
+        if (integration.type === "calendar") {
+          const cfg = integration.config as unknown as CalendarConfig;
+          try {
+            const cals = await new CalendarService().listCalendars(cfg);
+            return { status: "sent", channel: "calendar", detail: `${cals.length} calendar(s)` };
+          } catch (err) {
+            return reply.code(502).send(errorResponse(ErrorCodes.BAD_GATEWAY, err instanceof Error ? err.message : "Calendar test failed"));
+          }
         }
         if (integration.type === "mail") {
           // Mail isn't a notification channel — test by sending the user

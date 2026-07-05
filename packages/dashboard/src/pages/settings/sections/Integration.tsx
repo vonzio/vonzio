@@ -35,6 +35,10 @@ export function IntegrationSection() {
 
   // Email + webhook
   const [showMail, setShowMail] = useState(false);
+  const [showCal, setShowCal] = useState(false);
+  const [calPreset, setCalPreset] = useState("google");
+  const [calForm, setCalForm] = useState({ caldav_url: "https://apidata.googleusercontent.com/caldav/v2/", username: "", password: "" });
+  const [savingCal, setSavingCal] = useState(false);
   const [mailPreset, setMailPreset] = useState("gmail");
   const [mailForm, setMailForm] = useState({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", username: "", password: "", from_name: "" });
   const [savingMail, setSavingMail] = useState(false);
@@ -70,6 +74,7 @@ export function IntegrationSection() {
   }, []);
 
   const mail = integrations?.find((i) => i.type === "mail");
+  const cal = integrations?.find((i) => i.type === "calendar");
   const handleDisconnect = async (id: string) => {
     try { await deleteIntegration(id); refetch(); }
     catch (e) { setError(e instanceof Error ? e.message : "Disconnect failed"); }
@@ -95,6 +100,26 @@ export function IntegrationSection() {
     setMailPreset(preset);
     const p = MAIL_PRESETS[preset];
     if (p && preset !== "custom") setMailForm((f) => ({ ...f, ...p }));
+  };
+  const CAL_PRESETS: Record<string, string> = {
+    google: "https://apidata.googleusercontent.com/caldav/v2/",
+    icloud: "https://caldav.icloud.com/",
+    fastmail: "https://caldav.fastmail.com/dav/",
+    nextcloud: "",
+    custom: "",
+  };
+  const applyCalPreset = (preset: string) => {
+    setCalPreset(preset);
+    if (CAL_PRESETS[preset]) setCalForm((f) => ({ ...f, caldav_url: CAL_PRESETS[preset] }));
+  };
+  const handleSaveCal = async () => {
+    setSavingCal(true); setError("");
+    try {
+      await createIntegration({ type: "calendar", config: { caldav_url: calForm.caldav_url, username: calForm.username, password: calForm.password } });
+      setCalForm({ caldav_url: "https://apidata.googleusercontent.com/caldav/v2/", username: "", password: "" });
+      setShowCal(false); refetch();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect calendar"); }
+    setSavingCal(false);
   };
   const handleSaveMail = async () => {
     setSavingMail(true); setError("");
@@ -317,6 +342,23 @@ export function IntegrationSection() {
         </div>
         <Card style={{ padding: 0 }}>
           <IntegrationRow
+            badgeBg="#7C3AED" badgeChar="C" name="Calendar"
+            value={cal ? (cal.config.username as string) : "Not connected"}
+            connected={!!cal}
+            available
+            actions={
+              cal ? (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => openScopeEditor(cal)}>Scope: {scopeSummary(cal)}</Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleTest(cal.id)}>Test</Button>
+                  <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnect(cal.id)}>Disconnect</Button>
+                </>
+              ) : (
+                <Button size="sm" onClick={() => { setError(""); setShowCal(true); }}>Connect calendar</Button>
+              )
+            }
+          />
+          <IntegrationRow
             badgeBg="#0EA5E9" badgeChar="M" name="Mail"
             value={mail ? (mail.config.username as string) : "Not connected"}
             connected={!!mail}
@@ -367,6 +409,55 @@ export function IntegrationSection() {
             setProfileIds={setScopeProfileIds}
             agentProfiles={agentProfiles ?? []}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        open={showCal}
+        onClose={() => setShowCal(false)}
+        size="md"
+        dismissable={false}
+        title="Connect a calendar"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setShowCal(false)}>Cancel</Button>
+            <Button size="sm" onClick={handleSaveCal} disabled={savingCal || !calForm.username || !calForm.password || !calForm.caldav_url}>
+              {savingCal ? "Verifying…" : "Connect"}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <Field label="Provider">
+            <Select
+              value={calPreset}
+              onChange={applyCalPreset}
+              options={[
+                { value: "google", label: "Google Calendar" },
+                { value: "icloud", label: "iCloud" },
+                { value: "fastmail", label: "Fastmail" },
+                { value: "nextcloud", label: "Nextcloud" },
+                { value: "custom", label: "Custom (CalDAV)" },
+              ]}
+            />
+          </Field>
+          {(calPreset === "google" || calPreset === "icloud") && (
+            <div style={{ fontSize: 12, color: "var(--vz-muted)" }}>
+              {calPreset === "google" ? "Google" : "iCloud"} needs an <strong>app password</strong> (2-Step Verification → App passwords), not your normal password.
+            </div>
+          )}
+          <Field label="CalDAV URL">
+            <Input value={calForm.caldav_url} onChange={(e) => setCalForm((f) => ({ ...f, caldav_url: e.target.value }))} placeholder="https://caldav.example.com/" />
+          </Field>
+          <Field label="Username (email)">
+            <Input value={calForm.username} onChange={(e) => setCalForm((f) => ({ ...f, username: e.target.value }))} placeholder="you@example.com" />
+          </Field>
+          <Field label="App password">
+            <Input type="password" value={calForm.password} onChange={(e) => setCalForm((f) => ({ ...f, password: e.target.value }))} placeholder="••••••••••••" />
+          </Field>
+          <div style={{ fontSize: 11, color: "var(--vz-muted-2)" }}>
+            Credentials are encrypted at rest. Your agents connect through the server — they never see the password.
+          </div>
         </div>
       </Modal>
 

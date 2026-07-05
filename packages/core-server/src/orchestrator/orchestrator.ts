@@ -224,6 +224,7 @@ export class Orchestrator extends EventEmitter {
   private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
   private mailTokens = new Map<string, { userId: string; sessionId: string; profileId: string }>();
+  private calendarTokens = new Map<string, { userId: string; sessionId: string; profileId: string }>();
   private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] }>();
   // Per-task tokens for plugin-contributed MCP servers (ctx.mcpRegistry).
   private pluginMcpTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
@@ -265,6 +266,10 @@ export class Orchestrator extends EventEmitter {
 
   resolveMailToken(token: string): { userId: string; sessionId: string; profileId: string } | undefined {
     return this.mailTokens.get(token);
+  }
+
+  resolveCalendarToken(token: string): { userId: string; sessionId: string; profileId: string } | undefined {
+    return this.calendarTokens.get(token);
   }
 
   resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] } | undefined {
@@ -1309,7 +1314,7 @@ export class Orchestrator extends EventEmitter {
     // Users can still add chrome-devtools MCP manually per profile if needed.
 
     // MCP tokens to clean up after task completes
-    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "mail" | "platform" | "plugin" | "localfs"; token: string }> = [];
+    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "mail" | "calendar" | "platform" | "plugin" | "localfs"; token: string }> = [];
 
     // Memory integration: inject MCP server and build memory section for system prompt
     const userId = profile.user_id ?? "";
@@ -1367,6 +1372,22 @@ export class Orchestrator extends EventEmitter {
           type: "http",
           url: `${this.deps.config.internalServerUrl}/mcp/mail`,
           headers: { Authorization: `Bearer ${mailToken}` },
+        });
+      }
+    }
+
+    // Calendar connector (feature 0037): inject /mcp/calendar, same shape.
+    if (this.deps.config.internalServerUrl && userId && this.deps.integrationService) {
+      const calRows = await this.deps.integrationService.listForProfile(userId, "calendar", profile.id);
+      if (calRows.some((r) => r.enabled)) {
+        const calToken = `calendar_${nanoid()}`;
+        this.calendarTokens.set(calToken, { userId, sessionId: task.session_id ?? task.id, profileId: profile.id });
+        mcpTokensToClean.push({ type: "calendar", token: calToken });
+        nonSdkServers.push({
+          name: "calendar",
+          type: "http",
+          url: `${this.deps.config.internalServerUrl}/mcp/calendar`,
+          headers: { Authorization: `Bearer ${calToken}` },
         });
       }
     }
@@ -1834,6 +1855,7 @@ export class Orchestrator extends EventEmitter {
         if (type === "memory") this.memoryTokens.delete(token);
         else if (type === "notify") this.notifyTokens.delete(token);
         else if (type === "mail") this.mailTokens.delete(token);
+        else if (type === "calendar") this.calendarTokens.delete(token);
         else if (type === "platform") this.platformTokens.delete(token);
         else if (type === "plugin") this.pluginMcpTokens.delete(token);
         else if (type === "localfs") this.localFsTokens.delete(token);
