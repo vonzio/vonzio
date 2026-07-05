@@ -654,20 +654,27 @@ function registerWebhookRoute(server: FastifyInstance, opts: TelegramEventsRoute
           ) {
             const token = opts.platformBotService.getToken();
             if (token) {
-              const appUrl =
-                opts.config.PLATFORM_TELEGRAM_CTA_URL || opts.config.BETTER_AUTH_URL;
-              const botUsername = opts.platformBotService.getMetadata()?.botUsername;
-              const connectHint = botUsername
-                ? `Settings → Telegram → “Connect with @${botUsername}”`
-                : "Settings → Telegram → Connect";
+              const appUrl = (
+                opts.config.PLATFORM_TELEGRAM_CTA_URL || opts.config.BETTER_AUTH_URL
+              ).replace(/\/$/, "");
               try {
+                // Value-first pitch + one action per button. URL buttons
+                // beat raw links: one tap, no copy-paste, and the signup
+                // path carries ?next= so the user lands straight back on
+                // the Telegram connect card after registering.
                 await opts.telegramService.sendMessage(token, {
                   chat_id: msg.chat.id,
+                  parse_mode: "HTML",
                   text:
-                    `Hi! I'm the official assistant for ${appUrl}.\n\n` +
-                    `To chat here, link your account: open ${appUrl}, then ${connectHint}.\n` +
-                    `New here? Create an account at ${appUrl} — it takes a minute.`,
+                    "<b>I run AI agents that code, research, and automate for you — right from this chat.</b>\n\n" +
+                    "Link your vonzio account and every message here becomes an agent session.",
                   disable_web_page_preview: true,
+                  reply_markup: {
+                    inline_keyboard: [
+                      [{ text: "🔗 Link my account", url: `${appUrl}/settings#telegram` }],
+                      [{ text: "✨ Create an account", url: `${appUrl}/register?next=%2Fsettings%23telegram` }],
+                    ],
+                  },
                 });
               } catch (err) {
                 server.log.warn({ err }, "stranger CTA send failed");

@@ -21,6 +21,19 @@ export function Register({ onRegister, showLogin, authProviders, turnstileSiteKe
   const turnstileRef = useRef<HTMLDivElement>(null);
   const { token: captchaToken, reset: resetCaptcha } = useTurnstile(turnstileSiteKey, turnstileRef);
 
+  // ?next=<relative path> — where to land after signup. Same-origin
+  // relative paths only (leading "/", not "//") so the param can't be
+  // abused as an open redirect. Used by acquisition surfaces (e.g. the
+  // official Telegram bot's "Create an account" button deep-links to
+  // /register?next=/settings%23telegram so the user finishes pairing).
+  const nextParam = (() => {
+    try {
+      const raw = new URLSearchParams(window.location.search).get("next");
+      if (raw && raw.startsWith("/") && !raw.startsWith("//")) return raw;
+    } catch { /* SSR/parse — ignore */ }
+    return null;
+  })();
+
   const hasOAuth = authProviders?.google || authProviders?.github;
   const privacyHref = marketingUrl ? `${marketingUrl}/privacy` : "/privacy.html";
   const termsHref = marketingUrl ? `${marketingUrl}/terms` : "/terms.html";
@@ -45,12 +58,16 @@ export function Register({ onRegister, showLogin, authProviders, turnstileSiteKe
       setError(authError.message ?? "Registration failed");
       resetCaptcha();
     } else {
+      if (nextParam) {
+        window.location.assign(nextParam);
+        return;
+      }
       onRegister();
     }
   }
 
   async function handleOAuth(provider: "google" | "github") {
-    await authClient.signIn.social({ provider, callbackURL: "/" });
+    await authClient.signIn.social({ provider, callbackURL: nextParam ?? "/" });
   }
 
   return (

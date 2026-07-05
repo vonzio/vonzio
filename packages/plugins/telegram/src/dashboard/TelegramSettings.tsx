@@ -198,16 +198,36 @@ export function TelegramSettings() {
                     {saving ? "Pairing…" : `Connect with @${telegramConfig.platformBot.bot_username}`}
                   </Button>
                 )}
-                <Button
-                  size="sm"
-                  variant={telegramConfig?.platformBot ? "ghost" : "primary"}
-                  onClick={() => { setConnectError(""); setShowConnectModal(true); }}
-                  disabled={!telegramConfig?.publicReachable}
-                >
-                  {telegramConfig?.publicReachable
-                    ? (telegramConfig.platformBot ? "Use your own bot" : "Connect Telegram bot")
-                    : "Public URL required"}
-                </Button>
+                {telegramConfig?.platformBot && telegramConfig.publicReachable ? (
+                  // Deliberately demoted to a text link: one-tap pairing
+                  // with the official bot is the default path; BYO-token
+                  // is the power-user escape hatch, not a peer choice.
+                  <button
+                    type="button"
+                    onClick={() => { setConnectError(""); setShowConnectModal(true); }}
+                    style={{
+                      background: "none",
+                      border: 0,
+                      padding: "4px 6px",
+                      fontSize: 12,
+                      color: "var(--vz-muted)",
+                      textDecoration: "underline",
+                      cursor: "pointer",
+                      fontFamily: "var(--vz-font)",
+                    }}
+                  >
+                    or use your own bot
+                  </button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => { setConnectError(""); setShowConnectModal(true); }}
+                    disabled={!telegramConfig?.publicReachable}
+                  >
+                    {telegramConfig?.publicReachable ? "Connect Telegram bot" : "Public URL required"}
+                  </Button>
+                )}
               </>
             }
             isLast
