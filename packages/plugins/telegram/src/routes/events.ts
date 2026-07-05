@@ -250,6 +250,24 @@ const pendingAskSessions = new Set<string>();
 // the same one. Set is bounded by TTL: at Telegram's documented 30-
 // updates/sec/bot limit, the steady-state size is at most ~9000
 // entries — trivial.
+// Internal errors must never reach a chat verbatim: task failures carry
+// raw driver messages (full SQL + params — user ids, org ids, session
+// ids — surfaced 2026-07-05 as a leaked INSERT in a Telegram chat).
+// Only short, single-line, non-technical messages pass through (seat
+// limits, "profile has no key" — things the user can act on); anything
+// that smells like SQL/stack/internals collapses to a generic line. The
+// full error is logged server-side by the caller either way.
+const INTERNAL_ERROR_MARKERS =
+  /failed query|insert into|select |update |delete from|params:|constraint|stack|ECONN|at [A-Za-z_$][\w$]*\s*\(/i;
+function sanitizeTaskErrorForChat(error?: string): string {
+  const fallback = "Something went wrong running your task. Please try again — the details are in the server logs.";
+  if (!error) return fallback;
+  const firstLine = error.split("\n")[0].trim();
+  if (firstLine.length === 0 || firstLine.length > 200) return fallback;
+  if (INTERNAL_ERROR_MARKERS.test(error)) return fallback;
+  return firstLine;
+}
+
 // Stranger-CTA throttle (see stranger-cta.ts for the rationale).
 const strangerCtaGate = createStrangerCtaGate();
 // Separate, lighter throttle for "your pair code is invalid" replies:
@@ -2414,10 +2432,11 @@ function setupTelegramRelay(opts: TelegramEventsRoutesOptions, server: FastifyIn
     const ctx = await getTelegramContext(sessionId);
     if (!ctx) return;
     sessionBuffers.delete(sessionId);
+    server.log.error({ taskId, sessionId, error }, "task failed (telegram surface)");
     try {
       await telegramService.sendMessage(ctx.botToken, {
         chat_id: ctx.chatId,
-        text: `⚠️ Error: ${error ?? "Agent task failed"}`,
+        text: `⚠️ ${sanitizeTaskErrorForChat(error)}`,
       });
     } catch (err) {
       server.log.error({ err, sessionId }, "Failed to send error to Telegram");
