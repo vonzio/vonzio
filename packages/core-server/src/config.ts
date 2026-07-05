@@ -202,10 +202,6 @@ const configSchema = z.object({
   SLACK_CLIENT_SECRET: z.string().optional(),
   SLACK_SIGNING_SECRET: z.string().optional(),
 
-  // Gmail Integration (optional — enables "Connect Gmail" button)
-  GMAIL_CLIENT_ID: z.string().optional(),
-  GMAIL_CLIENT_SECRET: z.string().optional(),
-
   // Git OAuth (optional — enables "Connect with GitHub/GitLab/Bitbucket" buttons)
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),

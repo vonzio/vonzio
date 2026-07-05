@@ -54,10 +54,10 @@ to one profile, rate-limited, and revocable; the embed only loads on origins you
 - **Embeddable, not just a dashboard.** Ship the `/chat` widget inside *your* product —
   the differentiator most agent runtimes don't have. Full dashboard included for direct use.
 - **MCP-native.** Bring your own MCP servers, or use the built-ins: `memory`, `notify`,
-  `gmail`, `platform`.
+  `platform`.
 - **Playbooks.** Scheduled or webhook-triggered agent chains with budget caps and success
   criteria — runs are first-class, observable workspaces. Great for batch and research jobs.
-- **Integrations out of the box.** GitHub, GitLab, Bitbucket, Slack, Telegram, Gmail.
+- **Integrations out of the box.** GitHub, GitLab, Bitbucket, Slack, Telegram.
   (Teller and other third-party integrations ship as installable plugins.)
 - **Yours to run.** Open-source under AGPL-3.0, self-hostable, no surprise telemetry.
 

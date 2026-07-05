@@ -119,7 +119,7 @@ export interface OnboardingStepReg {
 /**
  * Slot for rendering an integration row inside Settings > Integrations.
  * Plugins use this to contribute their own row alongside the hardcoded
- * Email/Webhook/Git/Gmail/Teller surfaces; the section the row belongs
+ * Email/Webhook/Git/Teller surfaces; the section the row belongs
  * to drives visual grouping (Notifications & Chat vs Data Sources vs
  * the misc section). The row component owns its own data fetching --
  * the shared props (agentProfiles, integrations, ...) cover the common
@@ -128,7 +128,7 @@ export interface OnboardingStepReg {
  *
  * Sections:
  *   - "notifications" — Slack, Email, Webhook (chat / outbound)
- *   - "data-sources" — Gmail, Bank, future data sources
+ *   - "data-sources" — Bank, future data sources
  *   - "other" — uncategorized; renders at the end
  */
 export type IntegrationRowSection = "notifications" | "data-sources" | "other";

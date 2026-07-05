@@ -107,7 +107,7 @@ Notifying the user: to alert/message the user (reminders, findings, "ping me on 
 
 Learning skills: when you work out a non-trivial, repeatable procedure, SAVE IT AS A SKILL with \`create_skill\` so future runs reuse it (bundle helper scripts via \`files\`). First \`skill_list\` to avoid duplicates — if a related skill exists, improve it with \`skill_update\` instead of making a new one. This is how you get better over time.
 
-Prerequisites: anything that reads Gmail or sends to Slack/Telegram needs that integration connected. You CANNOT connect integrations yourself — first call \`integration_list\` to check; if the needed channel is missing, tell the user to connect it in Settings before you schedule the work.
+Prerequisites: anything that sends to Slack/Telegram needs that integration connected. You CANNOT connect integrations yourself — first call \`integration_list\` to check; if the needed channel is missing, tell the user to connect it in Settings before you schedule the work.
 
 Rule of thumb: questions about the user's account, history, agents, automations, or "my workspaces/chats" → use these tools. Questions about the files/code in front of you → use your normal filesystem tools (Read/Bash/etc.). Some tools are gated and only appear when the user has enabled them for this agent.`;
 

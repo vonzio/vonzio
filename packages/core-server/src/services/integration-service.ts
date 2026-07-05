@@ -14,13 +14,6 @@ export interface SlackConfig {
   channel_id?: string;
 }
 
-export interface GmailConfig {
-  email: string;
-  refresh_token: string;
-  access_token?: string;
-  token_expiry?: number;
-}
-
 export interface TelegramConfig {
   bot_token: string;
   bot_user_id: string;
@@ -189,7 +182,7 @@ export class IntegrationService {
    * Fetch by id. Defaults to redacted output so route handlers can return
    * the row to the client without leaking bot_token / api_key / refresh_token.
    * Pass `{ decrypt: true }` for internal callers that need the real config
-   * (orchestrator MCP injection, token refresh in gmail-mcp, etc).
+   * (orchestrator MCP injection, plugin token refresh, etc).
    */
   async get(id: string, opts: { decrypt?: boolean } = {}): Promise<Integration | null> {
     const rows = await this.db.select().from(schema.userIntegrations)

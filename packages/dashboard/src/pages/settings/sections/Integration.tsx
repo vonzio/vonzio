@@ -1,7 +1,6 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
-  fetchGmailConfig, getGmailAuthorizeUrl,
   fetchIntegrations, deleteIntegration, createIntegration, updateIntegration, testIntegration,
   type Integration,
   type SecretScope,
@@ -22,11 +21,9 @@ import { getIntegrationRows, useEntitlements } from "../../../registry/index.js"
 
 export function IntegrationSection() {
   const { data: integrations, loading, refetch } = useApi<Integration[]>(() => fetchIntegrations());
-  const { data: gmailConfig } = useApi<{ enabled: boolean }>(() => fetchGmailConfig());
   const { data: agentProfiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
   const [oauthStatus, setOauthStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const [connectingGmail, setConnectingGmail] = useState(false);
-  // Scope editor: one modal serves every integration row (Bank, Gmail,
+  // Scope editor: one modal serves every integration row (Bank,
   // Slack, Telegram, Email, Webhook). Pre-populated when openScopeEditor
   // is called with the row.
   const [scopeEditOpen, setScopeEditOpen] = useState(false);
@@ -54,13 +51,12 @@ export function IntegrationSection() {
     const oauth = params.get("oauth");
     // Git providers share the Integrations tab but own their own callback
     // (?source=git, handled in Git.tsx). Without this guard the git callback's
-    // ?oauth=success falls through to the gmail/slack inference below and shows
+    // ?oauth=success falls through to the slack inference below and shows
     // a bogus "Slack connected" banner.
     if (params.get("source") === "git") return;
     if (oauth === "success") {
       const msg = params.get("message");
-      const label = msg === "gmail_connected" ? "Gmail" : "Slack";
-      setOauthStatus({ type: "success", message: `${label} connected` });
+      setOauthStatus({ type: "success", message: "Slack connected" });
       refetch();
       window.history.replaceState({}, "", window.location.pathname + window.location.hash);
     } else if (oauth === "error") {
@@ -69,11 +65,6 @@ export function IntegrationSection() {
     }
   }, []);
 
-  const handleConnectGmail = async () => {
-    setConnectingGmail(true); setError("");
-    try { const { url } = await getGmailAuthorizeUrl("/settings"); window.location.href = url; }
-    catch (e) { setError(e instanceof Error ? e.message : "Failed to start Gmail OAuth"); setConnectingGmail(false); }
-  };
   const handleDisconnect = async (id: string) => {
     try { await deleteIntegration(id); refetch(); }
     catch (e) { setError(e instanceof Error ? e.message : "Disconnect failed"); }
@@ -146,7 +137,6 @@ export function IntegrationSection() {
     return `${names.length} agents`;
   };
 
-  const gmail = integrations?.find((i) => i.type === "gmail");
   const email = integrations?.find((i) => i.type === "email");
   const webhook = integrations?.find((i) => i.type === "webhook");
 
@@ -294,32 +284,10 @@ export function IntegrationSection() {
           Data sources
         </div>
         <Card style={{ padding: 0 }}>
-          <IntegrationRow
-            badgeBg="#DC2626" badgeChar="G" name="Gmail"
-            value={gmail ? (gmail.config.email as string) : "Not connected"}
-            connected={!!gmail}
-            available={!!gmailConfig?.enabled}
-            actions={
-              gmail ? (
-                <>
-                  <Button variant="ghost" size="sm" onClick={() => openScopeEditor(gmail)}>Scope: {scopeSummary(gmail)}</Button>
-                  <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnect(gmail.id)}>Disconnect</Button>
-                </>
-              ) : gmailConfig?.enabled ? (
-                <Button size="sm" onClick={handleConnectGmail} disabled={connectingGmail}>
-                  {connectingGmail ? "Connecting…" : "Connect Gmail"}
-                </Button>
-              ) : (
-                <span style={{ fontSize: 12, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)" }}>not configured by admin</span>
-              )
-            }
-            // Stay non-last so the bottom seam survives when a plugin adds a
-            // data-sources row below (e.g. @vonzio/plugin-teller); if none
-            // register, the row's bottom border is hidden by Card's own border.
-            isLast={getIntegrationRows("data-sources").length === 0}
-          />
-          {/* Bank (Teller) is contributed by @vonzio/plugin-teller via
-              registerIntegrationRow(section: "data-sources"). */}
+          {/* All data-source rows are plugin-contributed via
+              registerIntegrationRow(section: "data-sources") — e.g. Bank
+              (@vonzio/plugin-teller). Gmail v1 was removed (feature 0034:
+              CASA-locked, replaced by the BYO-client design). */}
           {renderRows("data-sources")}
         </Card>
         </>
