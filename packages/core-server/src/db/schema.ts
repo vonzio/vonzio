@@ -341,7 +341,7 @@ export const userIntegrations = pgTable(
   {
     id: text("id").primaryKey(),
     user_id: text("user_id").notNull(),
-    type: text("type").notNull(), // "slack", "email", "webhook", "gmail", "telegram", "teller"
+    type: text("type").notNull(), // "slack", "email", "webhook", "telegram", "teller"
     // Indexed denormalization of the provider's stable external identifier
     // (e.g. Telegram bot_user_id, Teller enrollment_id). Populated by
     // IntegrationService so cold webhook lookups don't have to decrypt

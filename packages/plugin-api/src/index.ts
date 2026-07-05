@@ -248,7 +248,7 @@ export interface PluginIntegration {
 /**
  * Adapter around core's IntegrationService. Plugins use this to look
  * up + manage user-integration rows (Slack tokens, Telegram bots,
- * Gmail OAuth grants, etc.). All eight methods mirror core's
+ * plugin OAuth grants, etc.). All eight methods mirror core's
  * IntegrationService surface 1:1 -- the structural shape lets the
  * loader pass the real service through without leaking the concrete
  * class type into plugin-api.

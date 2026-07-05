@@ -79,7 +79,7 @@ const PROVIDER_ROUTE_ENV = [
   "LLM_GATEWAY_PASSTHROUGH_RAW",
 ] as const;
 
-const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- LEARNING SKILLS: when you work out a non-trivial, repeatable procedure, save it as a skill with create_skill (bundle helper scripts via files) so future runs reuse it. skill_list first to avoid duplicates; improve an existing one with skill_update rather than duplicating. This is how you improve over time.\n- PREREQUISITES: reading Gmail or sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
+const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- LEARNING SKILLS: when you work out a non-trivial, repeatable procedure, save it as a skill with create_skill (bundle helper scripts via files) so future runs reuse it. skill_list first to avoid duplicates; improve an existing one with skill_update rather than duplicating. This is how you improve over time.\n- PREREQUISITES: sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
 
 /** Short, user-safe error string for surfacing a cause in events/logs. */
 function errMsg(e: unknown): string {
@@ -223,7 +223,6 @@ export class Orchestrator extends EventEmitter {
   private readonly EGRESS_TOKEN_TTL_SECONDS = 24 * 60 * 60;
   private memoryTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
   private notifyTokens = new Map<string, { userId: string; sessionId: string }>();
-  private gmailTokens = new Map<string, { userId: string }>();
   private platformTokens = new Map<string, { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] }>();
   // Per-task tokens for plugin-contributed MCP servers (ctx.mcpRegistry).
   private pluginMcpTokens = new Map<string, { userId: string; profileId: string; orgId: string | null }>();
@@ -261,14 +260,6 @@ export class Orchestrator extends EventEmitter {
 
   clearNotifyToken(token: string): void {
     this.notifyTokens.delete(token);
-  }
-
-  resolveGmailToken(token: string): { userId: string } | undefined {
-    return this.gmailTokens.get(token);
-  }
-
-  clearGmailToken(token: string): void {
-    this.gmailTokens.delete(token);
   }
 
   resolvePlatformToken(token: string): { userId: string; profileId: string; orgId: string | null; sessionId: string; capabilities: string[] } | undefined {
@@ -1313,7 +1304,7 @@ export class Orchestrator extends EventEmitter {
     // Users can still add chrome-devtools MCP manually per profile if needed.
 
     // MCP tokens to clean up after task completes
-    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "gmail" | "platform" | "plugin" | "localfs"; token: string }> = [];
+    const mcpTokensToClean: Array<{ type: "memory" | "notify" | "platform" | "plugin" | "localfs"; token: string }> = [];
 
     // Memory integration: inject MCP server and build memory section for system prompt
     const userId = profile.user_id ?? "";
@@ -1355,26 +1346,6 @@ export class Orchestrator extends EventEmitter {
         url: notifyMcpUrl,
         headers: { Authorization: `Bearer ${notifyToken}` },
       });
-    }
-
-    // Gmail integration: inject MCP server for reading user's email.
-    // Scope-aware: only injects when at least one gmail row is granted
-    // to the running profile (scope='all' or profile id in profile_ids).
-    if (this.deps.config.internalServerUrl && userId && this.deps.integrationService) {
-      const gmailRows = await this.deps.integrationService.listForProfile(userId, "gmail", profile.id);
-      const gmailIntegration = gmailRows[0];
-      if (gmailIntegration?.enabled) {
-        const gmailToken = `gmail_${nanoid()}`;
-        this.gmailTokens.set(gmailToken, { userId });
-        mcpTokensToClean.push({ type: "gmail", token: gmailToken });
-        const gmailMcpUrl = `${this.deps.config.internalServerUrl}/mcp/gmail`;
-        nonSdkServers.push({
-          name: "gmail",
-          type: "http",
-          url: gmailMcpUrl,
-          headers: { Authorization: `Bearer ${gmailToken}` },
-        });
-      }
     }
 
     // Platform MCP: inject server for agent-initiated platform operations (playbooks, tasks)
@@ -1839,7 +1810,6 @@ export class Orchestrator extends EventEmitter {
       for (const { type, token } of mcpTokensToClean) {
         if (type === "memory") this.memoryTokens.delete(token);
         else if (type === "notify") this.notifyTokens.delete(token);
-        else if (type === "gmail") this.gmailTokens.delete(token);
         else if (type === "platform") this.platformTokens.delete(token);
         else if (type === "plugin") this.pluginMcpTokens.delete(token);
         else if (type === "localfs") this.localFsTokens.delete(token);

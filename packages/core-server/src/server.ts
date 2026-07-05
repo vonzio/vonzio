@@ -60,7 +60,6 @@ import { poolRoutes } from "./routes/pool.js";
 import { adminRoutes } from "./routes/admin.js";
 import { previewRoutes, setupHostnamePreviewProxy, setupPreviewWebSocketProxy } from "./routes/preview.js";
 import { gitOAuthRoutes, gitOAuthCallbackRoute } from "./routes/git-oauth.js";
-import { gmailOAuthRoutes, gmailOAuthCallbackRoute } from "./routes/gmail-oauth.js";
 // telegramSetupRoutes + resyncTelegramBotCommands now live in
 // @vonzio/plugin-telegram. The plugin's init() registers the same
 import { integrationRoutes } from "./routes/integrations.js";
@@ -81,7 +80,6 @@ import { EventLog } from "./events/event-log.js";
 import { memoryRoutes } from "./routes/memories.js";
 import { memoryMcpPlugin } from "./mcp/memory-mcp.js";
 import { notifyMcpPlugin } from "./mcp/notify-mcp.js";
-import { gmailMcpPlugin } from "./mcp/gmail-mcp.js";
 import { platformMcpPlugin } from "./mcp/platform-mcp.js";
 import { localFsMcpPlugin } from "./mcp/local-fs-mcp.js";
 import { ErrorCodes, errorResponse } from "./errors.js";
@@ -736,7 +734,6 @@ export async function buildServer(deps: ServerDeps) {
     v1.register(gitOAuthRoutes, { config, gitProviderService, githubAppService, encryptionKey: config.ENCRYPTION_KEY });
     // /v1/integrations/slack/* + /v1/integrations/telegram/* routes
     // moved to their respective plugins (registered via init()).
-    v1.register(gmailOAuthRoutes, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
     v1.register(integrationRoutes, { integrationService, notificationService, profileService });
     v1.register(memoryRoutes, { memoryService });
     v1.register(playbookRoutes, { playbookService, profileService, chainRunner, playbookScheduler });
@@ -796,7 +793,6 @@ export async function buildServer(deps: ServerDeps) {
   server.register(devicePublicRoutes, { deviceService });
   server.register(gitOAuthCallbackRoute, { config, gitProviderService, githubAppService, encryptionKey: config.ENCRYPTION_KEY });
   // Slack OAuth callback moved to @vonzio/plugin-slack.
-  server.register(gmailOAuthCallbackRoute, { config, integrationService, encryptionKey: config.ENCRYPTION_KEY });
 
   // Playbook webhook trigger (no auth — token-based)
   server.register(playbookWebhookRoute, { playbookService, chainRunner });
@@ -818,16 +814,6 @@ export async function buildServer(deps: ServerDeps) {
     resolveSession: (token: string) => {
       const session = orchestrator.resolveNotifyToken(token);
       return session ? { userId: session.userId, sessionId: session.sessionId } : null;
-    },
-  });
-
-  // Gmail MCP endpoint (token-based auth — used by agent containers)
-  server.register(gmailMcpPlugin, {
-    config,
-    integrationService,
-    resolveSession: (token: string) => {
-      const session = orchestrator.resolveGmailToken(token);
-      return session ? { userId: session.userId } : null;
     },
   });
 

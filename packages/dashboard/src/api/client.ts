@@ -595,18 +595,9 @@ export interface Integration {
 // Phase 3E.2 -- the dashboard no longer references any
 // /v1/integrations/slack/* endpoints directly.
 
-export function fetchGmailConfig(): Promise<{ enabled: boolean }> {
-  return request("/integrations/gmail/config");
-}
-
 // Telegram API client lives in @vonzio/plugin-telegram/dashboard/api
 // as of Phase 3D.1e -- the dashboard no longer references any /v1/
 // integrations/telegram/* endpoints directly.
-
-export function getGmailAuthorizeUrl(returnPath?: string): Promise<{ url: string }> {
-  const params = returnPath ? `?returnPath=${encodeURIComponent(returnPath)}` : "";
-  return request(`/integrations/gmail/authorize${params}`);
-}
 
 // Teller (bank data) moved to the external @vonzio/plugin-teller plugin —
 // its frontend talks to /v1/integrations/teller/* directly.

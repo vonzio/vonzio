@@ -93,7 +93,7 @@ export interface NotificationServiceDeps {
   integrationService: IntegrationService;
   /**
    * The plugin notification bus. send() dispatches outbound telegram
-   * (and, in subsequent PRs, slack/gmail/etc.) traffic through here;
+   * (and, in subsequent PRs, slack/etc.) traffic through here;
    * the plugin handler resolves req.recipient -> integration row ->
    * actual send.
    */
