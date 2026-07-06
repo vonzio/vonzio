@@ -66,12 +66,23 @@ function fromAddress(cfg: MailConfig): string {
   return cfg.from_name ? `"${cfg.from_name.replace(/"/g, "'")}" <${addr}>` : addr;
 }
 
-function secure(cfg: MailConfig, kind: "imap" | "smtp"): boolean {
-  // Implicit TLS unless the operator chose STARTTLS. nodemailer/imapflow
-  // upgrade via STARTTLS automatically when secure=false and the server
-  // advertises it; we additionally require TLS (never plaintext).
+// TLS mode is derived PER PROTOCOL from the PORT — IMAP and SMTP are
+// independent and the earlier single `security` flag conflated them
+// (STARTTLS on IMAP 993, which expects implicit TLS → "failed to receive
+// greeting"). Standard conventions:
+//   IMAP: 993 → implicit TLS (secure). 143 → STARTTLS.
+//   SMTP: 465 → implicit TLS (secure). 587/25 → STARTTLS.
+// The explicit `security` field, when set, only overrides the SMTP side
+// (kept for back-compat); IMAP always follows its own port. Either way
+// plaintext auth is never allowed (implicit TLS, or requireTLS on the
+// STARTTLS upgrade).
+export function imapImplicitTls(port: number): boolean {
+  return port !== 143; // 993 (and anything non-143) = implicit TLS
+}
+export function smtpImplicitTls(cfg: MailConfig): boolean {
   if (cfg.security === "starttls") return false;
-  return true;
+  if (cfg.security === "tls") return true;
+  return cfg.smtp_port === 465; // 465 implicit; 587/25 STARTTLS
 }
 
 // Both builders are async: they SSRF-check the user-controlled host and
@@ -81,16 +92,15 @@ function secure(cfg: MailConfig, kind: "imap" | "smtp"): boolean {
 // loopback) and defeats DNS rebinding.
 async function imapClient(cfg: MailConfig): Promise<ImapFlow> {
   const { pinnedIp } = await assertSocketHostAllowed(cfg.imap_host);
-  const starttls = cfg.security === "starttls";
+  const implicit = imapImplicitTls(cfg.imap_port);
   return new ImapFlow({
     host: pinnedIp,
     port: cfg.imap_port,
-    secure: !starttls,
-    // Never fall back to plaintext auth: for STARTTLS require the
-    // upgrade; imapflow refuses to LOGIN before the socket is secured.
+    secure: implicit,
     disableAutoIdle: true,
     tls: { servername: cfg.imap_host, minVersion: "TLSv1.2" },
-    ...(starttls ? { requireTLS: true } : {}),
+    // For the STARTTLS port, require the upgrade — never plaintext auth.
+    ...(implicit ? {} : { requireTLS: true }),
     auth: { user: cfg.username, pass: cfg.password },
     logger: false,
     socketTimeout: 30_000,
@@ -100,13 +110,13 @@ async function imapClient(cfg: MailConfig): Promise<ImapFlow> {
 
 async function smtpTransport(cfg: MailConfig) {
   const { pinnedIp } = await assertSocketHostAllowed(cfg.smtp_host);
+  const implicit = smtpImplicitTls(cfg);
   return nodemailer.createTransport({
     host: pinnedIp,
     port: cfg.smtp_port,
-    secure: secure(cfg, "smtp"),
-    // requireTLS forces STARTTLS upgrade; ignoreTLS would allow
-    // plaintext — we never set it, so a non-TLS server is rejected.
-    requireTLS: true,
+    secure: implicit,
+    // On the STARTTLS port force the upgrade; never fall back to plaintext.
+    requireTLS: !implicit,
     tls: { servername: cfg.smtp_host, minVersion: "TLSv1.2" },
     auth: { user: cfg.username, pass: cfg.password },
     connectionTimeout: 30_000,
