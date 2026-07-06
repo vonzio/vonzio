@@ -168,15 +168,21 @@ export class SessionRegistry {
             expires_at: expiresAt,
           });
       } catch (err) {
-        // Insert lost a race OR the row belongs to another user. The
-        // update above already excludes other-user rows, so a conflict
-        // here after a failed revive means cross-user session-id reuse —
-        // fail loudly rather than attach to someone else's workspace.
         this.sessions.delete(sessionId);
-        throw new Error(
-          `session ${sessionId} already exists and is not owned by user ${userId}`,
-          { cause: err },
-        );
+        // Only a UNIQUE-violation on the primary key means the session id
+        // is taken by another user (the update above already excluded
+        // same-user rows). Any OTHER insert failure (e.g. the SaaS
+        // org_id NOT NULL check when a caller forgot to pin the org) must
+        // surface as-is — wrapping it in "already exists / not owned by
+        // user" masked exactly that class (Slack inbound, 2026-07-06).
+        const code = (err as { code?: string })?.code;
+        if (code === "23505") {
+          throw new Error(
+            `session ${sessionId} already exists and is not owned by user ${userId}`,
+            { cause: err },
+          );
+        }
+        throw err;
       }
     }
 

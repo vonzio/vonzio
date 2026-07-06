@@ -95,6 +95,12 @@ export interface SlackEventsRoutesOptions {
   workspaceService: PluginWorkspaceLookup;
   orchestrator: PluginOrchestrator;
   eventLog: PluginEventLog;
+  // Runs inbound-webhook dispatch in the paired user's principal context
+  // so any session/workspace this creates is org-tagged (SaaS). OSS:
+  // pass-through. Without it, Slack workspace inserts hit cp-server's
+  // org_id NOT NULL check and inbound silently fails — same tenancy seam
+  // as the Telegram plugin (OSS #171).
+  runForPrincipal: <T>(principal: { userId: string }, fn: () => Promise<T>) => Promise<T>;
   imageRewriterService: PluginImageRewriter;
   modelListService: PluginModelList;
   // Audited outbound HTTP (ctx.http). Used for the best-effort
@@ -166,7 +172,17 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
       config, db, integrationService, slackService,
       taskService, profileService, sessionRegistry, workspaceService, orchestrator, eventLog,
       modelListService,
+      runForPrincipal,
     } = opts;
+
+    // Resolve the paired user for (team, slackUser) and run `fn` inside
+    // their principal context (org-pinned on SaaS). Unlinked senders have
+    // no integration → run raw (fn only sends the "link your account"
+    // reply, creates no session). Same tenancy seam as Telegram (#171).
+    async function runForSlackUser<T>(teamId: string, slackUserId: string | undefined, fn: () => Promise<T>): Promise<T> {
+      const integ = slackUserId ? await findSlackIntegration(integrationService, teamId, slackUserId) : null;
+      return integ ? runForPrincipal({ userId: integ.user_id }, fn) : fn();
+    }
 
     // --- Slack Events API endpoint ---
     server.post("/api/slack/events", async (request, reply) => {
@@ -195,9 +211,9 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
         // Ignore bot messages to prevent loops
         if (event.bot_id || event.subtype === "bot_message") return;
 
-        // Handle DMs and mentions
+        // Handle DMs and mentions — org-pinned to the paired user.
         if (event.type === "message" || event.type === "app_mention") {
-          handleMessage(teamId, event).catch((err) => {
+          runForSlackUser(teamId, event.user as string | undefined, () => handleMessage(teamId, event)).catch((err) => {
             server.log.error({ err, event }, "Slack message handler failed");
           });
         }
@@ -286,37 +302,36 @@ function registerSlackRoutes(server: FastifyInstance, opts: SlackEventsRoutesOpt
           // Add thinking reaction
           await slackService.addReaction(botToken, channelId, threadTs, "eyes");
 
-          // Create session
+          // Create session — org-pinned to the paired user so the
+          // workspace insert gets an org_id on SaaS (else NOT NULL fails).
           const sessionId = randomUUID();
           const persistent = profile.persistent_sessions ?? false;
-          // PluginSessionLifecycle.register drops the legacy
-          // containerId param -- chat-initiated sessions never have one
-          // at registration time.
-          await sessionRegistry.register(sessionId, integration.user_id, profile.id, { persistent });
+          await runForPrincipal({ userId: integration.user_id }, async () => {
+            // PluginSessionLifecycle.register drops the legacy containerId
+            // param -- chat-initiated sessions have none at registration.
+            await sessionRegistry.register(sessionId, integration.user_id, profile.id, { persistent });
 
-          // Set workspace name from the prompt
-          const wsName = prompt.length > 50 ? prompt.slice(0, 47) + "..." : prompt;
-          await workspaceService.update(sessionId, { name: wsName });
+            const wsName = prompt.length > 50 ? prompt.slice(0, 47) + "..." : prompt;
+            await workspaceService.update(sessionId, { name: wsName });
 
-          // Store thread mapping
-          await db.insert(schema.slackThreadMappings).values({
-            slack_team_id: teamId,
-            slack_channel_id: channelId,
-            slack_thread_ts: threadTs,
-            session_id: sessionId,
-            user_id: integration.user_id,
-            profile_id: profile.id,
-            created_at: new Date().toISOString(),
+            await db.insert(schema.slackThreadMappings).values({
+              slack_team_id: teamId,
+              slack_channel_id: channelId,
+              slack_thread_ts: threadTs,
+              session_id: sessionId,
+              user_id: integration.user_id,
+              profile_id: profile.id,
+              created_at: new Date().toISOString(),
+            });
+
+            eventLog.append(sessionId, "user_message", { type: "user_message", session_id: sessionId, text: prompt });
+            sessionBuffers.set(sessionId, { tokens: [], toolCalls: [] });
+
+            await taskService.submit(
+              { mode: "session", prompt, profile_id: profile.id, session_id: sessionId },
+              [profile.id],
+            );
           });
-
-          // Log and submit
-          eventLog.append(sessionId, "user_message", { type: "user_message", session_id: sessionId, text: prompt });
-          sessionBuffers.set(sessionId, { tokens: [], toolCalls: [] });
-
-          await taskService.submit(
-            { mode: "session", prompt, profile_id: profile.id, session_id: sessionId },
-            [profile.id],
-          );
         } catch (err) {
           server.log.error({ err }, "Slack command handler failed");
         }

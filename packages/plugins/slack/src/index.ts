@@ -107,6 +107,7 @@ const plugin: VonzioPlugin<SlackPluginConfig> = {
       modelListService: ctx.core.modelList,
       sessionEvents: ctx.sessionEvents,
       http: ctx.http,
+      runForPrincipal: ctx.core.runForPrincipal,
     });
 
     // Bus-inverted notify handler (kind = "slack"). Same pattern as
