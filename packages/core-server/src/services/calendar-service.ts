@@ -9,9 +9,22 @@
 // host on every request (tsdav uses global fetch, so we inject our own),
 // and HTTPS is required.
 
-import { DAVClient } from "tsdav";
-import ICAL from "ical.js";
+// tsdav + ical.js are CJS/dual-build deps. A named VALUE import
+// (`import { DAVClient }`) throws at RUNTIME under Node's ESM loader
+// ("does not provide an export named 'DAVClient'") even though tsc and
+// vitest accept it — they resolve CJS interop differently than tsx/node
+// in production. So: import the TYPES with `import type` (erased, always
+// safe) and resolve the runtime VALUES off a namespace import with a
+// default-export fallback that works whichever build condition wins.
+import type { DAVClient as DAVClientCtor, DAVCalendar } from "tsdav";
+import * as tsdavNs from "tsdav";
+import * as icalNs from "ical.js";
 import { assertSocketHostAllowed } from "../lib/safe-webhook-fetch.js";
+
+const DAVClient = (tsdavNs.DAVClient
+  ?? (tsdavNs as unknown as { default: { DAVClient: typeof tsdavNs.DAVClient } }).default.DAVClient);
+const ICAL = ((icalNs as { default?: unknown }).default ?? icalNs) as typeof import("ical.js").default;
+type DAVClient = DAVClientCtor;
 
 export interface CalendarConfig {
   caldav_url: string;
@@ -87,7 +100,7 @@ export class CalendarService {
   async listCalendars(cfg: CalendarConfig): Promise<CalendarSummary[]> {
     const client = await this.client(cfg);
     const cals = await client.fetchCalendars();
-    return cals.map((c) => ({
+    return cals.map((c: DAVCalendar) => ({
       url: c.url,
       displayName: typeof c.displayName === "string" ? c.displayName : "(unnamed)",
     }));
@@ -99,7 +112,7 @@ export class CalendarService {
     const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
     const client = await this.client(cfg);
     const cals = await client.fetchCalendars();
-    const targets = opts.calendarUrl ? cals.filter((c) => c.url === opts.calendarUrl) : cals;
+    const targets = opts.calendarUrl ? cals.filter((c: DAVCalendar) => c.url === opts.calendarUrl) : cals;
     const timeRange = { start: new Date().toISOString(), end: daysFromNow(days) };
     const out: EventSummary[] = [];
     for (const cal of targets) {
@@ -140,7 +153,7 @@ export class CalendarService {
   }): Promise<{ uid: string; calendarUrl: string }> {
     const client = await this.client(cfg);
     const cals = await client.fetchCalendars();
-    const cal = (opts.calendarUrl ? cals.find((c) => c.url === opts.calendarUrl) : cals[0]);
+    const cal = (opts.calendarUrl ? cals.find((c: DAVCalendar) => c.url === opts.calendarUrl) : cals[0]);
     if (!cal) throw new Error("No writable calendar found");
 
     const uid = `vonzio-${Date.now()}-${Math.random().toString(36).slice(2, 10)}@vonzio`;
