@@ -41,7 +41,7 @@ export function IntegrationSection() {
   const [savingCal, setSavingCal] = useState(false);
   const [calError, setCalError] = useState("");
   const [mailPreset, setMailPreset] = useState("gmail");
-  const [mailForm, setMailForm] = useState({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", username: "", password: "", from_name: "" });
+  const [mailForm, setMailForm] = useState({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "587", username: "", password: "", from_name: "" });
   const [savingMail, setSavingMail] = useState(false);
   const [mailError, setMailError] = useState("");
   const [showEmail, setShowEmail] = useState(false);
@@ -92,11 +92,11 @@ export function IntegrationSection() {
     catch (e) { setError(e instanceof Error ? e.message : "Failed to set default"); }
   };
   const MAIL_PRESETS: Record<string, { imap_host: string; imap_port: string; smtp_host: string; smtp_port: string }> = {
-    gmail: { imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465" },
+    gmail: { imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "587" },
     outlook: { imap_host: "outlook.office365.com", imap_port: "993", smtp_host: "smtp.office365.com", smtp_port: "587" },
-    fastmail: { imap_host: "imap.fastmail.com", imap_port: "993", smtp_host: "smtp.fastmail.com", smtp_port: "465" },
+    fastmail: { imap_host: "imap.fastmail.com", imap_port: "993", smtp_host: "smtp.fastmail.com", smtp_port: "587" },
     icloud: { imap_host: "imap.mail.me.com", imap_port: "993", smtp_host: "smtp.mail.me.com", smtp_port: "587" },
-    custom: { imap_host: "", imap_port: "993", smtp_host: "", smtp_port: "465" },
+    custom: { imap_host: "", imap_port: "993", smtp_host: "", smtp_port: "587" },
   };
   const applyMailPreset = (preset: string) => {
     setMailPreset(preset);
@@ -133,7 +133,7 @@ export function IntegrationSection() {
         security: Number(mailForm.smtp_port) === 587 ? "starttls" : "tls",
         from_name: mailForm.from_name || undefined,
       } });
-      setMailForm({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", username: "", password: "", from_name: "" });
+      setMailForm({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "587", username: "", password: "", from_name: "" });
       setShowMail(false); refetch();
     } catch (e) { setMailError(e instanceof Error ? e.message : "Failed to connect mailbox"); }
     setSavingMail(false);
