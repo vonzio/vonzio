@@ -137,6 +137,7 @@ jobs:
             packages/core-server/src/services/title-service.test.ts \
             packages/core-server/src/lib/safe-webhook-fetch.test.ts \
             packages/core-server/src/mcp/mail-mcp.test.ts \
+            packages/core-server/src/services/mail-service.test.ts \
             packages/core-server/src/services/calendar-service.test.ts \
             packages/core-server/src/orchestrator/chain-runner.test.ts \
             packages/core-server/src/plugins/loader.test.ts \
