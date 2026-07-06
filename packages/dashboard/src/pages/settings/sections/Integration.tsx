@@ -36,12 +36,14 @@ export function IntegrationSection() {
   // Email + webhook
   const [showMail, setShowMail] = useState(false);
   const [showCal, setShowCal] = useState(false);
-  const [calPreset, setCalPreset] = useState("google");
-  const [calForm, setCalForm] = useState({ caldav_url: "https://apidata.googleusercontent.com/caldav/v2/", username: "", password: "" });
+  const [calPreset, setCalPreset] = useState("icloud");
+  const [calForm, setCalForm] = useState({ caldav_url: "https://caldav.icloud.com/", username: "", password: "" });
   const [savingCal, setSavingCal] = useState(false);
+  const [calError, setCalError] = useState("");
   const [mailPreset, setMailPreset] = useState("gmail");
   const [mailForm, setMailForm] = useState({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", username: "", password: "", from_name: "" });
   const [savingMail, setSavingMail] = useState(false);
+  const [mailError, setMailError] = useState("");
   const [showEmail, setShowEmail] = useState(false);
   const [emailApiKey, setEmailApiKey] = useState("");
   const [emailFrom, setEmailFrom] = useState("");
@@ -102,10 +104,10 @@ export function IntegrationSection() {
     if (p && preset !== "custom") setMailForm((f) => ({ ...f, ...p }));
   };
   const CAL_PRESETS: Record<string, string> = {
-    google: "https://apidata.googleusercontent.com/caldav/v2/",
     icloud: "https://caldav.icloud.com/",
     fastmail: "https://caldav.fastmail.com/dav/",
     nextcloud: "",
+    google: "",
     custom: "",
   };
   const applyCalPreset = (preset: string) => {
@@ -113,16 +115,16 @@ export function IntegrationSection() {
     if (CAL_PRESETS[preset]) setCalForm((f) => ({ ...f, caldav_url: CAL_PRESETS[preset] }));
   };
   const handleSaveCal = async () => {
-    setSavingCal(true); setError("");
+    setSavingCal(true); setCalError("");
     try {
       await createIntegration({ type: "calendar", config: { caldav_url: calForm.caldav_url, username: calForm.username, password: calForm.password } });
       setCalForm({ caldav_url: "https://apidata.googleusercontent.com/caldav/v2/", username: "", password: "" });
       setShowCal(false); refetch();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect calendar"); }
+    } catch (e) { setCalError(e instanceof Error ? e.message : "Failed to connect calendar"); }
     setSavingCal(false);
   };
   const handleSaveMail = async () => {
-    setSavingMail(true); setError("");
+    setSavingMail(true); setMailError("");
     try {
       await createIntegration({ type: "mail", config: {
         imap_host: mailForm.imap_host, imap_port: Number(mailForm.imap_port) || 993,
@@ -133,7 +135,7 @@ export function IntegrationSection() {
       } });
       setMailForm({ imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", username: "", password: "", from_name: "" });
       setShowMail(false); refetch();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect mailbox"); }
+    } catch (e) { setMailError(e instanceof Error ? e.message : "Failed to connect mailbox"); }
     setSavingMail(false);
   };
   const handleSaveEmail = async () => {
@@ -354,7 +356,7 @@ export function IntegrationSection() {
                   <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnect(cal.id)}>Disconnect</Button>
                 </>
               ) : (
-                <Button size="sm" onClick={() => { setError(""); setShowCal(true); }}>Connect calendar</Button>
+                <Button size="sm" onClick={() => { setCalError(""); setShowCal(true); }}>Connect calendar</Button>
               )
             }
           />
@@ -371,7 +373,7 @@ export function IntegrationSection() {
                   <Button variant="danger-ghost" size="sm" onClick={() => handleDisconnect(mail.id)}>Disconnect</Button>
                 </>
               ) : (
-                <Button size="sm" onClick={() => { setError(""); setShowMail(true); }}>Connect mailbox</Button>
+                <Button size="sm" onClick={() => { setMailError(""); setShowMail(true); }}>Connect mailbox</Button>
               )
             }
           />
@@ -421,7 +423,7 @@ export function IntegrationSection() {
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setShowCal(false)}>Cancel</Button>
-            <Button size="sm" onClick={handleSaveCal} disabled={savingCal || !calForm.username || !calForm.password || !calForm.caldav_url}>
+            <Button size="sm" onClick={handleSaveCal} disabled={savingCal || calPreset === "google" || !calForm.username || !calForm.password || !calForm.caldav_url}>
               {savingCal ? "Verifying…" : "Connect"}
             </Button>
           </>
@@ -441,9 +443,14 @@ export function IntegrationSection() {
               ]}
             />
           </Field>
-          {(calPreset === "google" || calPreset === "icloud") && (
+          {calPreset === "google" && (
+            <div style={{ fontSize: 12, color: "var(--vz-warn)" }}>
+              Google Calendar can't be connected here — Google disabled app-password (Basic-auth) CalDAV access in March 2025 and now requires OAuth. Use iCloud, Fastmail, Nextcloud, or a custom CalDAV server. (Google support is planned via the OAuth connector.)
+            </div>
+          )}
+          {(calPreset === "icloud" || calPreset === "fastmail") && (
             <div style={{ fontSize: 12, color: "var(--vz-muted)" }}>
-              {calPreset === "google" ? "Google" : "iCloud"} needs an <strong>app password</strong> (2-Step Verification → App passwords), not your normal password.
+              {calPreset === "icloud" ? "iCloud" : "Fastmail"} needs an <strong>app password</strong>, not your normal password.
             </div>
           )}
           <Field label="CalDAV URL">
@@ -455,6 +462,7 @@ export function IntegrationSection() {
           <Field label="App password">
             <Input type="password" value={calForm.password} onChange={(e) => setCalForm((f) => ({ ...f, password: e.target.value }))} placeholder="••••••••••••" />
           </Field>
+          {calError && <div style={{ fontSize: 12, color: "var(--vz-danger)" }}>{calError}</div>}
           <div style={{ fontSize: 11, color: "var(--vz-muted-2)" }}>
             Credentials are encrypted at rest. Your agents connect through the server — they never see the password.
           </div>
@@ -512,6 +520,7 @@ export function IntegrationSection() {
               <Field label="SMTP port"><Input value={mailForm.smtp_port} onChange={(e) => setMailForm((f) => ({ ...f, smtp_port: e.target.value }))} /></Field>
             </div>
           )}
+          {mailError && <div style={{ fontSize: 12, color: "var(--vz-danger)" }}>{mailError}</div>}
           <div style={{ fontSize: 11, color: "var(--vz-muted-2)" }}>
             Credentials are encrypted at rest. Your agents connect through the server — they never see the password.
           </div>
