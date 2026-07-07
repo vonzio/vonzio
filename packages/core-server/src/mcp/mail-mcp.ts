@@ -237,10 +237,14 @@ export const mailMcpPlugin = fp(
           });
           // Audit trail: who sent what to whom from which session.
           server.log.info(
-            { userId: session.userId, sessionId: session.sessionId, integrationId: integration.id, to, subject },
+            { userId: session.userId, sessionId: session.sessionId, integrationId: integration.id, to, subject, sentCopy: res.sentCopy },
             "mail_send dispatched",
           );
-          return toolResult(`Email sent. Message-ID: ${res.messageId}`);
+          return toolResult(
+            `Email sent to ${to} (Message-ID: ${res.messageId}).` +
+            (res.sentCopy ? " A copy is in the Sent folder." : "") +
+            " Note: delivery to the recipient's inbox depends on their provider's spam filtering — it may land in Spam.",
+          );
         }
         default:
           return toolResult(`Unknown tool: ${toolName}`, true);
