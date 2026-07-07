@@ -14,6 +14,7 @@ import { ImapFlow, type FetchMessageObject } from "imapflow";
 import { simpleParser } from "mailparser";
 import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
+import { randomBytes } from "node:crypto";
 import { assertSocketHostAllowed } from "../lib/safe-webhook-fetch.js";
 
 // Cap on a single fetched message's raw source. IMAP servers can hand
@@ -247,17 +248,62 @@ export class MailService {
     cc?: string;
     bcc?: string;
     inReplyTo?: string;
-  }): Promise<{ messageId: string }> {
-    const info = await (await smtpTransport(cfg)).sendMail({
+  }): Promise<{ messageId: string; sentCopy: boolean }> {
+    // One Message-ID shared by the transmitted mail and the Sent-folder
+    // copy so they're the same message across the mailbox.
+    const addr = (cfg.from_address || cfg.username).trim();
+    const domain = addr.includes("@") ? addr.split("@")[1] : "localhost";
+    const messageId = `<${Date.now()}.${randomBytes(8).toString("hex")}@${domain}>`;
+    const mail = {
       from: fromAddress(cfg),
       to: opts.to,
       cc: opts.cc,
       bcc: opts.bcc,
       subject: opts.subject,
       text: opts.body,
+      messageId,
       ...(opts.inReplyTo ? { inReplyTo: opts.inReplyTo, references: opts.inReplyTo } : {}),
-    });
-    return { messageId: info.messageId };
+    };
+    // nodemailer handles Bcc correctly (envelope only, stripped from the
+    // transmitted headers).
+    const info = await (await smtpTransport(cfg)).sendMail(mail);
+
+    // File a copy in the Sent folder over IMAP so agent-sent mail is
+    // visible in the mailbox — SMTP submission alone never does this
+    // (that's normally the mail client's job). Best-effort: the message
+    // was already delivered, so an append failure must NOT fail the send.
+    let sentCopy = false;
+    try {
+      const raw: Buffer = await new Promise((resolve, reject) => {
+        new MailComposer(mail).compile().build((err, message) => (err ? reject(err) : resolve(message)));
+      });
+      await this.appendToMailbox(cfg, raw, "\\Sent", "Sent", ["\\Seen"]);
+      sentCopy = true;
+    } catch {
+      // Swallow — the Sent copy is a nicety, not the send.
+    }
+    return { messageId: info.messageId ?? messageId, sentCopy };
+  }
+
+  /** APPEND a raw message to a special-use IMAP folder (\Sent, \Drafts),
+   *  falling back to a conventional name when the server doesn't flag one. */
+  private async appendToMailbox(
+    cfg: MailConfig,
+    raw: Buffer,
+    specialUse: string,
+    fallbackName: string,
+    flags: string[],
+  ): Promise<string> {
+    const client = await imapClient(cfg);
+    await client.connect();
+    try {
+      const folders = await client.list();
+      const target = folders.find((f) => f.specialUse === specialUse)?.path ?? fallbackName;
+      await client.append(target, raw, flags);
+      return target;
+    } finally {
+      await client.logout().catch(() => {});
+    }
   }
 
   /** APPEND an unsent draft to the mailbox's \Drafts folder. */
@@ -280,16 +326,8 @@ export class MailService {
         .compile()
         .build((err, message) => (err ? reject(err) : resolve(message)));
     });
-    const client = await imapClient(cfg);
-    await client.connect();
-    try {
-      const folders = await client.list();
-      const drafts = folders.find((f) => f.specialUse === "\\Drafts")?.path ?? "Drafts";
-      await client.append(drafts, raw, ["\\Draft"]);
-      return { folder: drafts };
-    } finally {
-      await client.logout().catch(() => {});
-    }
+    const folder = await this.appendToMailbox(cfg, raw, "\\Drafts", "Drafts", ["\\Draft"]);
+    return { folder };
   }
 
   private toSummary(folder: string, msg: FetchMessageObject): MailSummary {
