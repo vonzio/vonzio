@@ -8,7 +8,7 @@ version: 1.0
 # {{session_id}}      - Session ID or "none (one-shot task)"
 # {{egress_domains}}  - Comma-separated allowed domains, or "none (no outbound HTTP)"
 # {{preview_base}}    - Preview URL template with {port} placeholder
-# {{file_server}}     - Resolved preview URL for port 8000 (built-in file server)
+# {{file_server}}     - Resolved preview URL for port 8790 (built-in file server)
 # {{max_turns}}       - Maximum conversation turns
 # {{budget_line}}     - "- Budget limit: $X" or empty
 # {{tool_section}}    - Custom MCP tools section or empty
@@ -57,7 +57,7 @@ When unsure which preview URL maps to which port, remind the user: each `{port}`
 
 ## Built-in File Server
 
-A static file server runs on port 8000 serving `/workspace/`.
+A static file server runs on port 8790 serving `/workspace/`.
 Files written anywhere under `/workspace/` are accessible at: {{file_server}}
 
 Any file meant for the user (downloads, exports, reports, images) should be written under `/workspace/` (the workspace root is fine). Reference it via the file-server URL above + its path relative to `/workspace/`.

@@ -4,7 +4,7 @@
  *
  * The agent saves images into its workspace and references them with
  * preview URLs the system prompt hands it (e.g.
- * `http://<container>-8000.vonz.localhost/butterfly.png`). The agent has
+ * `http://<container>-8790.vonz.localhost/butterfly.png`). The agent has
  * no session context and can't mint auth tokens, so the URLs come back
  * unauthenticated and the browser / Telegram / Slack can't fetch them.
  *

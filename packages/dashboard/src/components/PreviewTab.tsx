@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { ExternalLink, WifiOff, RefreshCw, Globe, Lock, Server, ChevronDown, Copy, Check, KeyRound } from "lucide-react";
+import { FILE_SERVER_PORT } from "@vonzio/shared";
 import type { WorkspacePort, PreviewPortMode } from "../api/client.js";
 
 // Linux ephemeral port range (ip_local_port_range) — auto-assigned to transient
@@ -262,7 +263,8 @@ export function PreviewTab({
     );
   }
 
-  const isFileServer = /\-8000\.vonzio\.localhost/.test(url);
+  const fileServerPort = (window as unknown as { __VONZIO_FILE_SERVER_PORT?: number }).__VONZIO_FILE_SERVER_PORT ?? FILE_SERVER_PORT;
+  const isFileServer = new RegExp(`-${fileServerPort}\\.vonzio\\.localhost`).test(url);
   const dotColor = loadError ? "var(--vz-warn)" : "var(--vz-ok)";
 
   return (

@@ -162,7 +162,9 @@ export async function buildServer(deps: ServerDeps) {
       cleanupCmd: ["sh", "/app/cleanup.sh"],
     },
     () => ({
-      env: { ANTHROPIC_API_KEY: "__pool_placeholder__" },
+      // FILE_SERVER_PORT so pre-warmed containers bind the file server on the
+      // configured port too (the profile env isn't applied to pooled containers).
+      env: { ANTHROPIC_API_KEY: "__pool_placeholder__", FILE_SERVER_PORT: String(config.FILE_SERVER_PORT) },
       labels: { [CONTAINER_MODE_LABEL]: ContainerMode.Pooled },
       cpus: config.CONTAINER_CPU_LIMIT_BATCH,
       memory: config.CONTAINER_MEMORY_LIMIT_BATCH,
@@ -342,6 +344,7 @@ export async function buildServer(deps: ServerDeps) {
       containerMemoryDockerAccess: config.CONTAINER_MEMORY_LIMIT_DOCKER_ACCESS,
       containerPidsLimitDockerAccess: config.CONTAINER_PIDS_LIMIT_DOCKER_ACCESS,
       dockerAccessMode: config.DOCKER_ACCESS_MODE,
+      fileServerPort: config.FILE_SERVER_PORT,
       previewUrlTemplate: config.PREVIEW_URL_TEMPLATE,
       internalServerUrl: config.INTERNAL_SERVER_URL,
       encryptionKey: config.ENCRYPTION_KEY,
@@ -442,6 +445,7 @@ export async function buildServer(deps: ServerDeps) {
       // window.location.
       appUrl: config.BETTER_AUTH_URL,
       previewUrlTemplate: config.PREVIEW_URL_TEMPLATE,
+      fileServerPort: config.FILE_SERVER_PORT,
       maxTurns: config.MAX_TURNS,
       ollamaEnabled: config.OLLAMA_ENABLED,
       maxDocumentMb: config.MAX_DOCUMENT_MB,

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { TaskQueue } from "@vonzio/shared";
 import type { Task, TaskResult } from "@vonzio/shared";
 import type { ContainerManager } from "@vonzio/shared";
+import { FILE_SERVER_PORT } from "@vonzio/shared";
 import type { ConcurrencyLimiter, VpnTunnelProvider } from "@vonzio/shared";
 import type { McpServerSpec } from "@vonzio/plugin-api";
 import { buildPluginMcpInjection } from "./plugin-mcp.js";
@@ -148,6 +149,9 @@ export interface OrchestratorDeps {
     containerMemoryBatch: string;
     containerMemorySession: string;
     previewUrlTemplate: string;
+    /** Port the agent's built-in file server binds + the {{file_server}} URL
+     *  targets. Defaults to FILE_SERVER_PORT when unset. */
+    fileServerPort?: number;
     internalServerUrl?: string;
     /** Used to decrypt VPN tunnel configs before passing to the sidecar. */
     encryptionKey?: string;
@@ -2136,6 +2140,9 @@ export class Orchestrator extends EventEmitter {
     // with scope='all' goes to every profile; scope='agents' only to those
     // listed in its profile_ids.
     const env: Record<string, string> = {};
+    // Tell the container's built-in file server (docker/fileserver.py) which port
+    // to bind — kept in sync with the {{file_server}} URL + dashboard.
+    env.FILE_SERVER_PORT = String(this.deps.config.fileServerPort ?? FILE_SERVER_PORT);
     if (profile.user_id && this.deps.secretVaultService) {
       const secrets = await this.deps.secretVaultService.getDecryptedForProfile(profile.user_id, profile.id);
       Object.assign(env, secrets);
@@ -2333,7 +2340,7 @@ export class Orchestrator extends EventEmitter {
       // Trailing slash matters: the system-prompt docs show
       // `![alt]({{file_server}}filename.png)` — without it the resolved
       // URL becomes `http://...vonz.localhostfilename.png` and 404s.
-      .replace(/\{\{file_server\}\}/g, previewBase.replace("{port}", "8000").replace(/\/?$/, "/"))
+      .replace(/\{\{file_server\}\}/g, previewBase.replace("{port}", String(this.deps.config.fileServerPort ?? FILE_SERVER_PORT)).replace(/\/?$/, "/"))
       .replace(/\{\{max_turns\}\}/g, String(resolvedMaxTurns ?? task.max_turns ?? this.deps.config.maxTurns))
       .replace(/\{\{budget_line\}\}/g, task.max_budget_usd ? `- Budget limit: $${task.max_budget_usd}` : "")
       .replace(/\{\{tool_section\}\}/g, toolSection)
