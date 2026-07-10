@@ -124,6 +124,14 @@ services:
       # install). Defaults to vonzio-network for a single default install.
       # MUST match the `name:` under `networks:` below.
       - DOCKER_NETWORK=${VONZIO_NETWORK:-vonzio-network}
+      # Docker-in-Docker access (feature 0001) — off by default. Set to
+      # dind-privileged (single-tenant/own-box) or sysbox (needs Sysbox on the
+      # host) to let profiles flagged docker_access run nested compose stacks. The
+      # socket-proxy passes privileged creates (endpoint-level filtering), so no
+      # raw-socket exposure is needed. See docs/SELF_HOST.md.
+      - DOCKER_ACCESS_MODE=${DOCKER_ACCESS_MODE:-off}
+      - CONTAINER_MEMORY_LIMIT_DOCKER_ACCESS=${CONTAINER_MEMORY_LIMIT_DOCKER_ACCESS:-8g}
+      - CONTAINER_PIDS_LIMIT_DOCKER_ACCESS=${CONTAINER_PIDS_LIMIT_DOCKER_ACCESS:-4096}
       - LOG_LEVEL=info
       - PORT=3000
       - HOST=0.0.0.0
