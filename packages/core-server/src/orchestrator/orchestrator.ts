@@ -1345,7 +1345,11 @@ export class Orchestrator extends EventEmitter {
   private async runAgent(task: Task, containerId: string, profile: ResolvedProfile, env?: Record<string, string>, isResume?: boolean): Promise<TaskResult> {
     // Start Ollama auth proxy if needed — only once per container (skip if already running)
     if (env?.OLLAMA_TARGET_URL) {
-      await this.runSetupCommands(containerId, ["node /app/ollama-proxy.cjs &\nsleep 0.3"], env);
+      // Redirect the daemon's stdout/stderr to a file: a backgrounded process
+      // that keeps writing to the exec's pipe holds it open, so the setup
+      // command's `__RC__` exit marker races and is sometimes missed (surfaces
+      // as a spurious "exit -1" even though the proxy started fine).
+      await this.runSetupCommands(containerId, ["node /app/ollama-proxy.cjs >/tmp/ollama-proxy.log 2>&1 &\nsleep 0.3"], env);
     }
     // Start the OpenAI translating gateway if this profile uses an OpenAI(-compatible) key.
     // The container is reused across turns and a cross-key switch changes
@@ -1369,7 +1373,9 @@ export class Orchestrator extends EventEmitter {
         // EADDRINUSE on :11434 and exit — fixed sleeps race.
         '    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$OLD" 2>/dev/null || break; sleep 0.1; done\n' +
         "  fi\n" +
-        "  node /app/llm-gateway.cjs &\n" +
+        // Redirect output (see the ollama-proxy note) so the backgrounded
+        // gateway doesn't hold the exec pipe open and race the RC marker.
+        "  node /app/llm-gateway.cjs >/tmp/llm-gateway.log 2>&1 &\n" +
         "  echo $! > /tmp/llm-gateway.pid\n" +
         '  printf %s "$NEW" > /tmp/llm-gateway.target\n' +
         "  sleep 0.3\n" +
