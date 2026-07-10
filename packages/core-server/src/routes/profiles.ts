@@ -32,6 +32,10 @@ export interface ProfileRoutesOptions {
    *  materialized org_profiles. The GET handler uses this to tag
    *  each row's `team_owned` field. */
   materializedOrgProfileIds?: (profileIds: string[]) => Promise<Set<string>>;
+  /** Feature 0041: fires when a PATCH changes memory_limit, so the orchestrator
+   *  can live-apply the new ceiling to the user's running workspaces on this
+   *  profile (Docker can resize a running container's memory without a restart).*/
+  applyMemoryChange?: (userId: string | null | undefined, profileId: string) => Promise<void>;
 }
 
 export const profileRoutes = fp(
@@ -186,6 +190,12 @@ export const profileRoutes = fp(
           const updated = await profileService.update(request.params.id, parsed.data, request.user!.role);
           if (!updated) {
             return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Profile not found"));
+          }
+          // Feature 0041: a memory change applies to running workspaces live
+          // (best-effort — never fail the save if the resize hiccups).
+          if (parsed.data.memory_limit !== undefined && opts.applyMemoryChange) {
+            try { await opts.applyMemoryChange(updated.user_id, updated.id); }
+            catch (err) { server.log.warn({ err, profileId: updated.id }, "live memory apply failed"); }
           }
           return updated;
         } catch (err) {

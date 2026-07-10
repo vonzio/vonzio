@@ -89,6 +89,10 @@ export interface ContainerManager {
   startContainer(id: string): Promise<void>;
   stopContainer(id: string, timeout?: number): Promise<void>;
   removeContainer(id: string, force?: boolean): Promise<void>;
+  /** Resize a running container's memory limit live, no recreate (feature 0041). */
+  updateContainerMemory(id: string, memory: string): Promise<void>;
+  /** The container's current hard memory limit in bytes (0 = unlimited). */
+  getContainerMemoryLimit(id: string): Promise<number>;
   execInContainer(
     id: string,
     cmd: string[],

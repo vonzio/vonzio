@@ -11,6 +11,8 @@ function createMockManager(): ContainerManager {
     async startContainer() {},
     async stopContainer() {},
     async removeContainer() {},
+    async updateContainerMemory() {},
+    async getContainerMemoryLimit() { return 0; },
     async *execInContainer() {},
     async createTerminalSession() { return { write() {}, resize() {}, onData() {}, onExit() {}, close() {} }; },
     async getContainerStatus() { return "running"; },

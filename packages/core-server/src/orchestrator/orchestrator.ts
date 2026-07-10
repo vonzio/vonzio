@@ -731,7 +731,7 @@ export class Orchestrator extends EventEmitter {
         labels: {
           [CONTAINER_MODE_LABEL]: ContainerMode.Batch,
           "vonzio-task-id": task.id,
-          ...this.memoryLabels(profile.user_id, memory),
+          ...this.ownerLabels(profile.user_id, profile.id),
         },
       });
       if (vpn) {
@@ -1272,8 +1272,9 @@ export class Orchestrator extends EventEmitter {
   }
 
   /** Feature 0041: reject a new workspace if the user's RUNNING workspaces + this
-   *  one would exceed the per-user memory total. Sums the vonzio-memory-bytes
-   *  labels of the user's running managed containers (no per-container inspect). */
+   *  one would exceed the per-user memory total. Reads each container's ACTUAL
+   *  current limit (inspect), so it reflects live memory updates, not a stale
+   *  label. */
   private async assertUserMemoryBudget(userId: string | null | undefined, memory: string): Promise<void> {
     const cap = this.deps.config.containerMemoryPerUserTotal;
     if (!userId || !cap) return;
@@ -1282,7 +1283,7 @@ export class Orchestrator extends EventEmitter {
     let usedBytes = 0;
     for (const c of await this.deps.containerManager.listManagedContainers()) {
       if (c.status !== "running" || c.labels["vonzio-user-id"] !== userId) continue;
-      usedBytes += parseInt(c.labels["vonzio-memory-bytes"] ?? "0", 10) || 0;
+      usedBytes += await this.deps.containerManager.getContainerMemoryLimit(c.id).catch(() => 0);
     }
     if (usedBytes + newBytes > capBytes) {
       throw new Error(
@@ -1293,10 +1294,32 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
-  /** Container labels tagging the owner + reserved memory, for the per-user
-   *  budget sum (feature 0041). */
-  private memoryLabels(userId: string | null | undefined, memory: string): Record<string, string> {
-    return { "vonzio-user-id": userId ?? "", "vonzio-memory-bytes": String(parseMemory(memory)) };
+  /** Container labels tagging the owner + profile, for the per-user budget filter
+   *  and live memory re-apply (feature 0041). */
+  private ownerLabels(userId: string | null | undefined, profileId: string): Record<string, string> {
+    return { "vonzio-user-id": userId ?? "", "vonzio-profile-id": profileId };
+  }
+
+  /** Feature 0041: live-apply a profile's (changed) memory ceiling to the user's
+   *  running SESSION (pinned/persistent) workspaces on that profile — Docker
+   *  resizes the running container's cgroup with no recreate. Batch containers
+   *  are one-shot and ephemeral, so they're left alone. Best-effort per container. */
+  async applyMemoryToRunningWorkspaces(userId: string | null | undefined, profileId: string): Promise<void> {
+    const profile = await this.deps.profileService.get(profileId);
+    if (!profile) return;
+    const dind = this.dockerAccessOptions(profile);
+    const memory = this.resolveMemory(profile, dind?.memory, this.deps.config.containerMemorySession);
+    for (const c of await this.deps.containerManager.listManagedContainers()) {
+      if (c.status !== "running" || c.labels[CONTAINER_MODE_LABEL] !== ContainerMode.Session) continue;
+      if (c.labels["vonzio-profile-id"] !== profileId) continue;
+      if (userId && c.labels["vonzio-user-id"] !== userId) continue;
+      try {
+        await this.deps.containerManager.updateContainerMemory(c.id, memory);
+        this.log.info({ containerId: c.id, profileId, memory }, "live-applied memory to running workspace");
+      } catch (err) {
+        this.log.warn({ err, containerId: c.id }, "live memory update failed");
+      }
+    }
   }
 
   /** Create a session container, optionally mounting named volumes for persistent sessions. */
@@ -1365,7 +1388,7 @@ export class Orchestrator extends EventEmitter {
       labels: {
         [CONTAINER_MODE_LABEL]: ContainerMode.Session,
         "vonzio-session-id": sessionId,
-        ...this.memoryLabels(profile.user_id, memory),
+        ...this.ownerLabels(profile.user_id, profile.id),
       },
     });
     if (vpn) {

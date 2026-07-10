@@ -746,7 +746,7 @@ export function EditAgent() {
                     <Checkbox checked={persistentSessions} onChange={setPersistentSessions}>Persistent sessions</Checkbox>
                     <Checkbox checked={memoryEnabled} onChange={setMemoryEnabled}>Agent memory</Checkbox>
                   </div>
-                  <Field label="Workspace memory" hint={`RAM ceiling for this agent's container. Raise it for heavy builds or compose stacks. Default ${memDefault}; takes effect on the next workspace start.`}>
+                  <Field label="Workspace memory" hint={`RAM ceiling for this agent's container. Raise it for heavy builds or compose stacks. Default ${memDefault}; applies immediately to running workspaces (no restart).`}>
                     <Select
                       options={[
                         { value: "", label: `Default (${memDefault})` },
