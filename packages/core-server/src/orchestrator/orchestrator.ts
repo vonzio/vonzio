@@ -1300,24 +1300,35 @@ export class Orchestrator extends EventEmitter {
     return { "vonzio-user-id": userId ?? "", "vonzio-profile-id": profileId };
   }
 
-  /** Feature 0041: live-apply a profile's (changed) memory ceiling to the user's
-   *  running SESSION (pinned/persistent) workspaces on that profile — Docker
-   *  resizes the running container's cgroup with no recreate. Batch containers
-   *  are one-shot and ephemeral, so they're left alone. Best-effort per container. */
+  /** Feature 0041: live-apply a profile's (changed) memory ceiling to its running
+   *  workspaces — Docker resizes the running container's cgroup with no recreate.
+   *  The workspace→container mapping comes from the DB (workspaces.profile_id →
+   *  container_id), NOT container labels: workspaces created before this feature
+   *  shipped lack the vonzio-profile-id label but must still resize. Only
+   *  currently-running containers are touched (stopped/persistent sessions pick
+   *  up the new ceiling when they next start). Best-effort per container. */
   async applyMemoryToRunningWorkspaces(userId: string | null | undefined, profileId: string): Promise<void> {
     const profile = await this.deps.profileService.get(profileId);
     if (!profile) return;
     const dind = this.dockerAccessOptions(profile);
     const memory = this.resolveMemory(profile, dind?.memory, this.deps.config.containerMemorySession);
-    for (const c of await this.deps.containerManager.listManagedContainers()) {
-      if (c.status !== "running" || c.labels[CONTAINER_MODE_LABEL] !== ContainerMode.Session) continue;
-      if (c.labels["vonzio-profile-id"] !== profileId) continue;
-      if (userId && c.labels["vonzio-user-id"] !== userId) continue;
+    const rows = await this.deps.db
+      .select({ containerId: schema.workspaces.container_id, wsUserId: schema.workspaces.user_id })
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.profile_id, profileId));
+    const running = new Set(
+      (await this.deps.containerManager.listManagedContainers())
+        .filter((c) => c.status === "running")
+        .map((c) => c.id),
+    );
+    for (const row of rows) {
+      if (!row.containerId || !running.has(row.containerId)) continue;
+      if (userId && row.wsUserId && row.wsUserId !== userId) continue;
       try {
-        await this.deps.containerManager.updateContainerMemory(c.id, memory);
-        this.log.info({ containerId: c.id, profileId, memory }, "live-applied memory to running workspace");
+        await this.deps.containerManager.updateContainerMemory(row.containerId, memory);
+        this.log.info({ containerId: row.containerId, profileId, memory }, "live-applied memory to running workspace");
       } catch (err) {
-        this.log.warn({ err, containerId: c.id }, "live memory update failed");
+        this.log.warn({ err, containerId: row.containerId }, "live memory update failed");
       }
     }
   }
