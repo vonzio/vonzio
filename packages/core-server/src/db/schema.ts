@@ -161,6 +161,10 @@ export const profiles = pgTable("profiles", {
     .notNull()
     .default([]),
   persistent_sessions: boolean("persistent_sessions").notNull().default(true),
+  // Feature 0001: allow this profile's workspaces to run a nested docker daemon
+  // (build images, `docker compose` dev stacks). Requires DOCKER_ACCESS_MODE on
+  // the host; forces allow-all egress. Off by default.
+  docker_access: boolean("docker_access").notNull().default(false),
   concurrency_limit: integer("concurrency_limit").notNull().default(5),
   memory_enabled: boolean("memory_enabled").notNull().default(true),
   max_turns: integer("max_turns"),

@@ -1,0 +1,51 @@
+# Docker-in-Docker agent flavor (feature 0001). Adds the docker CLI + compose
+# plugin + a nested dockerd on top of the standard agent image, so a workspace
+# whose profile has `docker_access` can build images and run `docker compose`
+# dev stacks. Only meaningful when the host sets DOCKER_ACCESS_MODE and creates
+# the container privileged (dind-privileged) or with the sysbox-runc runtime.
+#
+# The agent stays the unprivileged `agent` user (so every `docker exec` into the
+# container runs as agent, unchanged). dockerd needs root at boot, so a single
+# narrow sudo rule lets agent launch ONLY the dind bootstrap script as root —
+# nothing else escalates. The DinD security posture is already relaxed by design
+# (privileged / userns-mapped root), so this adds no reachable privilege beyond
+# what a nested daemon already grants.
+
+FROM vonzio-agent:latest
+
+USER root
+
+# Docker Engine (dockerd) + CLI + compose/buildx plugins from Docker's apt repo.
+# iptables is required by dockerd's bridge networking; sudo backs the narrow
+# dind-start rule below.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+       iptables sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Let the unprivileged agent reach the nested daemon's socket via the docker group.
+RUN groupadd -f docker && usermod -aG docker agent
+
+# Narrow sudo: agent may run ONLY the dind bootstrap as root, so ordinary agent
+# execs stay unprivileged. dockerd itself runs as root (its normal posture).
+COPY docker/dind-start.sh /usr/local/bin/vonzio-dind-start
+COPY docker/dind-entrypoint.sh /app/dind-entrypoint.sh
+RUN chmod +x /usr/local/bin/vonzio-dind-start /app/dind-entrypoint.sh \
+    && echo 'agent ALL=(root) NOPASSWD: /usr/local/bin/vonzio-dind-start' > /etc/sudoers.d/vonzio-dind \
+    && chmod 0440 /etc/sudoers.d/vonzio-dind
+
+# Verify the CLI + compose plugin are present (dockerd itself can only be
+# smoke-tested at runtime on a privileged/sysbox host — it is NOT started here).
+RUN docker --version && docker compose version
+
+WORKDIR /workspace
+USER agent
+
+# Bring up the nested dockerd, then hand off to the standard agent entrypoint.
+ENTRYPOINT ["/app/dind-entrypoint.sh"]

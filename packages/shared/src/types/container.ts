@@ -17,6 +17,22 @@ export interface ContainerCreateOptions {
    *  (Docker rejects it), so set this on the network-owning container — e.g.
    *  a VPN sidecar — whose /etc/hosts the attached agent then inherits. */
   extraHosts?: string[];
+  /** Container runtime (Docker `--runtime`). Set to "sysbox-runc" for
+   *  unprivileged nested Docker-in-Docker (feature 0001, `sysbox` mode).
+   *  Undefined uses the daemon default (runc). */
+  runtime?: string;
+  /** Run the container privileged (Docker `--privileged`). Enables nested
+   *  Docker-in-Docker without a special runtime (feature 0001,
+   *  `dind-privileged` mode). Disables container confinement — self-host
+   *  own-box only, never on a shared/multi-tenant host. */
+  privileged?: boolean;
+  /** Docker `--security-opt` entries. Defaults to `["no-new-privileges"]`
+   *  (defense-in-depth) when unset; pass `[]` to drop it — required by the
+   *  dind-privileged mode, whose daemon init is incompatible with no-new-privs. */
+  securityOpt?: string[];
+  /** Per-container PID cap (Docker `--pids-limit`). Overrides the manager's
+   *  default when set (e.g. a higher ceiling for nested-DinD workspaces). */
+  pidsLimit?: number;
   labels?: Record<string, string>;
 }
 

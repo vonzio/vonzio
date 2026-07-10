@@ -227,3 +227,30 @@ describe("ApiKeyService", () => {
     expect(result).toBeNull();
   });
 });
+
+// No DB needed: the docker_access admin gate throws before any DB access, so
+// these run without a Postgres (feature 0001 — host-security-relevant capability).
+describe("ProfileService docker_access admin gate", () => {
+  const svc = new ProfileService({} as never, ENCRYPTION_KEY);
+
+  it("create: rejects enabling docker_access for a non-admin", async () => {
+    await expect(
+      svc.create({ name: "p", docker_access: true }, "user-1", "user"),
+    ).rejects.toThrow(/administrator/i);
+  });
+
+  it("update: rejects enabling docker_access for a non-admin", async () => {
+    await expect(
+      svc.update("prof_x", { docker_access: true }, "user"),
+    ).rejects.toThrow(/administrator/i);
+  });
+
+  it("does not gate disabling docker_access (false is always allowed)", () => {
+    // assertDockerAccessAllowed only trips on `=== true`; false/undefined pass
+    // the gate (they proceed to normal DB handling, not exercised here).
+    expect(() =>
+      (svc as unknown as { assertDockerAccessAllowed: (d: boolean | undefined, r?: string) => void })
+        .assertDockerAccessAllowed(false, "user"),
+    ).not.toThrow();
+  });
+});

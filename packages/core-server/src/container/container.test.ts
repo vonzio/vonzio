@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type Docker from "dockerode";
 import type { ContainerManager, ContainerCreateOptions } from "@vonzio/shared";
 import { ContainerPool } from "./pool.js";
+import { DockerManager } from "./docker-manager.js";
 import { SessionRegistry } from "./session-registry.js";
 import { WorkspaceProvisioner } from "./workspace.js";
 import { schema, type DB } from "../db/index.js";
@@ -616,5 +618,57 @@ describe("WorkspaceProvisioner", () => {
         git_ref: "--upload-pack=touch /tmp/vonzio-rce",
       }),
     ).rejects.toThrow(/git_ref/);
+  });
+});
+
+describe("DockerManager createContainer HostConfig (feature 0001)", () => {
+  function mockDocker() {
+    const created: Array<Record<string, any>> = [];
+    const docker = {
+      createContainer: vi.fn(async (cfg: Record<string, any>) => {
+        created.push(cfg);
+        return { id: "ctr_test" };
+      }),
+    } as unknown as Docker;
+    return { docker, created };
+  }
+
+  it("hardens ordinary containers: no-new-privileges, no runtime/privileged", async () => {
+    const { docker, created } = mockDocker();
+    await new DockerManager(docker, "img", undefined, 512).createContainer({ env: {} });
+    expect(created[0].HostConfig.SecurityOpt).toEqual(["no-new-privileges"]);
+    expect(created[0].HostConfig.Runtime).toBeUndefined();
+    expect(created[0].HostConfig.Privileged).toBeUndefined();
+    expect(created[0].HostConfig.PidsLimit).toBe(512);
+  });
+
+  it("applies the sysbox runtime while keeping no-new-privileges (unset securityOpt)", async () => {
+    const { docker, created } = mockDocker();
+    await new DockerManager(docker, "img").createContainer({
+      env: {},
+      runtime: "sysbox-runc",
+    });
+    expect(created[0].HostConfig.Runtime).toBe("sysbox-runc");
+    expect(created[0].HostConfig.SecurityOpt).toEqual(["no-new-privileges"]);
+  });
+
+  it("applies Privileged and drops no-new-privileges for the dind-privileged mode", async () => {
+    const { docker, created } = mockDocker();
+    await new DockerManager(docker, "img").createContainer({
+      env: {},
+      privileged: true,
+      securityOpt: [],
+    });
+    expect(created[0].HostConfig.Privileged).toBe(true);
+    expect(created[0].HostConfig.SecurityOpt).toEqual([]);
+  });
+
+  it("per-container pidsLimit overrides the manager default", async () => {
+    const { docker, created } = mockDocker();
+    await new DockerManager(docker, "img", undefined, 512).createContainer({
+      env: {},
+      pidsLimit: 4096,
+    });
+    expect(created[0].HostConfig.PidsLimit).toBe(4096);
   });
 });

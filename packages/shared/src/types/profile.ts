@@ -169,6 +169,10 @@ export interface Profile {
   container_registry?: RegistryConfig;
   setup_commands: string[];
   persistent_sessions: boolean;
+  /** Feature 0001: allow this profile's workspaces to run a nested docker daemon
+   *  (build images, `docker compose` dev stacks). Effective only when the host
+   *  sets DOCKER_ACCESS_MODE; forces allow-all egress for those workspaces. */
+  docker_access: boolean;
   memory_enabled: boolean;
   max_turns?: number;
   auto_continue: boolean;

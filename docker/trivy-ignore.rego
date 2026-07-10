@@ -39,6 +39,33 @@
 # client inside a sandboxed, unprivileged agent — not an exposed service.
 # Scoped to this one CVE+package; DROP once the SDK/CLI ships undici >= 8.5.0
 # (the weekly agent-base rebuild will then pass without it).
+#
+# ── docker_access flavor image (Dockerfile.agent.dind) ──────────────────────
+# The nested-DinD flavor bundles the docker engine + CLI plugins (docker-ce,
+# containerd.io, docker-buildx-plugin, docker-compose-plugin) from Docker's
+# official apt repo. Trivy flags CVEs in the Go modules VENDORED inside the
+# buildx/compose plugin binaries — fixed upstream but not yet rebuilt into the
+# published packages, so apt CANNOT clear them until Docker republishes the
+# plugins (same unpatched-window class as the gh/undici rules above). The flavor
+# is an opt-in, operator-built image and is NOT in the CI scan matrix; these
+# rules encode the manual review (2026-07-09) and keep a policy-driven scan of
+# the dind image clean of already-assessed findings. Low-impact for the
+# docker_access threat model specifically:
+#   - CVE-2026-53488 / -53489 are containerd CRI (Kubernetes runtime interface)
+#     bugs; dockerd drives containerd via its own API, not CRI, and there is no
+#     kubelet/crictl in the workspace, so the vulnerable handlers aren't invoked.
+#   - CVE-2026-53492 is Container Device Interface (CDI) annotation smuggling —
+#     unused by a plain compose dev stack.
+#   - CVE-2026-34040 is a Moby authorization-bypass; in a docker_access workspace
+#     the agent already holds full authority over its own nested daemon by design,
+#     so there is no authz layer to bypass that would grant anything more.
+#   - Containment for docker_access is the container-isolation tier
+#     (dind-privileged = single-tenant/own-box; sysbox = unprivileged userns),
+#     NOT these plugin binaries. See docs/SECURITY_MODEL.md + features/0001.
+# DROP each once `apt-get upgrade` pulls a plugin rebuilt on the patched module
+# (containerd >= 2.2.5, docker/docker >= 29.3.1). (Base-image findings —
+# linux-libc-dev kernel headers, jq — are NOT dind-specific: they clear on a
+# fresh agent-base build and are covered by the agent-base scan.)
 
 package trivy
 
@@ -56,4 +83,25 @@ ignore {
 ignore {
 	input.VulnerabilityID == "CVE-2026-12151"
 	input.PkgName == "undici"
+}
+
+# docker_access flavor image (Dockerfile.agent.dind) — see the block above.
+ignore {
+	input.VulnerabilityID == "CVE-2026-53488"
+	startswith(input.PkgName, "github.com/containerd/containerd")
+}
+
+ignore {
+	input.VulnerabilityID == "CVE-2026-53489"
+	startswith(input.PkgName, "github.com/containerd/containerd")
+}
+
+ignore {
+	input.VulnerabilityID == "CVE-2026-53492"
+	startswith(input.PkgName, "github.com/containerd/containerd")
+}
+
+ignore {
+	input.VulnerabilityID == "CVE-2026-34040"
+	input.PkgName == "github.com/docker/docker"
 }

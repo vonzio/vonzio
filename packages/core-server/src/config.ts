@@ -99,6 +99,20 @@ const configSchema = z.object({
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   DOCKER_NETWORK: z.string().optional(),
   AGENT_IMAGE: z.string().default("vonzio-agent:latest"),
+  // Docker-in-Docker access (feature 0001). Lets a workspace whose profile has
+  // `docker_access` run a nested docker daemon — building images, `docker
+  // compose` dev stacks. Default OFF everywhere; a self-host operator opts in
+  // per host. Nested modes only (a bound host socket can't resolve a compose
+  // file's host-path source binds):
+  //   dind-privileged — nested dockerd via Privileged:true, zero host install;
+  //                     the operator's OWN-box choice. Disables container
+  //                     confinement, so NEVER on a shared/multi-tenant host.
+  //   sysbox          — nested dockerd via the sysbox-runc runtime, unprivileged;
+  //                     needs Sysbox installed on the host. The only mode
+  //                     acceptable for multi-tenant/SaaS.
+  // A nested daemon voids the egress/VPN guarantees, so docker_access workspaces
+  // are forced to allow-all egress (no proxy, no VPN sidecar).
+  DOCKER_ACCESS_MODE: z.enum(["off", "dind-privileged", "sysbox"]).default("off"),
 
   // Egress enforcement (feature 0005). When on, agent containers run on an
   // internal (no-direct-internet) docker network and reach the outside world
@@ -185,9 +199,22 @@ const configSchema = z.object({
     // chromium); 768m OOM-killed the container mid-run, which surfaced as the
     // goal judge's "container not running" (409). Raise the floor.
     .default("2g"),
+  // Memory ceiling for docker_access (nested DinD) session/batch containers
+  // (feature 0001). A real compose dev stack (postgres + object store + web +
+  // several services) plus the nested daemon's overhead dwarfs the 2g session
+  // default, so it gets its own higher limit. Only applies when DOCKER_ACCESS_MODE
+  // is on and the profile has docker_access.
+  CONTAINER_MEMORY_LIMIT_DOCKER_ACCESS: z
+    .string()
+    .regex(/^\d+[bkmg]$/i, "Must be a Docker memory value (e.g. 512m, 1g)")
+    .default("8g"),
   // Max processes/threads per container (fork-bomb / PID-exhaustion guard).
   // 0 disables the limit.
   CONTAINER_PIDS_LIMIT: z.coerce.number().int().min(0).default(512),
+  // Higher PID ceiling for docker_access (nested DinD) containers (feature 0001):
+  // a compose dev stack + inner dockerd + build steps run far more processes than
+  // the 512 default allows. 0 disables the limit for those workspaces.
+  CONTAINER_PIDS_LIMIT_DOCKER_ACCESS: z.coerce.number().int().min(0).default(4096),
 
   // WebSocket
   WS_MAX_CONNECTIONS_PER_CALLER: z.coerce.number().default(10),

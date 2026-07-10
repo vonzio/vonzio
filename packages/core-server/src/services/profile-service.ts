@@ -35,6 +35,7 @@ export interface CreateProfileInput {
   container_registry?: RegistryConfig;
   setup_commands?: string[];
   persistent_sessions?: boolean;
+  docker_access?: boolean;
   memory_enabled?: boolean;
   max_turns?: number | null;
   auto_continue?: boolean;
@@ -102,7 +103,19 @@ export class ProfileService {
     }
   }
 
+  /** Enabling docker_access (feature 0001) gives a workspace a nested docker
+   *  daemon, which voids the egress/VPN guarantees — and, in dind-privileged
+   *  mode, container confinement. It is a host-security-relevant capability, so
+   *  only admins may turn it on; SaaS layers plan-gating on top in cp-server.
+   *  Disabling it (or leaving it unset) is always allowed. */
+  private assertDockerAccessAllowed(dockerAccess: boolean | undefined, userRole?: string): void {
+    if (dockerAccess === true && userRole !== "admin") {
+      throw new ValidationError("docker_access can only be enabled by an administrator");
+    }
+  }
+
   async create(input: CreateProfileInput, userId?: string, userRole?: string): Promise<Profile> {
+    this.assertDockerAccessAllowed(input.docker_access, userRole);
     const id = `prof_${nanoid()}`;
     const now = new Date().toISOString();
 
@@ -153,6 +166,7 @@ export class ProfileService {
       container_registry: input.container_registry ? this.encryptRegistry(input.container_registry) : null,
       setup_commands: input.setup_commands ?? [],
       persistent_sessions: input.persistent_sessions ?? true,
+      docker_access: input.docker_access ?? false,
       concurrency_limit: input.concurrency_limit ?? 5,
       memory_enabled: true,
       max_turns: input.max_turns ?? null,
@@ -257,6 +271,7 @@ export class ProfileService {
   }
 
   async update(id: string, input: Partial<CreateProfileInput>, userRole?: string): Promise<Profile | null> {
+    this.assertDockerAccessAllowed(input.docker_access, userRole);
     const existing = await this.db.select().from(schema.profiles).where(eq(schema.profiles.id, id));
     if (existing.length === 0) return null;
 
@@ -324,6 +339,11 @@ export class ProfileService {
     }
     if (input.setup_commands !== undefined) updates.setup_commands = input.setup_commands;
     if (input.persistent_sessions !== undefined) updates.persistent_sessions = input.persistent_sessions;
+    // docker_access (like egress/VPN) is baked into the container at creation:
+    // toggling it here only affects containers created AFTER this update. A live
+    // persistent session keeps its current confinement until it is restarted
+    // (recreated). Operators must restart the workspace for a toggle to apply.
+    if (input.docker_access !== undefined) updates.docker_access = input.docker_access;
     if (input.memory_enabled !== undefined) updates.memory_enabled = input.memory_enabled;
     if (input.max_turns !== undefined) updates.max_turns = input.max_turns;
     if (input.auto_continue !== undefined) updates.auto_continue = input.auto_continue;
@@ -438,6 +458,7 @@ export class ProfileService {
         : undefined,
       setup_commands: row.setup_commands,
       persistent_sessions: row.persistent_sessions,
+      docker_access: row.docker_access,
       memory_enabled: row.memory_enabled,
       max_turns: row.max_turns ?? undefined,
       auto_continue: row.auto_continue,
