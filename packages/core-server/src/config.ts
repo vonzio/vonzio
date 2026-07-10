@@ -105,7 +105,7 @@ const configSchema = z.object({
   // override only if it still clashes with a stack you run. Injected into the
   // agent container's env (read by docker/fileserver.py) and served to the
   // dashboard via /api/config.
-  FILE_SERVER_PORT: z.coerce.number().int().positive().default(8790),
+  FILE_SERVER_PORT: z.coerce.number().int().positive().default(8765),
   // Docker-in-Docker access (feature 0001). Lets a workspace whose profile has
   // `docker_access` run a nested docker daemon — building images, `docker
   // compose` dev stacks. Default OFF everywhere; a self-host operator opts in

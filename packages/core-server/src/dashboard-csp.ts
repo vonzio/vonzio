@@ -36,7 +36,7 @@ export function buildCsp(nonce: string, frameAncestors = "'none'", frameSrc = "'
     "img-src 'self' data: blob:",
     "connect-src 'self'",
     "worker-src 'self' blob:",
-    // The dashboard embeds workspace previews (dev servers, the port-8790 file
+    // The dashboard embeds workspace previews (dev servers, the port-8765 file
     // server) in an iframe. In hostname preview mode those are cross-origin
     // subdomains, so without an explicit frame-src they'd fall back to
     // default-src 'self' and Chrome blocks the iframe ("blocked by Chrome").

@@ -1,6 +1,6 @@
 """Vonzio file server — serves files from /workspace/.
 
-Binds the FILE_SERVER_PORT env (default 8790), injected by the server so it stays
+Binds the FILE_SERVER_PORT env (default 8765), injected by the server so it stays
 in sync with the {{file_server}} preview URL + the dashboard. The default is
 uncommon so a docker_access workspace publishing a normal app port doesn't
 collide with it; operators can override FILE_SERVER_PORT (config.ts).
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     # client (BrokenPipe mid-transfer) would otherwise block the one handler
     # thread and wedge the whole server — connections pile up ESTABLISHED and
     # every later request hangs. One thread per connection isolates that.
-    port = int(os.environ.get("FILE_SERVER_PORT", "8790"))
+    port = int(os.environ.get("FILE_SERVER_PORT", "8765"))
     server = ThreadingHTTPServer(("0.0.0.0", port), StyledHandler)
     server.daemon_threads = True
     server.serve_forever()

@@ -4,7 +4,7 @@
  *  orchestrator, and the dashboard; this constant is the fallback default.
  *  Deliberately uncommon so a docker_access workspace publishing a normal app
  *  port (3000 / 5000 / 8000 / 8080 / …) doesn't collide with it. */
-export const FILE_SERVER_PORT = 8790;
+export const FILE_SERVER_PORT = 8765;
 
 export interface ContainerCreateOptions {
   image?: string;
