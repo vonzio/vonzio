@@ -11,7 +11,16 @@ fi
 
 # /var/lib/docker is where the daemon keeps images/build cache; the orchestrator
 # mounts a persistent named volume there for pinned docker_access workspaces.
+# NB: it MUST be a real volume, not the container's overlay layer — dockerd's
+# overlayfs storage driver can't stack on overlayfs ("invalid argument").
 mkdir -p /var/lib/docker /var/run
+
+# Clear a stale pid file from a prior run. On `docker restart` the container's
+# writable layer (incl. /var/run/docker.pid) survives, and dockerd refuses to
+# start if the recorded PID now matches an unrelated live process in the fresh
+# PID namespace. We only reach here when no daemon is actually responding (the
+# check above returned non-zero), so removing it is safe.
+rm -f /var/run/docker.pid
 
 # Launch dockerd in the background. Under sysbox-runc this runs unprivileged
 # (user-namespace mapped); under a privileged container it has real root. Log to
