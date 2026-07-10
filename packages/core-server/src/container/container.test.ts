@@ -63,6 +63,11 @@ function createMockManager(): ContainerManager & {
       containers.delete(id);
     },
 
+    async updateContainerMemory() {},
+    async getContainerMemoryLimit() {
+      return 0;
+    },
+
     async *execInContainer(id, cmd) {
       const outputs = execOutputs.get(id) ?? [];
       for (const line of outputs) {

@@ -138,6 +138,22 @@ export class DockerManager implements ContainerManager {
     await container.remove({ force });
   }
 
+  /** Feature 0041: resize a RUNNING container's memory limit live (cgroup
+   *  memory.max) — no recreate. Memory is one of the few HostConfig fields
+   *  Docker can update in place. MemorySwap must be >= Memory; we match them
+   *  (no extra swap beyond RAM). */
+  async updateContainerMemory(id: string, memory: string): Promise<void> {
+    const bytes = parseMemory(memory);
+    await this.docker.getContainer(id).update({ Memory: bytes, MemorySwap: bytes } as Record<string, unknown>);
+  }
+
+  /** The container's current hard memory limit in bytes (0 = unlimited). Used by
+   *  the per-user budget so it reflects live-updated limits, not a stale label. */
+  async getContainerMemoryLimit(id: string): Promise<number> {
+    const info = await this.docker.getContainer(id).inspect();
+    return info.HostConfig?.Memory ?? 0;
+  }
+
   async *execInContainer(
     id: string,
     cmd: string[],

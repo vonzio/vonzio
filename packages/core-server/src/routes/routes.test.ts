@@ -53,6 +53,8 @@ function createMockManager(): ContainerManager {
     async startContainer(id) { containers.set(id, "running"); },
     async stopContainer(id) { containers.set(id, "exited"); },
     async removeContainer(id) { containers.delete(id); },
+    async updateContainerMemory() {},
+    async getContainerMemoryLimit() { return 0; },
     async *execInContainer(id, cmd, stdin) {
       if (cmd.includes("node")) {
         yield JSON.stringify({ type: "init", session_id: "sess_auto" });

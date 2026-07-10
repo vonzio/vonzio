@@ -689,6 +689,8 @@ export async function buildServer(deps: ServerDeps) {
       profileService,
       apiKeyService,
       modelListService,
+      // Feature 0041: live-apply a memory change to the user's running workspaces.
+      applyMemoryChange: (userId, profileId) => orchestrator.applyMemoryToRunningWorkspaces(userId, profileId),
       // Late-binding wrappers — cp-server populates these AFTER
       // server.ts captures coreDeps. Same pattern as recordTaskOrg /
       // hiddenUserSecretIdsForOrg above.
