@@ -318,8 +318,9 @@ To enable:
 2. **Turn on a host mode** via `DOCKER_ACCESS_MODE` in your `.env`:
    - `dind-privileged` — nested dockerd in a **privileged** container. Zero host
      setup, but it disables container confinement, so **only on a single-tenant
-     box you own** — never next to other users' workspaces. Needs a direct docker
-     socket (not the hardened `docker-socket-proxy`).
+     box you own** — never next to other users' workspaces. Works with the
+     hardened `docker-socket-proxy` (it filters by API endpoint, not request body,
+     so a privileged create passes) — no need to expose the raw socket.
    - `sysbox` — nested dockerd via the **[Sysbox](https://github.com/nestybox/sysbox)**
      runtime (`sysbox-runc`), unprivileged. Requires installing Sysbox on the host
      (kernel ≥ 5.12). The only mode safe to expose to multiple users.

@@ -37,6 +37,7 @@ import {
   fetchProfiles, type ProfileSummary,
 } from "../api/client.js";
 import { fetchDockerImages, type DockerImageInfo } from "../api/admin.js";
+import { useUser } from "../contexts/UserContext.js";
 import { useApi } from "../hooks/useApi.js";
 import { slugify } from "../lib/utils.js";
 import { ToolPillSelect } from "../components/ToolPillSelect.js";
@@ -131,7 +132,11 @@ export function EditAgent() {
   const [containerImage, setContainerImage] = useState("");
   const [setupCommands, setSetupCommands] = useState("");
   const [persistentSessions, setPersistentSessions] = useState(true);
+  const [dockerAccess, setDockerAccess] = useState(false);
   const [memoryEnabled, setMemoryEnabled] = useState(true);
+  // docker_access is a host-security-relevant capability (nested docker daemon,
+  // egress/VPN off) — the backend only lets admins enable it, so gate the toggle.
+  const isAdmin = useUser().role === "admin";
   const serverMaxTurns = (window as { __VONZIO_MAX_TURNS?: number }).__VONZIO_MAX_TURNS ?? 200;
   // See MyAgents.tsx for the rationale on these defaults (50/3/$5 for
   // new general-purpose chat profiles, server-cap fallback for
@@ -271,6 +276,7 @@ export function EditAgent() {
         setContainerImage((full.container_image as string) ?? "");
         setSetupCommands(((full.setup_commands as string[]) ?? []).join("\n"));
         setPersistentSessions((full.persistent_sessions as boolean) ?? true);
+        setDockerAccess((full.docker_access as boolean) ?? false);
         setMemoryEnabled((full.memory_enabled as boolean) ?? true);
         setMaxTurns(String(full.max_turns ?? serverMaxTurns));
         setAutoContinue((full.auto_continue as boolean) ?? true);
@@ -363,6 +369,9 @@ export function EditAgent() {
         container_image: containerImage || undefined,
         setup_commands: setupCommands.trim() ? setupCommands.split("\n").map((s) => s.trim()).filter(Boolean) : [],
         persistent_sessions: persistentSessions,
+        // Only admins may set docker_access; omit it for others so the backend
+        // gate doesn't reject an unrelated edit of a profile that already has it.
+        docker_access: isAdmin ? dockerAccess : undefined,
         memory_enabled: memoryEnabled,
         max_turns: (() => {
           const n = parseInt(maxTurns);
@@ -740,6 +749,14 @@ export function EditAgent() {
                         value={containerImage}
                         onChange={setContainerImage}
                       />
+                    </Field>
+                  )}
+                  {isAdmin && (
+                    <Field
+                      label="Docker access"
+                      hint="Let this agent run docker / docker compose in a nested daemon. Requires DOCKER_ACCESS_MODE set on the host and a docker-capable container image (e.g. vonzio-agent-dind). Forces allow-all egress for the workspace (no proxy/VPN)."
+                    >
+                      <Checkbox checked={dockerAccess} onChange={setDockerAccess}>Enable Docker-in-Docker</Checkbox>
                     </Field>
                   )}
                 </div>
