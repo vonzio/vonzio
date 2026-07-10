@@ -677,6 +677,7 @@ export class Orchestrator extends EventEmitter {
   private async dispatchBatch(task: Task, prefetchedProfile?: ResolvedProfile): Promise<void> {
     let containerId: string | undefined;
     let workspacePath: string | undefined;
+    let dockerVolume: string | undefined;
 
     try {
       const binds: string[] = [];
@@ -696,6 +697,12 @@ export class Orchestrator extends EventEmitter {
           { taskId: task.id, profileId: profile.id, mode: this.deps.config.dockerAccessMode },
           "docker_access active: egress enforcement and VPN sidecar are bypassed for this task",
         );
+        // A one-shot task's nested daemon still needs a REAL /var/lib/docker
+        // (overlayfs can't stack on the container overlay). Ephemeral, keyed by
+        // task id; removed in finally.
+        dockerVolume = `${VOLUME_PREFIX_DOCKER}${task.id}`;
+        await this.deps.containerManager.createNamedVolume(dockerVolume);
+        binds.push(`${dockerVolume}:/var/lib/docker`);
       }
       const vpn = dind ? undefined : await this.ensureVpnSidecar(profile);
       const egress = dind ? undefined : await this.applyEgress(task.egress_domains, env, !!vpn, { tokenTtlSeconds: this.EGRESS_TOKEN_TTL_SECONDS });
@@ -747,6 +754,10 @@ export class Orchestrator extends EventEmitter {
       }
       if (workspacePath) {
         await this.deps.workspace.cleanup(workspacePath);
+      }
+      if (dockerVolume) {
+        // Best-effort: the container is gone, so its ephemeral DinD volume can go.
+        await this.deps.containerManager.removeNamedVolume(dockerVolume).catch(() => {});
       }
     }
   }
@@ -1253,21 +1264,30 @@ export class Orchestrator extends EventEmitter {
   ): Promise<string> {
     const dind = this.dockerAccessOptions(profile);
     const binds: string[] = [];
+    const volumeCreates: Promise<void>[] = [];
     if (volumeId) {
       const wsVolume = `${VOLUME_PREFIX_WORKSPACE}${volumeId}`;
       const sdkVolume = `${VOLUME_PREFIX_SDK}${volumeId}`;
-      // Persist the nested daemon's image/build cache across restarts so a
-      // pinned docker_access workspace doesn't re-pull the whole stack.
-      const dockerVolume = dind ? `${VOLUME_PREFIX_DOCKER}${volumeId}` : undefined;
-      // createNamedVolume is idempotent for the default driver
-      await Promise.all([
+      volumeCreates.push(
         this.deps.containerManager.createNamedVolume(wsVolume),
         this.deps.containerManager.createNamedVolume(sdkVolume),
-        ...(dockerVolume ? [this.deps.containerManager.createNamedVolume(dockerVolume)] : []),
-      ]);
+      );
       binds.push(`${wsVolume}:/workspace`, `${sdkVolume}:/home/agent/.claude`);
-      if (dockerVolume) binds.push(`${dockerVolume}:/var/lib/docker`);
     }
+    if (dind) {
+      // docker_access needs a REAL (non-overlay) /var/lib/docker — the nested
+      // daemon's overlayfs storage driver can't stack on the container's own
+      // overlay layer ("invalid argument"), so this volume is REQUIRED for
+      // nested docker to work at all, not just for cache persistence. Keyed by
+      // the persistent workspace volume when there is one (image/build cache
+      // then survives restarts + is reaped with the session's other volumes),
+      // else by session id.
+      const dockerVolume = `${VOLUME_PREFIX_DOCKER}${volumeId ?? sessionId}`;
+      volumeCreates.push(this.deps.containerManager.createNamedVolume(dockerVolume));
+      binds.push(`${dockerVolume}:/var/lib/docker`);
+    }
+    // createNamedVolume is idempotent for the default driver
+    if (volumeCreates.length) await Promise.all(volumeCreates);
 
     // A nested daemon has its own NAT bridge and ignores HTTP_PROXY, so egress
     // enforcement + VPN can't constrain it — docker_access forces allow-all
