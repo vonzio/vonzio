@@ -58,6 +58,8 @@ export function App() {
       (window as any).__VONZIO_EGRESS_ENFORCEMENT = !!c.egressEnforcement;
       if (c.previewUrlTemplate) { (window as any).__VONZIO_PREVIEW_URL_TEMPLATE = c.previewUrlTemplate; }
       if (c.fileServerPort) { (window as any).__VONZIO_FILE_SERVER_PORT = c.fileServerPort; }
+      if (c.memoryLimitDefault) { (window as any).__VONZIO_MEMORY_LIMIT_DEFAULT = c.memoryLimitDefault; }
+      if (c.memoryLimitMax) { (window as any).__VONZIO_MEMORY_LIMIT_MAX = c.memoryLimitMax; }
       if (c.authProviders) setAuthProviders(c.authProviders);
       if (c.turnstileSiteKey) setTurnstileSiteKey(c.turnstileSiteKey);
       if (c.marketingUrl) setMarketingUrl(c.marketingUrl);

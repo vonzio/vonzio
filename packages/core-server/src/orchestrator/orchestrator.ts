@@ -19,7 +19,7 @@ import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
-import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID } from "../container/docker-manager.js";
+import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID, parseMemory } from "../container/docker-manager.js";
 import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK, VOLUME_PREFIX_DOCKER } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
@@ -165,6 +165,9 @@ export interface OrchestratorDeps {
     dockerAccessMode?: "off" | "dind-privileged" | "sysbox";
     /** Memory ceiling for docker_access (nested DinD) containers. */
     containerMemoryDockerAccess?: string;
+    /** Feature 0041: total memory a single user's RUNNING workspaces may sum to
+     *  (Docker memory string). A new container that would exceed it is rejected. */
+    containerMemoryPerUserTotal?: string;
     /** PID ceiling for docker_access containers — higher than the default
      *  fork-bomb cap, since a nested compose stack + inner dockerd needs it. */
     containerPidsLimitDockerAccess?: number;
@@ -710,6 +713,8 @@ export class Orchestrator extends EventEmitter {
       }
       const vpn = dind ? undefined : await this.ensureVpnSidecar(profile);
       const egress = dind ? undefined : await this.applyEgress(task.egress_domains, env, !!vpn, { tokenTtlSeconds: this.EGRESS_TOKEN_TTL_SECONDS });
+      const memory = this.resolveMemory(profile, dind?.memory, this.deps.config.containerMemoryBatch);
+      await this.assertUserMemoryBudget(profile.user_id, memory);
 
       containerId = await this.deps.containerManager.createContainer({
         image: profile.container_image,
@@ -717,7 +722,7 @@ export class Orchestrator extends EventEmitter {
         env,
         binds,
         cpus: this.deps.config.containerCpuBatch,
-        memory: dind?.memory ?? this.deps.config.containerMemoryBatch,
+        memory,
         pidsLimit: dind?.pidsLimit,
         networkMode: egress?.networkMode ?? vpn?.networkMode,
         runtime: dind?.runtime,
@@ -726,6 +731,7 @@ export class Orchestrator extends EventEmitter {
         labels: {
           [CONTAINER_MODE_LABEL]: ContainerMode.Batch,
           "vonzio-task-id": task.id,
+          ...this.memoryLabels(profile.user_id, memory),
         },
       });
       if (vpn) {
@@ -781,8 +787,8 @@ export class Orchestrator extends EventEmitter {
     // per-profile egress token / sit on the internal network. Under enforcement,
     // fall back to batch (a dedicated container wired to the proxy).
     const dockerAccess = !!this.dockerAccessOptions(profile);
-    if (profile.container_image || profile.setup_commands?.length || hasTunnel || dockerAccess || this.deps.config.egressEnforcement) {
-      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel, dockerAccess, egress: this.deps.config.egressEnforcement }, "Pooled incompatible, falling back to batch");
+    if (profile.container_image || profile.setup_commands?.length || hasTunnel || dockerAccess || profile.memory_limit || this.deps.config.egressEnforcement) {
+      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel, dockerAccess, memoryLimit: profile.memory_limit, egress: this.deps.config.egressEnforcement }, "Pooled incompatible, falling back to batch");
       return this.dispatchBatch(task, profile);
     }
 
@@ -1259,6 +1265,40 @@ export class Orchestrator extends EventEmitter {
     };
   }
 
+  /** Feature 0041: the effective memory ceiling for a workspace — the profile's
+   *  per-agent override, else the docker_access ceiling, else the mode default. */
+  private resolveMemory(profile: Profile, dindMemory: string | undefined, defaultMemory: string): string {
+    return profile.memory_limit ?? dindMemory ?? defaultMemory;
+  }
+
+  /** Feature 0041: reject a new workspace if the user's RUNNING workspaces + this
+   *  one would exceed the per-user memory total. Sums the vonzio-memory-bytes
+   *  labels of the user's running managed containers (no per-container inspect). */
+  private async assertUserMemoryBudget(userId: string | null | undefined, memory: string): Promise<void> {
+    const cap = this.deps.config.containerMemoryPerUserTotal;
+    if (!userId || !cap) return;
+    const capBytes = parseMemory(cap);
+    const newBytes = parseMemory(memory);
+    let usedBytes = 0;
+    for (const c of await this.deps.containerManager.listManagedContainers()) {
+      if (c.status !== "running" || c.labels["vonzio-user-id"] !== userId) continue;
+      usedBytes += parseInt(c.labels["vonzio-memory-bytes"] ?? "0", 10) || 0;
+    }
+    if (usedBytes + newBytes > capBytes) {
+      throw new Error(
+        `workspace memory budget exceeded: this user's running workspaces already reserve ` +
+        `~${Math.round(usedBytes / 1024 ** 3)}g; ${memory} more would pass the ${cap} per-user limit. ` +
+        `Stop another workspace or lower this agent's memory.`,
+      );
+    }
+  }
+
+  /** Container labels tagging the owner + reserved memory, for the per-user
+   *  budget sum (feature 0041). */
+  private memoryLabels(userId: string | null | undefined, memory: string): Record<string, string> {
+    return { "vonzio-user-id": userId ?? "", "vonzio-memory-bytes": String(parseMemory(memory)) };
+  }
+
   /** Create a session container, optionally mounting named volumes for persistent sessions. */
   private async createSessionContainer(
     sessionId: string,
@@ -1308,13 +1348,15 @@ export class Orchestrator extends EventEmitter {
     // uses the PROFILE default allowlist (baked into env at create time) — not
     // per-task egress, which can't retro-apply to a long-lived container.
     const egress = dind ? undefined : await this.applyEgress(profile.default_egress_domains, env, !!vpn);
+    const memory = this.resolveMemory(profile, dind?.memory, this.deps.config.containerMemorySession);
+    await this.assertUserMemoryBudget(profile.user_id, memory);
     const containerId = await this.deps.containerManager.createContainer({
       image: profile.container_image,
       registryAuth: this.buildRegistryAuth(profile),
       env,
       binds: binds.length > 0 ? binds : undefined,
       cpus: this.deps.config.containerCpuSession,
-      memory: dind?.memory ?? this.deps.config.containerMemorySession,
+      memory,
       pidsLimit: dind?.pidsLimit,
       networkMode: egress?.networkMode ?? vpn?.networkMode,
       runtime: dind?.runtime,
@@ -1323,6 +1365,7 @@ export class Orchestrator extends EventEmitter {
       labels: {
         [CONTAINER_MODE_LABEL]: ContainerMode.Session,
         "vonzio-session-id": sessionId,
+        ...this.memoryLabels(profile.user_id, memory),
       },
     });
     if (vpn) {

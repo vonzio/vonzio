@@ -206,7 +206,7 @@ export async function buildServer(deps: ServerDeps) {
   sessionRegistry.getConnectedSessionIds = () => connectionManager.connectedSessionIds;
 
   const apiKeyService = new ApiKeyService(db, config.ENCRYPTION_KEY);
-  const profileService = new ProfileService(db, config.ENCRYPTION_KEY, apiKeyService);
+  const profileService = new ProfileService(db, config.ENCRYPTION_KEY, apiKeyService, config.CONTAINER_MEMORY_LIMIT_MAX);
   // Shared model-list cache + provider fetcher used by the dashboard
   // ModelPicker route AND the Telegram /model + Slack `@vonzio model`
   // bot commands. One cache so the bot pickers don't repeatedly hit
@@ -342,6 +342,7 @@ export async function buildServer(deps: ServerDeps) {
       containerMemoryBatch: config.CONTAINER_MEMORY_LIMIT_BATCH,
       containerMemorySession: config.CONTAINER_MEMORY_LIMIT_SESSION,
       containerMemoryDockerAccess: config.CONTAINER_MEMORY_LIMIT_DOCKER_ACCESS,
+      containerMemoryPerUserTotal: config.CONTAINER_MEMORY_LIMIT_PER_USER_TOTAL,
       containerPidsLimitDockerAccess: config.CONTAINER_PIDS_LIMIT_DOCKER_ACCESS,
       dockerAccessMode: config.DOCKER_ACCESS_MODE,
       fileServerPort: config.FILE_SERVER_PORT,
@@ -446,6 +447,9 @@ export async function buildServer(deps: ServerDeps) {
       appUrl: config.BETTER_AUTH_URL,
       previewUrlTemplate: config.PREVIEW_URL_TEMPLATE,
       fileServerPort: config.FILE_SERVER_PORT,
+      // Feature 0041: default + max workspace memory, for the agent-editor field.
+      memoryLimitDefault: config.CONTAINER_MEMORY_LIMIT_SESSION,
+      memoryLimitMax: config.CONTAINER_MEMORY_LIMIT_MAX,
       maxTurns: config.MAX_TURNS,
       ollamaEnabled: config.OLLAMA_ENABLED,
       maxDocumentMb: config.MAX_DOCUMENT_MB,

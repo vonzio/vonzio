@@ -133,6 +133,11 @@ export function EditAgent() {
   const [setupCommands, setSetupCommands] = useState("");
   const [persistentSessions, setPersistentSessions] = useState(true);
   const [dockerAccess, setDockerAccess] = useState(false);
+  const [memoryLimit, setMemoryLimit] = useState("");
+  // Feature 0041: default + max workspace memory, injected via /api/config.
+  const memDefault = (window as { __VONZIO_MEMORY_LIMIT_DEFAULT?: string }).__VONZIO_MEMORY_LIMIT_DEFAULT ?? "4g";
+  const memMaxGb = parseInt((window as { __VONZIO_MEMORY_LIMIT_MAX?: string }).__VONZIO_MEMORY_LIMIT_MAX ?? "16g", 10) || 16;
+  const memSizes = [6, 8, 12, 16, 24, 32].filter((n) => n <= memMaxGb).map((n) => `${n}g`);
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   // docker_access is a host-security-relevant capability (nested docker daemon,
   // egress/VPN off) — the backend only lets admins enable it, so gate the toggle.
@@ -277,6 +282,7 @@ export function EditAgent() {
         setSetupCommands(((full.setup_commands as string[]) ?? []).join("\n"));
         setPersistentSessions((full.persistent_sessions as boolean) ?? true);
         setDockerAccess((full.docker_access as boolean) ?? false);
+        setMemoryLimit((full.memory_limit as string) ?? "");
         setMemoryEnabled((full.memory_enabled as boolean) ?? true);
         setMaxTurns(String(full.max_turns ?? serverMaxTurns));
         setAutoContinue((full.auto_continue as boolean) ?? true);
@@ -372,6 +378,7 @@ export function EditAgent() {
         // Only admins may set docker_access; omit it for others so the backend
         // gate doesn't reject an unrelated edit of a profile that already has it.
         docker_access: isAdmin ? dockerAccess : undefined,
+        memory_limit: memoryLimit || null,
         memory_enabled: memoryEnabled,
         max_turns: (() => {
           const n = parseInt(maxTurns);
@@ -739,6 +746,16 @@ export function EditAgent() {
                     <Checkbox checked={persistentSessions} onChange={setPersistentSessions}>Persistent sessions</Checkbox>
                     <Checkbox checked={memoryEnabled} onChange={setMemoryEnabled}>Agent memory</Checkbox>
                   </div>
+                  <Field label="Workspace memory" hint={`RAM ceiling for this agent's container. Raise it for heavy builds or compose stacks. Default ${memDefault}; takes effect on the next workspace start.`}>
+                    <Select
+                      options={[
+                        { value: "", label: `Default (${memDefault})` },
+                        ...memSizes.map((s) => ({ value: s, label: s })),
+                      ]}
+                      value={memoryLimit}
+                      onChange={setMemoryLimit}
+                    />
+                  </Field>
                   {availableImages && availableImages.length > 0 && (
                     <Field label="Container image" hint="Most agents run on the default. Pick another to customize.">
                       <Select

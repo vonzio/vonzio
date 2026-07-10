@@ -173,6 +173,9 @@ export interface Profile {
    *  (build images, `docker compose` dev stacks). Effective only when the host
    *  sets DOCKER_ACCESS_MODE; forces allow-all egress for those workspaces. */
   docker_access: boolean;
+  /** Feature 0041: per-profile memory ceiling (Docker memory string, e.g. "6g").
+   *  Undefined → the global session default; capped at CONTAINER_MEMORY_LIMIT_MAX. */
+  memory_limit?: string;
   memory_enabled: boolean;
   max_turns?: number;
   auto_continue: boolean;

@@ -165,6 +165,10 @@ export const profiles = pgTable("profiles", {
   // (build images, `docker compose` dev stacks). Requires DOCKER_ACCESS_MODE on
   // the host; forces allow-all egress. Off by default.
   docker_access: boolean("docker_access").notNull().default(false),
+  // Feature 0041: per-profile memory ceiling (Docker memory string, e.g. "6g").
+  // Null → the global CONTAINER_MEMORY_LIMIT_SESSION default. Capped at
+  // CONTAINER_MEMORY_LIMIT_MAX; contributes to the per-user total.
+  memory_limit: text("memory_limit"),
   concurrency_limit: integer("concurrency_limit").notNull().default(5),
   memory_enabled: boolean("memory_enabled").notNull().default(true),
   max_turns: integer("max_turns"),
