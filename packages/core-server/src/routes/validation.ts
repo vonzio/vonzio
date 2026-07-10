@@ -104,6 +104,7 @@ export const createProfileSchema = z.object({
   }).optional(),
   setup_commands: z.array(z.string().min(1)).max(50).optional(),
   persistent_sessions: z.boolean().optional(),
+  docker_access: z.boolean().optional(),
   memory_enabled: z.boolean().optional(),
   max_turns: z.number().int().min(1).max(10000).optional().nullable(),
   auto_continue: z.boolean().optional(),

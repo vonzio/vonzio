@@ -772,6 +772,13 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS preview_codes JSONB NOT NULL DEFAULT '{}'::jsonb`);
     },
   },
+  {
+    version: 35,
+    description: "Docker-in-Docker access (feature 0001): profiles.docker_access flag gating nested-daemon workspaces.",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS docker_access BOOLEAN NOT NULL DEFAULT false`);
+    },
+  },
 ];
 
 /**

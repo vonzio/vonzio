@@ -30,6 +30,9 @@ const noopLogger: Logger = { info() {}, warn() {}, error() {} };
 
 export const VOLUME_PREFIX_WORKSPACE = "vonzio-ws-";
 export const VOLUME_PREFIX_SDK = "vonzio-sdk-";
+/** Feature 0001: per-workspace `/var/lib/docker` for docker_access sessions, so a
+ *  pinned workspace keeps its nested image/build cache across container restarts. */
+export const VOLUME_PREFIX_DOCKER = "vonzio-dind-";
 
 export class SessionRegistry {
   private sessions = new Map<string, Workspace>();
@@ -813,7 +816,7 @@ export class SessionRegistry {
       this.log.info({ sessionId: row.session_id, volumeId }, "Reaping expired volumes");
 
       // Remove each volume independently to handle partial failures.
-      for (const prefix of [VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK]) {
+      for (const prefix of [VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK, VOLUME_PREFIX_DOCKER]) {
         try {
           await this.containerManager.removeNamedVolume(`${prefix}${volumeId}`);
         } catch (err) {

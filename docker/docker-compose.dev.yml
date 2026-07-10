@@ -87,6 +87,12 @@ services:
       # EGRESS_ENFORCEMENT=1 COMPOSE_PROFILES=egress make docker-dev-oss
       - EGRESS_ENFORCEMENT=${EGRESS_ENFORCEMENT:-false}
       - EGRESS_PROXY_NETWORK=${EGRESS_PROXY_NETWORK:-vonzio-egress}
+      # Docker-in-Docker access (feature 0001) — off by default. dind-privileged
+      # (own-box only) or sysbox (needs Sysbox on the host) lets profiles flagged
+      # docker_access run nested compose stacks.
+      - DOCKER_ACCESS_MODE=${DOCKER_ACCESS_MODE:-off}
+      - CONTAINER_MEMORY_LIMIT_DOCKER_ACCESS=${CONTAINER_MEMORY_LIMIT_DOCKER_ACCESS:-8g}
+      - CONTAINER_PIDS_LIMIT_DOCKER_ACCESS=${CONTAINER_PIDS_LIMIT_DOCKER_ACCESS:-4096}
       - LOG_LEVEL=debug
       - PORT=3000
       - HOST=0.0.0.0

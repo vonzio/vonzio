@@ -19,7 +19,7 @@ import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
 import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID } from "../container/docker-manager.js";
-import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK } from "../container/session-registry.js";
+import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK, VOLUME_PREFIX_DOCKER } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
 import { decideGoalNext } from "./goal-loop.js";
@@ -156,6 +156,14 @@ export interface OrchestratorDeps {
     egressEnforcement?: boolean;
     egressProxyNetwork?: string;
     egressProxySecret?: string;
+    /** Docker-in-Docker access (feature 0001). "off" disables it regardless of
+     *  any profile's docker_access flag; a nested mode enables it host-wide. */
+    dockerAccessMode?: "off" | "dind-privileged" | "sysbox";
+    /** Memory ceiling for docker_access (nested DinD) containers. */
+    containerMemoryDockerAccess?: string;
+    /** PID ceiling for docker_access containers — higher than the default
+     *  fork-bomb cap, since a nested compose stack + inner dockerd needs it. */
+    containerPidsLimitDockerAccess?: number;
   };
 }
 
@@ -679,8 +687,18 @@ export class Orchestrator extends EventEmitter {
 
       const profile = prefetchedProfile ?? await this.fetchProfile(task);
       const env = await this.buildEnvFromProfile(profile);
-      const vpn = await this.ensureVpnSidecar(profile);
-      const egress = await this.applyEgress(task.egress_domains, env, !!vpn, { tokenTtlSeconds: this.EGRESS_TOKEN_TTL_SECONDS });
+      const dind = this.dockerAccessOptions(profile);
+      // docker_access forces allow-all egress (a nested daemon bypasses the proxy
+      // and VPN anyway) — skip both. Warn (not silent) since this overrides any
+      // egress allowlist or VPN tunnel the profile otherwise carries.
+      if (dind) {
+        this.log.warn(
+          { taskId: task.id, profileId: profile.id, mode: this.deps.config.dockerAccessMode },
+          "docker_access active: egress enforcement and VPN sidecar are bypassed for this task",
+        );
+      }
+      const vpn = dind ? undefined : await this.ensureVpnSidecar(profile);
+      const egress = dind ? undefined : await this.applyEgress(task.egress_domains, env, !!vpn, { tokenTtlSeconds: this.EGRESS_TOKEN_TTL_SECONDS });
 
       containerId = await this.deps.containerManager.createContainer({
         image: profile.container_image,
@@ -688,8 +706,12 @@ export class Orchestrator extends EventEmitter {
         env,
         binds,
         cpus: this.deps.config.containerCpuBatch,
-        memory: this.deps.config.containerMemoryBatch,
+        memory: dind?.memory ?? this.deps.config.containerMemoryBatch,
+        pidsLimit: dind?.pidsLimit,
         networkMode: egress?.networkMode ?? vpn?.networkMode,
+        runtime: dind?.runtime,
+        privileged: dind?.privileged,
+        securityOpt: dind?.securityOpt,
         labels: {
           [CONTAINER_MODE_LABEL]: ContainerMode.Batch,
           "vonzio-task-id": task.id,
@@ -743,8 +765,9 @@ export class Orchestrator extends EventEmitter {
     // Pre-warmed pool containers are profile-agnostic, so they can't carry a
     // per-profile egress token / sit on the internal network. Under enforcement,
     // fall back to batch (a dedicated container wired to the proxy).
-    if (profile.container_image || profile.setup_commands?.length || hasTunnel || this.deps.config.egressEnforcement) {
-      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel, egress: this.deps.config.egressEnforcement }, "Pooled incompatible, falling back to batch");
+    const dockerAccess = !!this.dockerAccessOptions(profile);
+    if (profile.container_image || profile.setup_commands?.length || hasTunnel || dockerAccess || this.deps.config.egressEnforcement) {
+      this.log.info({ taskId: task.id, image: profile.container_image, setupCmds: profile.setup_commands?.length, hasTunnel, dockerAccess, egress: this.deps.config.egressEnforcement }, "Pooled incompatible, falling back to batch");
       return this.dispatchBatch(task, profile);
     }
 
@@ -1191,6 +1214,36 @@ export class Orchestrator extends EventEmitter {
     ].join("\n");
   }
 
+  /** Feature 0001: nested Docker-in-Docker container options for a docker_access
+   *  profile, or null when the capability is off host-wide or for this profile.
+   *  A nested daemon has its own NAT bridge and ignores HTTP_PROXY, so it voids
+   *  egress/VPN enforcement — callers MUST skip egress + VPN when this is non-null
+   *  (docker_access forces allow-all egress for the workspace). */
+  private dockerAccessOptions(profile: Profile): {
+    runtime?: string;
+    privileged?: boolean;
+    securityOpt?: string[];
+    memory: string;
+    pidsLimit?: number;
+  } | null {
+    const mode = this.deps.config.dockerAccessMode ?? "off";
+    if (!profile.docker_access || mode === "off") return null;
+    return {
+      runtime: mode === "sysbox" ? "sysbox-runc" : undefined,
+      privileged: mode === "dind-privileged" ? true : undefined,
+      // dind-privileged already disables confinement, so drop no-new-privileges
+      // (privileged + no_new_privs is contradictory and dockerd's init trips on
+      // it). sysbox runs the nested dockerd unprivileged under a user namespace
+      // and keeps working WITH no_new_privs, so it retains the hardening default
+      // (undefined → docker-manager applies ["no-new-privileges"]).
+      securityOpt: mode === "dind-privileged" ? [] : undefined,
+      memory: this.deps.config.containerMemoryDockerAccess ?? this.deps.config.containerMemorySession,
+      // A nested compose stack + inner dockerd blows past the default 512-pid
+      // fork-bomb cap; docker_access workspaces get their own higher ceiling.
+      pidsLimit: this.deps.config.containerPidsLimitDockerAccess,
+    };
+  }
+
   /** Create a session container, optionally mounting named volumes for persistent sessions. */
   private async createSessionContainer(
     sessionId: string,
@@ -1198,31 +1251,51 @@ export class Orchestrator extends EventEmitter {
     env: Record<string, string>,
     volumeId?: string,
   ): Promise<string> {
+    const dind = this.dockerAccessOptions(profile);
     const binds: string[] = [];
     if (volumeId) {
       const wsVolume = `${VOLUME_PREFIX_WORKSPACE}${volumeId}`;
       const sdkVolume = `${VOLUME_PREFIX_SDK}${volumeId}`;
+      // Persist the nested daemon's image/build cache across restarts so a
+      // pinned docker_access workspace doesn't re-pull the whole stack.
+      const dockerVolume = dind ? `${VOLUME_PREFIX_DOCKER}${volumeId}` : undefined;
       // createNamedVolume is idempotent for the default driver
       await Promise.all([
         this.deps.containerManager.createNamedVolume(wsVolume),
         this.deps.containerManager.createNamedVolume(sdkVolume),
+        ...(dockerVolume ? [this.deps.containerManager.createNamedVolume(dockerVolume)] : []),
       ]);
       binds.push(`${wsVolume}:/workspace`, `${sdkVolume}:/home/agent/.claude`);
+      if (dockerVolume) binds.push(`${dockerVolume}:/var/lib/docker`);
     }
 
-    const vpn = await this.ensureVpnSidecar(profile, sessionId);
+    // A nested daemon has its own NAT bridge and ignores HTTP_PROXY, so egress
+    // enforcement + VPN can't constrain it — docker_access forces allow-all
+    // egress: no proxy, no sidecar. Warn (not silent) because this overrides any
+    // egress allowlist or VPN tunnel the profile otherwise carries.
+    if (dind) {
+      this.log.warn(
+        { sessionId, profileId: profile.id, mode: this.deps.config.dockerAccessMode },
+        "docker_access active: egress enforcement and VPN sidecar are bypassed for this session",
+      );
+    }
+    const vpn = dind ? undefined : await this.ensureVpnSidecar(profile, sessionId);
     // Session containers are reused across a session's tasks, so enforcement
     // uses the PROFILE default allowlist (baked into env at create time) — not
     // per-task egress, which can't retro-apply to a long-lived container.
-    const egress = await this.applyEgress(profile.default_egress_domains, env, !!vpn);
+    const egress = dind ? undefined : await this.applyEgress(profile.default_egress_domains, env, !!vpn);
     const containerId = await this.deps.containerManager.createContainer({
       image: profile.container_image,
       registryAuth: this.buildRegistryAuth(profile),
       env,
       binds: binds.length > 0 ? binds : undefined,
       cpus: this.deps.config.containerCpuSession,
-      memory: this.deps.config.containerMemorySession,
+      memory: dind?.memory ?? this.deps.config.containerMemorySession,
+      pidsLimit: dind?.pidsLimit,
       networkMode: egress?.networkMode ?? vpn?.networkMode,
+      runtime: dind?.runtime,
+      privileged: dind?.privileged,
+      securityOpt: dind?.securityOpt,
       labels: {
         [CONTAINER_MODE_LABEL]: ContainerMode.Session,
         "vonzio-session-id": sessionId,
