@@ -47,6 +47,7 @@ export type {
   ConcurrencyLimiter,
 } from "./types/rate-limit.js";
 
+export { FILE_SERVER_PORT } from "./types/container.js";
 export type {
   ContainerCreateOptions,
   ContainerInfo,

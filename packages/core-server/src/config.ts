@@ -99,6 +99,13 @@ const configSchema = z.object({
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   DOCKER_NETWORK: z.string().optional(),
   AGENT_IMAGE: z.string().default("vonzio-agent:latest"),
+  // Port the agent container's built-in static file server binds, and the port
+  // the {{file_server}} preview URL + dashboard target. Default is uncommon so a
+  // docker_access workspace publishing a normal app port doesn't collide with it;
+  // override only if it still clashes with a stack you run. Injected into the
+  // agent container's env (read by docker/fileserver.py) and served to the
+  // dashboard via /api/config.
+  FILE_SERVER_PORT: z.coerce.number().int().positive().default(8765),
   // Docker-in-Docker access (feature 0001). Lets a workspace whose profile has
   // `docker_access` run a nested docker daemon — building images, `docker
   // compose` dev stacks. Default OFF everywhere; a self-host operator opts in

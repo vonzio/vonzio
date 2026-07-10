@@ -1,6 +1,6 @@
 #!/bin/bash
 # Agent container entrypoint:
-# 1. Start a static file server on port 8000 serving /workspace/
+# 1. Start a static file server (FILE_SERVER_PORT env, default 8765) serving /workspace/
 # 2. Keep container alive (agent runner is invoked via docker exec)
 
 mkdir -p /workspace

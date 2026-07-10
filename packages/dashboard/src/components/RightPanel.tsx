@@ -5,6 +5,7 @@ import { FilesTab } from "./FilesTab.js";
 import { LogsTab } from "./LogsTab.js";
 import { TerminalTab } from "./TerminalTab.js";
 import { KnowledgeSection } from "./KnowledgeSection.js";
+import { FILE_SERVER_PORT } from "@vonzio/shared";
 import { useApi } from "../hooks/useApi.js";
 import { fetchProfiles, fetchUserAnthropicKeys, type ProfileSummary, type UserAnthropicKey, type WorkspacePort, type PreviewPortMode } from "../api/client.js";
 
@@ -140,12 +141,12 @@ function InfoTab({ containerId, containerName, profileName, profileId, workspace
 
         {/* Workspace files — open the in-container file server in a new tab.
             The /preview proxy authenticates via the session cookie and mints
-            the _pvt token on redirect (port 8000 = the workspace file server). */}
+            the _pvt token on redirect (FILE_SERVER_PORT = the workspace file server). */}
         {containerId && (
           <div className="flex items-center justify-between py-3">
             <span className="text-xs" style={labelStyle}>Files</span>
             <button
-              onClick={() => window.open(`/preview/${containerId}/8000/`, "_blank", "noopener")}
+              onClick={() => window.open(`/preview/${containerId}/${(window as unknown as { __VONZIO_FILE_SERVER_PORT?: number }).__VONZIO_FILE_SERVER_PORT ?? FILE_SERVER_PORT}/`, "_blank", "noopener")}
               className="flex items-center gap-1.5 cursor-pointer"
               style={{ color: "var(--vz-sodium)" }}
               title="Browse this workspace's files in a new tab"

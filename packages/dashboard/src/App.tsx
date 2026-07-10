@@ -57,6 +57,7 @@ export function App() {
       if (c.ollamaEnabled) { (window as any).__VONZIO_OLLAMA_ENABLED = true; }
       (window as any).__VONZIO_EGRESS_ENFORCEMENT = !!c.egressEnforcement;
       if (c.previewUrlTemplate) { (window as any).__VONZIO_PREVIEW_URL_TEMPLATE = c.previewUrlTemplate; }
+      if (c.fileServerPort) { (window as any).__VONZIO_FILE_SERVER_PORT = c.fileServerPort; }
       if (c.authProviders) setAuthProviders(c.authProviders);
       if (c.turnstileSiteKey) setTurnstileSiteKey(c.turnstileSiteKey);
       if (c.marketingUrl) setMarketingUrl(c.marketingUrl);
