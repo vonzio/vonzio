@@ -1546,6 +1546,7 @@ export class Orchestrator extends EventEmitter {
     let systemPrompt = this.buildSystemPrompt(
       task, containerId, containerName, sdkToolNames, nonSdkServers,
       memorySection, resolvedMaxTurns, presenceSection,
+      !!this.dockerAccessOptions(profile),
     );
     // When the platform-control MCP ("vonzio") is wired in, bake a short primer
     // into the system prompt (guaranteed-read) so the agent doesn't conflate
@@ -2278,8 +2279,15 @@ export class Orchestrator extends EventEmitter {
     memorySection: string = "",
     resolvedMaxTurns?: number,
     presenceSection: string = "",
+    dockerAccess: boolean = false,
   ): string {
     const template = this.loadSystemPromptTemplate();
+    // Feature 0001: the constraints block claims "no Docker-in-Docker" by
+    // default; flip it for docker_access workspaces so the agent knows it can
+    // actually build images / run compose stacks (otherwise it won't try).
+    const dockerNote = dockerAccess
+      ? "- Docker is available — you can run `docker` and `docker compose` inside the container (a nested daemon; image/build cache persists in this workspace)"
+      : "- No Docker-in-Docker — you cannot run `docker` or `docker compose` inside the container";
     const previewBase = this.deps.config.previewUrlTemplate.replace("{container_id}", containerName);
 
     const toolSection = sdkToolNames.length > 0
@@ -2306,6 +2314,7 @@ export class Orchestrator extends EventEmitter {
       .replace(/\{\{mcp_section\}\}/g, mcpSection)
       .replace(/\{\{memory_section\}\}/g, memorySection)
       .replace(/\{\{presence_section\}\}/g, presenceSection)
+      .replace(/\{\{docker_note\}\}/g, dockerNote)
       .replace(/\n{3,}/g, "\n\n") // Clean up extra blank lines
       .trim();
   }

@@ -173,7 +173,7 @@ If the port is not listed, check `/tmp/server.log` for errors.
 
 - `sudo` is available — you can install packages with `sudo apt-get install -y <package>`
 - Build tools (gcc, make) and common utils are pre-installed
-- No Docker-in-Docker — you cannot run `docker` or `docker compose` inside the container
+{{docker_note}}
 - `npm install -g` works (prefix: ~/.npm-global)
 - Container is ephemeral — files persist only within this session
 - Max turns: {{max_turns}}
