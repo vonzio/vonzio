@@ -173,6 +173,15 @@ roadmap tracks fixes.
   error message pointing at `./install.sh` or the manual openssl
   invocation. The placeholder strings (`change-this-to-a-secure-...`)
   that previously let the stack boot with an insecure default are gone.
+- **Docker access (`docker_access`) deliberately relaxes confinement — off by
+  default.** When an operator sets `DOCKER_ACCESS_MODE` and an **admin** flags a
+  profile, that workspace runs a nested docker daemon. A nested daemon has its own
+  network, so **egress enforcement and VPN are bypassed** for it (it is forced to
+  allow-all egress); the `dind-privileged` mode additionally runs the container
+  **privileged**, which removes in-container confinement and is single-tenant-only.
+  This is an intentional, admin-gated opt-in, not a default posture — the `sysbox`
+  mode (unprivileged, user-namespaced) is the only one safe to expose to multiple
+  users. See [SELF_HOST.md](./SELF_HOST.md#docker-access-nested-docker-in-docker).
 
 See the [HARDENING.md](./HARDENING.md) guide for mitigations available
 today.

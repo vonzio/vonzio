@@ -300,6 +300,37 @@ services:
 
 Compose auto-loads `docker-compose.override.yml`; restart the stack to pick up changes. (The build-from-source dev stack already mounts the repo's `config/` + `tools/` for live editing.)
 
+### Docker access (nested Docker-in-Docker)
+
+Off by default. When enabled, a workspace whose profile has `docker_access` runs a
+**nested docker daemon** so the agent can build images and run `docker compose` dev
+stacks. It is **opt-in per host** and there are real trade-offs — a nested daemon
+has its own network, so **egress enforcement and VPN are bypassed** for that
+workspace (it is forced to allow-all egress).
+
+To enable:
+
+1. **Build the docker-flavored agent image** and point profiles at it:
+   ```bash
+   docker build -f docker/Dockerfile.agent.dind -t vonzio-agent-dind:latest .
+   ```
+   Set a profile's **Container image** to `vonzio-agent-dind:latest`.
+2. **Turn on a host mode** via `DOCKER_ACCESS_MODE` in your `.env`:
+   - `dind-privileged` — nested dockerd in a **privileged** container. Zero host
+     setup, but it disables container confinement, so **only on a single-tenant
+     box you own** — never next to other users' workspaces. Needs a direct docker
+     socket (not the hardened `docker-socket-proxy`).
+   - `sysbox` — nested dockerd via the **[Sysbox](https://github.com/nestybox/sysbox)**
+     runtime (`sysbox-runc`), unprivileged. Requires installing Sysbox on the host
+     (kernel ≥ 5.12). The only mode safe to expose to multiple users.
+3. **Flag the profile.** Only an **admin** may enable `docker_access` on a profile
+   (it voids the egress/VPN guarantees). Toggling it applies to containers created
+   *after* the change — restart the workspace to pick it up.
+
+Tuning knobs (defaults are usually fine): `CONTAINER_MEMORY_LIMIT_DOCKER_ACCESS`
+(default `8g`) and `CONTAINER_PIDS_LIMIT_DOCKER_ACCESS` (default `4096`) — a real
+compose stack + inner daemon needs more headroom than an ordinary workspace.
+
 ## Production deploy
 
 Use the production compose file:
