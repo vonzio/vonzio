@@ -7,6 +7,7 @@ import type { Profile, ResolvedProfile, McpServerConfig, RegistryConfig, Profile
 import type { ApiKeyService } from "./api-key-service.js";
 import { slugify, isValidSlug, resolveCollision } from "./slug.js";
 import { ValidationError } from "../errors.js";
+import { parseMemory } from "../container/docker-manager.js";
 
 export interface CreateProfileInput {
   name: string;
@@ -36,6 +37,7 @@ export interface CreateProfileInput {
   setup_commands?: string[];
   persistent_sessions?: boolean;
   docker_access?: boolean;
+  memory_limit?: string | null;
   memory_enabled?: boolean;
   max_turns?: number | null;
   auto_continue?: boolean;
@@ -49,6 +51,9 @@ export class ProfileService {
     private db: DrizzleDB,
     private encryptionKey: string,
     private apiKeyService?: ApiKeyService,
+    /** Feature 0041: max a profile's memory_limit may request (Docker memory
+     *  string, e.g. "16g"). Undefined = no ceiling enforced here. */
+    private maxMemoryLimit?: string,
   ) {}
 
   // Resolves a default model id for a key (first available from the provider).
@@ -114,8 +119,19 @@ export class ProfileService {
     }
   }
 
+  /** Feature 0041: a per-profile memory_limit may not exceed the configured max
+   *  (validation.ts already checks the Docker-memory FORMAT; this enforces the
+   *  ceiling). Null/undefined = keep the global default. */
+  private assertMemoryLimitAllowed(memoryLimit: string | null | undefined): void {
+    if (!memoryLimit || !this.maxMemoryLimit) return;
+    if (parseMemory(memoryLimit) > parseMemory(this.maxMemoryLimit)) {
+      throw new ValidationError(`memory_limit ${memoryLimit} exceeds the maximum ${this.maxMemoryLimit}`);
+    }
+  }
+
   async create(input: CreateProfileInput, userId?: string, userRole?: string): Promise<Profile> {
     this.assertDockerAccessAllowed(input.docker_access, userRole);
+    this.assertMemoryLimitAllowed(input.memory_limit);
     const id = `prof_${nanoid()}`;
     const now = new Date().toISOString();
 
@@ -167,6 +183,7 @@ export class ProfileService {
       setup_commands: input.setup_commands ?? [],
       persistent_sessions: input.persistent_sessions ?? true,
       docker_access: input.docker_access ?? false,
+      memory_limit: input.memory_limit ?? null,
       concurrency_limit: input.concurrency_limit ?? 5,
       memory_enabled: true,
       max_turns: input.max_turns ?? null,
@@ -272,6 +289,7 @@ export class ProfileService {
 
   async update(id: string, input: Partial<CreateProfileInput>, userRole?: string): Promise<Profile | null> {
     this.assertDockerAccessAllowed(input.docker_access, userRole);
+    this.assertMemoryLimitAllowed(input.memory_limit);
     const existing = await this.db.select().from(schema.profiles).where(eq(schema.profiles.id, id));
     if (existing.length === 0) return null;
 
@@ -344,6 +362,7 @@ export class ProfileService {
     // persistent session keeps its current confinement until it is restarted
     // (recreated). Operators must restart the workspace for a toggle to apply.
     if (input.docker_access !== undefined) updates.docker_access = input.docker_access;
+    if (input.memory_limit !== undefined) updates.memory_limit = input.memory_limit || null;
     if (input.memory_enabled !== undefined) updates.memory_enabled = input.memory_enabled;
     if (input.max_turns !== undefined) updates.max_turns = input.max_turns;
     if (input.auto_continue !== undefined) updates.auto_continue = input.auto_continue;
@@ -459,6 +478,7 @@ export class ProfileService {
       setup_commands: row.setup_commands,
       persistent_sessions: row.persistent_sessions,
       docker_access: row.docker_access,
+      memory_limit: row.memory_limit ?? undefined,
       memory_enabled: row.memory_enabled,
       max_turns: row.max_turns ?? undefined,
       auto_continue: row.auto_continue,

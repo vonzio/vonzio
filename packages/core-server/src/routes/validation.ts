@@ -105,6 +105,9 @@ export const createProfileSchema = z.object({
   setup_commands: z.array(z.string().min(1)).max(50).optional(),
   persistent_sessions: z.boolean().optional(),
   docker_access: z.boolean().optional(),
+  // Feature 0041: per-profile memory ceiling. Docker memory string (e.g. "6g");
+  // empty/null clears it back to the global default. Max enforced server-side.
+  memory_limit: z.string().regex(/^(\d+[bkmg])?$/i, "Must be a Docker memory value (e.g. 512m, 4g)").nullable().optional(),
   memory_enabled: z.boolean().optional(),
   max_turns: z.number().int().min(1).max(10000).optional().nullable(),
   auto_continue: z.boolean().optional(),

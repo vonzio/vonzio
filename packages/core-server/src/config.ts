@@ -202,10 +202,24 @@ const configSchema = z.object({
   CONTAINER_MEMORY_LIMIT_SESSION: z
     .string()
     .regex(/^\d+[bkmg]$/i, "Must be a Docker memory value (e.g. 512m, 1g)")
-    // 2g: session agents routinely install deps + run a test suite (+ sometimes
-    // chromium); 768m OOM-killed the container mid-run, which surfaced as the
-    // goal judge's "container not running" (409). Raise the floor.
-    .default("2g"),
+    // 4g default (feature 0041): a real project workspace routinely runs deps
+    // install + a tsc build + tests + chromium, which blows past 2g together.
+    // Docker --memory is a LIMIT not a reservation, so a light agent still only
+    // uses what it needs. Per-profile override (memory_limit) + the per-user
+    // total cap keep this from over-committing a busy host.
+    .default("4g"),
+  // Per-feature 0041: the ceiling a profile's `memory_limit` override may request,
+  // and the total a single user's RUNNING workspaces may sum to. The override lets
+  // a user raise their own workspace above the session default; the per-user total
+  // stops one user pinning all host RAM. Both are Docker memory strings.
+  CONTAINER_MEMORY_LIMIT_MAX: z
+    .string()
+    .regex(/^\d+[bkmg]$/i, "Must be a Docker memory value (e.g. 512m, 1g)")
+    .default("16g"),
+  CONTAINER_MEMORY_LIMIT_PER_USER_TOTAL: z
+    .string()
+    .regex(/^\d+[bkmg]$/i, "Must be a Docker memory value (e.g. 512m, 1g)")
+    .default("32g"),
   // Memory ceiling for docker_access (nested DinD) session/batch containers
   // (feature 0001). A real compose dev stack (postgres + object store + web +
   // several services) plus the nested daemon's overhead dwarfs the 2g session

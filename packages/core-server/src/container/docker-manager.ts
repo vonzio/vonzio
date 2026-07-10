@@ -532,7 +532,7 @@ export class DockerManager implements ContainerManager {
   }
 }
 
-function parseMemory(mem: string): number {
+export function parseMemory(mem: string): number {
   const match = mem.match(/^(\d+)([bkmg])$/i);
   if (!match) throw new Error(`Invalid memory value: ${mem}`);
   const value = parseInt(match[1], 10);

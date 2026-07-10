@@ -254,3 +254,25 @@ describe("ProfileService docker_access admin gate", () => {
     ).not.toThrow();
   });
 });
+
+// No DB needed: the memory_limit max check throws before any DB access (feature 0041).
+describe("ProfileService memory_limit max (feature 0041)", () => {
+  const svc = new ProfileService({} as never, ENCRYPTION_KEY, undefined, "16g");
+
+  it("create: rejects a memory_limit above the max", async () => {
+    await expect(svc.create({ name: "p", memory_limit: "32g" }, "u")).rejects.toThrow(/exceeds the maximum/i);
+  });
+
+  it("update: rejects a memory_limit above the max", async () => {
+    await expect(svc.update("prof_x", { memory_limit: "24g" })).rejects.toThrow(/exceeds the maximum/i);
+  });
+
+  it("allows a memory_limit at/under the max, and null/undefined (default)", () => {
+    const assert = (m: string | null | undefined) =>
+      (svc as unknown as { assertMemoryLimitAllowed: (m: string | null | undefined) => void }).assertMemoryLimitAllowed(m);
+    expect(() => assert("8g")).not.toThrow();
+    expect(() => assert("16g")).not.toThrow();
+    expect(() => assert(null)).not.toThrow();
+    expect(() => assert(undefined)).not.toThrow();
+  });
+});

@@ -779,6 +779,13 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS docker_access BOOLEAN NOT NULL DEFAULT false`);
     },
   },
+  {
+    version: 36,
+    description: "Configurable workspace memory (feature 0041): profiles.memory_limit (nullable Docker memory string; null = global session default).",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS memory_limit TEXT`);
+    },
+  },
 ];
 
 /**
