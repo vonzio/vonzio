@@ -1280,17 +1280,47 @@ export class Orchestrator extends EventEmitter {
     if (!userId || !cap) return;
     const capBytes = parseMemory(cap);
     const newBytes = parseMemory(memory);
+
+    // Count ACTUAL usage of the user's running workspaces, not their configured
+    // ceilings. A --memory limit is a ceiling, not a reservation: an idle
+    // workspace holding a 6g limit uses ~tens of MB, so summing ceilings blocked
+    // new workspaces long before the box was under any real pressure. Admit on
+    // real working-set instead, then guard the host below (feature 0041 follow-up).
     let usedBytes = 0;
     for (const c of await this.deps.containerManager.listManagedContainers()) {
       if (c.status !== "running" || c.labels["vonzio-user-id"] !== userId) continue;
-      usedBytes += await this.deps.containerManager.getContainerMemoryLimit(c.id).catch(() => 0);
+      usedBytes += await this.deps.containerManager.getContainerMemoryUsage(c.id).catch(() => 0);
     }
     if (usedBytes + newBytes > capBytes) {
       throw new Error(
-        `workspace memory budget exceeded: this user's running workspaces already reserve ` +
-        `~${Math.round(usedBytes / 1024 ** 3)}g; ${memory} more would pass the ${cap} per-user limit. ` +
+        `workspace memory budget exceeded: this user's running workspaces are using ` +
+        `~${Math.round(usedBytes / 1024 ** 3)}g and ${memory} more would pass the ${cap} per-user limit. ` +
         `Stop another workspace or lower this agent's memory.`,
       );
+    }
+
+    // Host guard: real usage can be low while many idle workspaces each hold a
+    // large ceiling — if the host is genuinely under pressure, refuse a workspace
+    // whose ceiling doesn't fit in the RAM available right now. This self-regulates
+    // on actual pressure: admit freely while the box is idle, throttle as it fills.
+    const hostAvail = this.hostAvailableMemoryBytes();
+    if (hostAvail != null && newBytes > hostAvail) {
+      throw new Error(
+        `host is low on memory (~${Math.round(hostAvail / 1024 ** 3)}g available) — this ${memory} ` +
+        `workspace won't fit right now. Stop a workspace or try again shortly.`,
+      );
+    }
+  }
+
+  /** Host memory available for new workspaces, in bytes (feature 0041). Reads
+   *  /proc/meminfo MemAvailable — inside a container this reflects the host.
+   *  Returns null if unreadable (guard is then skipped). */
+  private hostAvailableMemoryBytes(): number | null {
+    try {
+      const m = readFileSync("/proc/meminfo", "utf-8").match(/^MemAvailable:\s+(\d+)\s+kB/m);
+      return m ? Number(m[1]) * 1024 : null;
+    } catch {
+      return null;
     }
   }
 

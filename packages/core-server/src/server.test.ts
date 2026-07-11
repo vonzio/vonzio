@@ -13,6 +13,7 @@ function createMockManager(): ContainerManager {
     async removeContainer() {},
     async updateContainerMemory() {},
     async getContainerMemoryLimit() { return 0; },
+    async getContainerMemoryUsage() { return 0; },
     async *execInContainer() {},
     async createTerminalSession() { return { write() {}, resize() {}, onData() {}, onExit() {}, close() {} }; },
     async getContainerStatus() { return "running"; },

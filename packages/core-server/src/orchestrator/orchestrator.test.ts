@@ -52,6 +52,9 @@ function createMockManager(): ContainerManager & {
     async getContainerMemoryLimit() {
       return 0;
     },
+    async getContainerMemoryUsage() {
+      return 0;
+    },
     async *execInContainer(id, cmd, stdin) {
       const outputs = execOutputs.get(id);
       if (outputs) {
