@@ -19,6 +19,12 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // When served behind a reverse proxy on an HTTPS host (homelab `.lab` dev
+    // over Traefik + mkcert), point the HMR websocket at the public 443 origin
+    // so hot-reload connects. Opt-in via env so normal localhost dev is unchanged.
+    ...(process.env.VITE_HMR_HOST
+      ? { hmr: { host: process.env.VITE_HMR_HOST, protocol: "wss", clientPort: 443 } }
+      : {}),
     // Allow public-tunnel hosts (ngrok, cloudflared, localtunnel) when
     // developers need an HTTPS public URL for webhook testing -- e.g.
     // the Telegram bot webhook, which Telegram requires to be HTTPS +
@@ -29,6 +35,7 @@ export default defineConfig({
       ".ngrok.io",
       ".trycloudflare.com",
       ".loca.lt",
+      ".lab",
     ],
     proxy: {
       "/v1": {
