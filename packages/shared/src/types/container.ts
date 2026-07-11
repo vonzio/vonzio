@@ -93,6 +93,9 @@ export interface ContainerManager {
   updateContainerMemory(id: string, memory: string): Promise<void>;
   /** The container's current hard memory limit in bytes (0 = unlimited). */
   getContainerMemoryLimit(id: string): Promise<number>;
+  /** The container's actual working-set memory usage in bytes (feature 0041:
+   *  per-user admission counts real usage, not the summed ceilings). */
+  getContainerMemoryUsage(id: string): Promise<number>;
   execInContainer(
     id: string,
     cmd: string[],

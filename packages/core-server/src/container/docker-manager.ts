@@ -156,6 +156,18 @@ export class DockerManager implements ContainerManager {
     return info.HostConfig?.Memory ?? 0;
   }
 
+  async getContainerMemoryUsage(id: string): Promise<number> {
+    // A one-shot stats read (no streaming). cgroup counts page cache in `usage`;
+    // subtract inactive_file for the working set — what the workload actually
+    // keeps resident — mirroring what `docker stats` shows.
+    const stats = (await this.docker.getContainer(id).stats({ stream: false })) as {
+      memory_stats?: { usage?: number; stats?: { inactive_file?: number } };
+    };
+    const usage = stats.memory_stats?.usage ?? 0;
+    const inactiveFile = stats.memory_stats?.stats?.inactive_file ?? 0;
+    return Math.max(0, usage - inactiveFile);
+  }
+
   async *execInContainer(
     id: string,
     cmd: string[],

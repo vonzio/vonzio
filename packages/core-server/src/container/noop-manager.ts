@@ -13,6 +13,9 @@ export class NoopContainerManager implements ContainerManager {
   async getContainerMemoryLimit(): Promise<number> {
     return 0;
   }
+  async getContainerMemoryUsage(): Promise<number> {
+    return 0;
+  }
   async *execInContainer(): AsyncIterable<string> {}
   async createTerminalSession(): Promise<TerminalSession> {
     throw new Error("Docker is disabled");
