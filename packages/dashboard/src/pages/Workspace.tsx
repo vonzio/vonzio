@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot, Gamepad2, BarChart3, Search, Rocket, Globe, Plus, PanelLeftOpen } from "lucide-react";
+import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot, Gamepad2, BarChart3, Search, Rocket, Globe, Plus, PanelLeftOpen, Mic, MicOff } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
@@ -90,6 +90,134 @@ const SUGGESTION_FALLBACK: PromptSuggestion[] = [
   { id: "script", label: "Write a script", icon: "message", prompt: "Write a Python script that automates a common task. What kind of task should we automate?" },
 ];
 
+// ─── Voice dictation (Web Speech API) ───────────────────────────────
+// Lets users dictate into the composer for hands-free / mobile input. The
+// transcript lands in the composer for review — it is never auto-sent.
+// Chrome/Edge/Safari expose SpeechRecognition (webkit-prefixed on some);
+// Firefox does not, and mic access requires a secure context (https/localhost).
+// The hook reports `supported: false` in those cases so the UI hides the mic.
+const VOICE_LANG_KEY = "vonzio_voice_lang";
+
+// Curated common-languages list (BCP-47). Not exhaustive — the Web Speech API
+// accepts any tag, but a short list keeps the picker usable; the browser's top
+// language seeds the default when it maps onto one of these.
+const VOICE_LANGUAGES: { code: string; label: string }[] = [
+  { code: "en-US", label: "English (US)" },
+  { code: "en-GB", label: "English (UK)" },
+  { code: "es-ES", label: "Español" },
+  { code: "fr-FR", label: "Français" },
+  { code: "de-DE", label: "Deutsch" },
+  { code: "it-IT", label: "Italiano" },
+  { code: "pt-BR", label: "Português (BR)" },
+  { code: "pt-PT", label: "Português (PT)" },
+  { code: "nl-NL", label: "Nederlands" },
+  { code: "pl-PL", label: "Polski" },
+  { code: "ru-RU", label: "Русский" },
+  { code: "tr-TR", label: "Türkçe" },
+  { code: "ar-SA", label: "العربية" },
+  { code: "hi-IN", label: "हिन्दी" },
+  { code: "zh-CN", label: "中文 (简体)" },
+  { code: "zh-TW", label: "中文 (繁體)" },
+  { code: "ja-JP", label: "日本語" },
+  { code: "ko-KR", label: "한국어" },
+];
+
+function getSpeechRecognitionCtor(): (new () => any) | null {
+  if (typeof window === "undefined") return null;
+  return (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition ?? null;
+}
+
+// Initial dictation language: last-used (persisted) → browser top language
+// mapped onto the curated list (exact, else by primary subtag) → en-US.
+function resolveInitialVoiceLang(): string {
+  try {
+    const saved = localStorage.getItem(VOICE_LANG_KEY);
+    if (saved && VOICE_LANGUAGES.some((l) => l.code === saved)) return saved;
+  } catch { /* localStorage unavailable */ }
+  const nav = (typeof navigator !== "undefined" && navigator.language) || "en-US";
+  const exact = VOICE_LANGUAGES.find((l) => l.code.toLowerCase() === nav.toLowerCase());
+  if (exact) return exact.code;
+  const primary = nav.split("-")[0].toLowerCase();
+  return VOICE_LANGUAGES.find((l) => l.code.split("-")[0].toLowerCase() === primary)?.code ?? "en-US";
+}
+
+/** Web Speech API dictation bound to the composer. On every partial/final
+ *  result the hook rebuilds the full composer value (the text present when
+ *  dictation started + the running transcript) and hands it to `onText`, which
+ *  writes it into the textarea. Text is never auto-sent — the user reviews and
+ *  presses Send. */
+function useVoiceDictation(opts: { getBaseText: () => string; onText: (next: string) => void }) {
+  const supported = useMemo(
+    () => !!getSpeechRecognitionCtor() && (typeof window === "undefined" || window.isSecureContext),
+    [],
+  );
+  const [listening, setListening] = useState(false);
+  const [lang, setLangState] = useState<string>(() => resolveInitialVoiceLang());
+  const recognitionRef = useRef<any>(null);
+  // Composer text captured when dictation started — the transcript is appended
+  // to it. Held in refs so the non-React recognition callbacks read the latest.
+  const baseRef = useRef("");
+  const finalRef = useRef("");
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+
+  const setLang = useCallback((next: string) => {
+    setLangState(next);
+    try { localStorage.setItem(VOICE_LANG_KEY, next); } catch { /* ignore */ }
+    if (recognitionRef.current) recognitionRef.current.lang = next;
+  }, []);
+
+  const stop = useCallback(() => {
+    const rec = recognitionRef.current;
+    if (rec) { try { rec.stop(); } catch { /* already stopped */ } }
+  }, []);
+
+  const start = useCallback(() => {
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor || recognitionRef.current) return;
+    const rec = new Ctor();
+    rec.lang = lang;
+    rec.continuous = true;
+    rec.interimResults = true;
+    baseRef.current = optsRef.current.getBaseText();
+    finalRef.current = "";
+    rec.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        if (res.isFinal) finalRef.current += res[0].transcript;
+        else interim += res[0].transcript;
+      }
+      const dictated = (finalRef.current + interim).trimStart();
+      const base = baseRef.current;
+      const sep = base && !/\s$/.test(base) ? " " : "";
+      optsRef.current.onText(dictated ? base + sep + dictated : base);
+    };
+    rec.onerror = () => { /* no-op: onend still fires and clears state */ };
+    rec.onend = () => { recognitionRef.current = null; setListening(false); };
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+      setListening(true);
+    } catch {
+      recognitionRef.current = null;
+      setListening(false);
+    }
+  }, [lang]);
+
+  const toggle = useCallback(() => {
+    if (recognitionRef.current) stop();
+    else start();
+  }, [start, stop]);
+
+  useEffect(() => () => {
+    const rec = recognitionRef.current;
+    if (rec) { try { rec.stop(); } catch { /* ignore */ } }
+  }, []);
+
+  return { supported, listening, lang, setLang, start, stop, toggle };
+}
+
 // ─── Component ──────────────────────────────────────────────────────
 
 export function Workspace() {
@@ -177,6 +305,11 @@ export function Workspace() {
   const isMobile = useIsMobile();
   const isNarrow = useIsNarrow();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Voice dictation → composer (reviewed before send, never auto-sent).
+  const voice = useVoiceDictation({
+    getBaseText: () => input,
+    onText: (next) => setInputWithDraft(next),
+  });
 
   // Auto-close right panel when viewport shrinks to narrow
   useEffect(() => {
@@ -555,6 +688,12 @@ export function Workspace() {
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 200);
   }, []);
+
+  // Stop dictation once the agent starts streaming — the composer is disabled
+  // during a turn, so a live mic would have nowhere to write.
+  useEffect(() => {
+    if (chat.streaming && voice.listening) voice.stop();
+  }, [chat.streaming, voice.listening, voice]);
 
   // ─── Auto-resize textarea ────────────────────────────────────────
   useEffect(() => {
@@ -1591,6 +1730,71 @@ export function Workspace() {
                       <Target className="w-3.5 h-3.5" />
                     </button>
 
+                    {/* Voice dictation — Web Speech API. Only rendered where it
+                        can actually work (SpeechRecognition + secure context);
+                        the transcript lands in the composer for review, never
+                        auto-sent. The language <select> is native so mobile gets
+                        the OS picker; default is the browser's top language,
+                        last-used choice is remembered. */}
+                    {voice.supported && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={voice.toggle}
+                          disabled={chat.streaming}
+                          title={voice.listening ? "Stop dictation" : "Dictate a message"}
+                          aria-label={voice.listening ? "Stop dictation" : "Dictate a message"}
+                          aria-pressed={voice.listening}
+                          style={{
+                            width: 28, height: 28, borderRadius: "var(--vz-radius-sm)",
+                            display: "grid", placeItems: "center",
+                            background: voice.listening ? "var(--vz-fail)" : "var(--vz-mute)",
+                            border: `1px solid ${voice.listening ? "var(--vz-fail)" : "var(--vz-border)"}`,
+                            color: voice.listening ? "#fff" : "var(--vz-muted)",
+                            cursor: chat.streaming ? "not-allowed" : "pointer",
+                            opacity: chat.streaming ? 0.4 : 1,
+                            animation: voice.listening ? "vz-pulse 1.4s ease-in-out infinite" : undefined,
+                            transition: "color var(--vz-fast) var(--vz-ease), background var(--vz-fast) var(--vz-ease), border-color var(--vz-fast) var(--vz-ease)",
+                          }}
+                          onMouseEnter={(e) => { if (voice.listening || chat.streaming) return; const el = e.currentTarget as HTMLElement; el.style.color = "var(--vz-ink)"; el.style.borderColor = "var(--vz-border-strong)"; }}
+                          onMouseLeave={(e) => { if (voice.listening || chat.streaming) return; const el = e.currentTarget as HTMLElement; el.style.color = "var(--vz-muted)"; el.style.borderColor = "var(--vz-border)"; }}
+                        >
+                          {voice.listening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                        </button>
+                        {/* Dictation language — collapsed to a tiny code chip
+                            (e.g. "EN") so a rarely-touched control doesn't crowd
+                            the composer. The real <select> is transparent on top,
+                            so a tap still opens the native OS language picker. */}
+                        <div style={{ position: "relative", height: 28, display: "inline-flex", alignItems: "center" }}>
+                          <span
+                            aria-hidden
+                            style={{
+                              pointerEvents: "none",
+                              display: "inline-flex", alignItems: "center", gap: 3,
+                              height: 28, padding: "0 7px", borderRadius: "var(--vz-radius-sm)",
+                              background: "var(--vz-mute)", border: "1px solid var(--vz-border)",
+                              color: "var(--vz-muted)", fontFamily: "var(--vz-font-mono)",
+                              fontSize: 10.5, letterSpacing: "0.04em",
+                            }}
+                          >
+                            <Globe className="w-3 h-3" />
+                            {voice.lang.split("-")[0].toUpperCase()}
+                          </span>
+                          <select
+                            value={voice.lang}
+                            onChange={(e) => voice.setLang(e.target.value)}
+                            title="Dictation language"
+                            aria-label="Dictation language"
+                            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
+                          >
+                            {VOICE_LANGUAGES.map((l) => (
+                              <option key={l.code} value={l.code}>{l.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    )}
+
                     {/* Meta line: model picker · workspace context. Must be a
                         <div> (the ModelPicker renders a block-level wrapper
                         for its dropdown's absolute positioning; a <div>
@@ -1697,13 +1901,21 @@ export function Workspace() {
                           transition: "background var(--vz-fast) var(--vz-ease)",
                         }}
                       >
-                        Send
-                        <span
-                          className="vz-kbd"
-                          style={{ background: "rgba(255,255,255,0.16)", borderColor: "rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.85)" }}
-                        >
-                          ⏎
-                        </span>
+                        {isMobile ? (
+                          // Icon-only on mobile: saves footer width, and the ⏎
+                          // hint is wrong there (mobile Enter inserts a newline).
+                          <Send className="w-4 h-4" />
+                        ) : (
+                          <>
+                            Send
+                            <span
+                              className="vz-kbd"
+                              style={{ background: "rgba(255,255,255,0.16)", borderColor: "rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.85)" }}
+                            >
+                              ⏎
+                            </span>
+                          </>
+                        )}
                       </button>
                     )}
                   </div>
