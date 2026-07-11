@@ -53,6 +53,18 @@ function notFoundHtml(dashboardUrl: string): string {
   });
 }
 
+function proxyErrorHtml(message: string, dashboardUrl: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return brandedErrorHtml({
+    title: "Nothing's listening here yet",
+    eyebrow: "Preview",
+    body: `The app on this port isn't responding — it may still be starting up, or it stopped. Once it's running, refresh to load the preview.<br><br><span style="display:inline-block;font-family:'DM Mono',ui-monospace,monospace;font-size:12px;color:#7A8290;word-break:break-all;">${esc(message)}</span>`,
+    ctaLabel: "Back to dashboard",
+    ctaHref: dashboardUrl,
+  });
+}
+
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
   ".ts": "text/plain", ".tsx": "text/plain", ".jsx": "text/plain",
@@ -363,8 +375,8 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
 
       proxyReq.on("error", (err) => {
         if (!reply.raw.headersSent) {
-          reply.raw.writeHead(502);
-          reply.raw.end(`Proxy error: ${err.message}`);
+          reply.raw.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+          reply.raw.end(proxyErrorHtml(err.message, dashboardUrl));
         }
         resolve();
       });
@@ -585,8 +597,8 @@ export function setupHostnamePreviewProxy(
       );
       proxyReq.on("error", (err) => {
         if (!reply.raw.headersSent) {
-          reply.raw.writeHead(502);
-          reply.raw.end(`Proxy error: ${err.message}`);
+          reply.raw.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+          reply.raw.end(proxyErrorHtml(err.message, dashboardUrl));
         }
         resolve();
       });
