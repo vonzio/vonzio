@@ -1514,7 +1514,9 @@ export function Workspace() {
                     value={input}
                     onChange={(e) => { setHistoryIdx(-1); setInputWithDraft(e.target.value); }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); return; }
+                      // Desktop: Enter sends, Shift+Enter is a newline. Mobile keyboards
+                      // have no Shift+Enter, so Enter must insert a newline — send via the button.
+                      if (e.key === "Enter" && !e.shiftKey && !isMobile) { e.preventDefault(); handleSend(); return; }
                       if (e.key === "ArrowUp" && navigateHistory("up", e.currentTarget)) { e.preventDefault(); return; }
                       if (e.key === "ArrowDown" && navigateHistory("down", e.currentTarget)) { e.preventDefault(); return; }
                     }}
