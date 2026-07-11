@@ -244,6 +244,20 @@ services:
         condition: service_completed_successfully
     profiles: ["flavors"]
 
+  # Docker-in-Docker flavor (feature 0001): adds dockerd + CLI + compose so a
+  # profile with docker_access can build images / run compose stacks. Only
+  # meaningful when the host sets DOCKER_ACCESS_MODE (sysbox or dind-privileged).
+  agent-dind:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent.dind
+    image: vonzio-agent:dind
+    entrypoint: ["echo", "Docker-in-Docker agent image built"]
+    depends_on:
+      agent:
+        condition: service_completed_successfully
+    profiles: ["flavors"]
+
 networks:
   vonzio:
     # Per-instance network name so multiple vonzio installs on one host don't

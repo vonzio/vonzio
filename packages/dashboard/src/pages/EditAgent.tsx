@@ -761,7 +761,10 @@ export function EditAgent() {
                       <Select
                         options={[
                           { value: "", label: "Default (vonzio-agent:latest)" },
-                          ...availableImages.map((img) => ({ value: img.tag, label: img.tag })),
+                          ...availableImages.map((img) => {
+                            const ref = `${img.name}:${img.tag}`;
+                            return { value: ref, label: ref };
+                          }),
                         ]}
                         value={containerImage}
                         onChange={setContainerImage}
@@ -771,7 +774,7 @@ export function EditAgent() {
                   {isAdmin && (
                     <Field
                       label="Docker access"
-                      hint="Let this agent run docker / docker compose in a nested daemon. Requires DOCKER_ACCESS_MODE set on the host and a docker-capable container image (e.g. vonzio-agent-dind). Forces allow-all egress for the workspace (no proxy/VPN)."
+                      hint="Let this agent run docker / docker compose in a nested daemon. Requires DOCKER_ACCESS_MODE set on the host and a docker-capable container image (e.g. vonzio-agent:dind). Forces allow-all egress for the workspace (no proxy/VPN)."
                     >
                       <Checkbox checked={dockerAccess} onChange={setDockerAccess}>Enable Docker-in-Docker</Checkbox>
                     </Field>

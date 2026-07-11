@@ -312,9 +312,10 @@ To enable:
 
 1. **Build the docker-flavored agent image** and point profiles at it:
    ```bash
-   docker build -f docker/Dockerfile.agent.dind -t vonzio-agent-dind:latest .
+   make docker-flavors   # builds vonzio-agent:dind (+ the other flavors)
    ```
-   Set a profile's **Container image** to `vonzio-agent-dind:latest`.
+   Or build just this one: `docker compose -f docker/docker-compose.yml build agent-dind`.
+   Then set a profile's **Container image** to `vonzio-agent:dind`.
 2. **Turn on a host mode** via `DOCKER_ACCESS_MODE` in your `.env`:
    - `dind-privileged` — nested dockerd in a **privileged** container. Zero host
      setup, but it disables container confinement, so **only on a single-tenant
