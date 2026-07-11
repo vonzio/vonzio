@@ -1520,7 +1520,7 @@ export function Workspace() {
                     }}
                     onPaste={handlePaste}
                     placeholder="Message vonzio…"
-                    disabled={chat.streaming || (!chat.connected && !!activeWorkspaceId)}
+                    disabled={chat.streaming}
                     rows={1}
                     className="w-full resize-none border-0 bg-transparent text-sm focus:outline-none"
                     style={{

@@ -30,6 +30,17 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ state: "idle" });
 
   const wsRef = useRef<WebSocket | null>(null);
+  // --- Mobile-resilient connection: auto-reconnect + heartbeat. A backgrounded
+  // tab (esp. mobile) suspends the page and kills the socket; without this the
+  // composer stayed disabled until a full page refresh. ---
+  const connectRef = useRef<() => void>(() => {});
+  const shouldReconnectRef = useRef(true);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectDelayRef = useRef(1000);
+  const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pongTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A turn the user sent while the socket was down — flushed on reconnect.
+  const pendingTurnRef = useRef<Record<string, unknown> | null>(null);
   const streamBufferRef = useRef("");
   // Tracks the id of the assistant bubble that's currently receiving streamed
   // tokens. On turn.done we look up THIS message specifically and replace its
@@ -497,6 +508,12 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
   }, [addSystem]);
 
   const connect = useCallback(() => {
+    const existing = wsRef.current;
+    if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     // SaaS only — append the active org id as a query param because
     // browsers can't set custom headers on WebSocket upgrade. The
@@ -514,7 +531,40 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     })();
     const ws = new WebSocket(`${protocol}//${window.location.host}/v1/stream${orgQuery}`);
 
+    const clearPong = () => {
+      if (pongTimeoutRef.current) {
+        clearTimeout(pongTimeoutRef.current);
+        pongTimeoutRef.current = null;
+      }
+    };
+    const stopHeartbeat = () => {
+      if (heartbeatTimerRef.current) {
+        clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
+      clearPong();
+    };
+    // App-level ping every 25s (the server answers with {type:"pong"}). If no
+    // traffic comes back within 10s the socket is a zombie — force-close so
+    // onclose reconnects. Catches mobile sockets that report OPEN but are dead.
+    const startHeartbeat = () => {
+      stopHeartbeat();
+      heartbeatTimerRef.current = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        try {
+          ws.send(JSON.stringify({ type: "ping" }));
+        } catch {
+          return;
+        }
+        clearPong();
+        pongTimeoutRef.current = setTimeout(() => {
+          try { ws.close(); } catch { /* already gone */ }
+        }, 10000);
+      }, 25000);
+    };
+
     ws.onopen = () => {
+      reconnectDelayRef.current = 1000;
       setConnected(true);
       if (currentSessionIdRef.current) {
         ws.send(JSON.stringify({
@@ -523,22 +573,45 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           last_seq: 0,
         }));
       }
+      startHeartbeat();
+      // Flush a turn the user sent while offline (once its session is resumed).
+      const pending = pendingTurnRef.current;
+      if (pending && pending.session_id === currentSessionIdRef.current) {
+        pendingTurnRef.current = null;
+        try { ws.send(JSON.stringify(pending)); } catch { /* will retry on next open */ }
+      }
     };
     ws.onmessage = (event) => {
+      clearPong(); // any inbound frame proves the socket is alive
       const msg = JSON.parse(event.data as string);
+      if (msg.type === "pong") return;
       handleServerMessage(msg);
     };
     ws.onclose = () => {
       setConnected(false);
       setStreaming(false);
+      stopHeartbeat();
+      if (shouldReconnectRef.current) {
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, 30000);
+          connectRef.current();
+        }, reconnectDelayRef.current);
+      }
     };
     ws.onerror = () => {};
     wsRef.current = ws;
   }, [handleServerMessage]);
+  connectRef.current = connect;
 
   useEffect(() => {
+    shouldReconnectRef.current = true;
     connect();
     return () => {
+      // Intentional teardown — stop the reconnect loop + heartbeat.
+      shouldReconnectRef.current = false;
+      if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
+      if (heartbeatTimerRef.current) { clearInterval(heartbeatTimerRef.current); heartbeatTimerRef.current = null; }
+      if (pongTimeoutRef.current) { clearTimeout(pongTimeoutRef.current); pongTimeoutRef.current = null; }
       const ws = wsRef.current;
       if (ws) {
         if (ws.readyState === WebSocket.OPEN) {
@@ -553,6 +626,36 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       }
     };
   }, [connect]);
+
+  // Eager reconnect when the tab returns to the foreground or the network
+  // comes back — the reconnect backoff timer is frozen while backgrounded on
+  // mobile, so we don't wait it out. Also probes a still-"open" (zombie) socket.
+  useEffect(() => {
+    const wake = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const ws = wsRef.current;
+      if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+        if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
+        reconnectDelayRef.current = 1000;
+        connectRef.current();
+        return;
+      }
+      if (ws.readyState === WebSocket.OPEN) {
+        // Might be a zombie that still reports OPEN — probe it.
+        try { ws.send(JSON.stringify({ type: "ping" })); } catch { /* dead */ }
+        if (pongTimeoutRef.current) clearTimeout(pongTimeoutRef.current);
+        pongTimeoutRef.current = setTimeout(() => { try { ws.close(); } catch { /* gone */ } }, 8000);
+      }
+    };
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("focus", wake);
+    window.addEventListener("online", wake);
+    return () => {
+      document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("focus", wake);
+      window.removeEventListener("online", wake);
+    };
+  }, []);
 
   // When sessionId changes (user clicked a different workspace), resume the new session
   const prevSessionIdRef = useRef(sessionId);
@@ -600,7 +703,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
   ): boolean => {
     const sid = sessionIdOverride ?? currentSessionIdRef.current;
     const hasContent = text.trim().length > 0 || (attachments && attachments.length > 0);
-    if (!hasContent || !wsRef.current || !sid) return false;
+    if (!hasContent || !sid) return false;
     currentSessionIdRef.current = sid;
     setMessages((prev) => [...prev, {
       id: nextId(), role: "user", content: text, timestamp: new Date(),
@@ -610,7 +713,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
     }]);
     setAgentStatus({ state: "waiting" });
     setStreaming(true);
-    wsRef.current.send(JSON.stringify({
+    const payload: Record<string, unknown> = {
       type: "session.turn",
       session_id: sid,
       message: text,
@@ -618,7 +721,18 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       // Per-message goal-loop override (composer "Run until done" toggle).
       ...(opts?.goal_mode !== undefined && { goal_mode: opts.goal_mode }),
       ...(opts?.acceptance_criteria && opts.acceptance_criteria.length > 0 && { acceptance_criteria: opts.acceptance_criteria }),
-    }));
+    };
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(payload));
+    } else {
+      // Socket down (e.g. just backgrounded) — queue the turn and reconnect now;
+      // ws.onopen flushes it after the session resumes. Beats silently dropping.
+      pendingTurnRef.current = payload;
+      if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
+      reconnectDelayRef.current = 1000;
+      connectRef.current();
+    }
     return true;
   }, []);
 
