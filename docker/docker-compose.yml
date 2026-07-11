@@ -105,6 +105,12 @@ services:
       - "ENCRYPTION_KEY=${ENCRYPTION_KEY:?required — set in .env or run ./install.sh which generates one with: openssl rand -hex 32}"
       - "BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?required — set in .env or run ./install.sh which generates one with: openssl rand -hex 32}"
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
+      # Extra trusted browser origins (comma-separated) for CORS + better-auth.
+      # Documented in .env.example and written by install.sh, but was never
+      # passed through to the container — so a self-hoster setting it saw it
+      # silently ignored. Defaults to "*" in config when unset (single-origin
+      # localhost dev), same as before.
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
       - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-false}
       # Shared cap (MB) for chat attachments + Files-panel uploads. Raise on a
       # host that needs to push large files into a workspace.
