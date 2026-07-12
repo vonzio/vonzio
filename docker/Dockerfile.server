@@ -33,6 +33,7 @@ WORKDIR /app
 COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/plugin-api/package.json packages/plugin-api/
+COPY packages/dictation/package.json packages/dictation/
 # Plugins ship as full workspaces under packages/plugins/<name>/. For
 # v0.1 we copy the whole plugin tree (manifests + source) into this
 # layer -- cache will invalidate on any plugin source change, which
@@ -51,6 +52,7 @@ RUN npm install
 # but NOT the npm install layer above.
 COPY packages/shared/ packages/shared/
 COPY packages/plugin-api/ packages/plugin-api/
+COPY packages/dictation/ packages/dictation/
 COPY packages/core-server/ packages/core-server/
 COPY packages/dashboard/ packages/dashboard/
 COPY packages/widget/ packages/widget/
