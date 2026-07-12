@@ -12,6 +12,7 @@ import { WorkspaceHeader } from "../components/WorkspaceHeader.js";
 import { ModelPicker } from "../components/ModelPicker.js";
 import { getComposerSlots } from "../registry/index.js";
 import { useEntitlements } from "@vonzio/dashboard-registry";
+import { useVoiceDictation, VOICE_LANGUAGES } from "@vonzio/dictation";
 import { RightPanel, type TabId } from "../components/RightPanel.js";
 import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet.js";
 import { UserMenu } from "../components/UserMenu.js";
@@ -89,134 +90,6 @@ const SUGGESTION_FALLBACK: PromptSuggestion[] = [
   { id: "data", label: "Analyze some data", icon: "chart", prompt: "Help me analyze a dataset. I'll share the file with you." },
   { id: "script", label: "Write a script", icon: "message", prompt: "Write a Python script that automates a common task. What kind of task should we automate?" },
 ];
-
-// ─── Voice dictation (Web Speech API) ───────────────────────────────
-// Lets users dictate into the composer for hands-free / mobile input. The
-// transcript lands in the composer for review — it is never auto-sent.
-// Chrome/Edge/Safari expose SpeechRecognition (webkit-prefixed on some);
-// Firefox does not, and mic access requires a secure context (https/localhost).
-// The hook reports `supported: false` in those cases so the UI hides the mic.
-const VOICE_LANG_KEY = "vonzio_voice_lang";
-
-// Curated common-languages list (BCP-47). Not exhaustive — the Web Speech API
-// accepts any tag, but a short list keeps the picker usable; the browser's top
-// language seeds the default when it maps onto one of these.
-const VOICE_LANGUAGES: { code: string; label: string }[] = [
-  { code: "en-US", label: "English (US)" },
-  { code: "en-GB", label: "English (UK)" },
-  { code: "es-ES", label: "Español" },
-  { code: "fr-FR", label: "Français" },
-  { code: "de-DE", label: "Deutsch" },
-  { code: "it-IT", label: "Italiano" },
-  { code: "pt-BR", label: "Português (BR)" },
-  { code: "pt-PT", label: "Português (PT)" },
-  { code: "nl-NL", label: "Nederlands" },
-  { code: "pl-PL", label: "Polski" },
-  { code: "ru-RU", label: "Русский" },
-  { code: "tr-TR", label: "Türkçe" },
-  { code: "ar-SA", label: "العربية" },
-  { code: "hi-IN", label: "हिन्दी" },
-  { code: "zh-CN", label: "中文 (简体)" },
-  { code: "zh-TW", label: "中文 (繁體)" },
-  { code: "ja-JP", label: "日本語" },
-  { code: "ko-KR", label: "한국어" },
-];
-
-function getSpeechRecognitionCtor(): (new () => any) | null {
-  if (typeof window === "undefined") return null;
-  return (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition ?? null;
-}
-
-// Initial dictation language: last-used (persisted) → browser top language
-// mapped onto the curated list (exact, else by primary subtag) → en-US.
-function resolveInitialVoiceLang(): string {
-  try {
-    const saved = localStorage.getItem(VOICE_LANG_KEY);
-    if (saved && VOICE_LANGUAGES.some((l) => l.code === saved)) return saved;
-  } catch { /* localStorage unavailable */ }
-  const nav = (typeof navigator !== "undefined" && navigator.language) || "en-US";
-  const exact = VOICE_LANGUAGES.find((l) => l.code.toLowerCase() === nav.toLowerCase());
-  if (exact) return exact.code;
-  const primary = nav.split("-")[0].toLowerCase();
-  return VOICE_LANGUAGES.find((l) => l.code.split("-")[0].toLowerCase() === primary)?.code ?? "en-US";
-}
-
-/** Web Speech API dictation bound to the composer. On every partial/final
- *  result the hook rebuilds the full composer value (the text present when
- *  dictation started + the running transcript) and hands it to `onText`, which
- *  writes it into the textarea. Text is never auto-sent — the user reviews and
- *  presses Send. */
-function useVoiceDictation(opts: { getBaseText: () => string; onText: (next: string) => void }) {
-  const supported = useMemo(
-    () => !!getSpeechRecognitionCtor() && (typeof window === "undefined" || window.isSecureContext),
-    [],
-  );
-  const [listening, setListening] = useState(false);
-  const [lang, setLangState] = useState<string>(() => resolveInitialVoiceLang());
-  const recognitionRef = useRef<any>(null);
-  // Composer text captured when dictation started — the transcript is appended
-  // to it. Held in refs so the non-React recognition callbacks read the latest.
-  const baseRef = useRef("");
-  const finalRef = useRef("");
-  const optsRef = useRef(opts);
-  optsRef.current = opts;
-
-  const setLang = useCallback((next: string) => {
-    setLangState(next);
-    try { localStorage.setItem(VOICE_LANG_KEY, next); } catch { /* ignore */ }
-    if (recognitionRef.current) recognitionRef.current.lang = next;
-  }, []);
-
-  const stop = useCallback(() => {
-    const rec = recognitionRef.current;
-    if (rec) { try { rec.stop(); } catch { /* already stopped */ } }
-  }, []);
-
-  const start = useCallback(() => {
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor || recognitionRef.current) return;
-    const rec = new Ctor();
-    rec.lang = lang;
-    rec.continuous = true;
-    rec.interimResults = true;
-    baseRef.current = optsRef.current.getBaseText();
-    finalRef.current = "";
-    rec.onresult = (event: any) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const res = event.results[i];
-        if (res.isFinal) finalRef.current += res[0].transcript;
-        else interim += res[0].transcript;
-      }
-      const dictated = (finalRef.current + interim).trimStart();
-      const base = baseRef.current;
-      const sep = base && !/\s$/.test(base) ? " " : "";
-      optsRef.current.onText(dictated ? base + sep + dictated : base);
-    };
-    rec.onerror = () => { /* no-op: onend still fires and clears state */ };
-    rec.onend = () => { recognitionRef.current = null; setListening(false); };
-    recognitionRef.current = rec;
-    try {
-      rec.start();
-      setListening(true);
-    } catch {
-      recognitionRef.current = null;
-      setListening(false);
-    }
-  }, [lang]);
-
-  const toggle = useCallback(() => {
-    if (recognitionRef.current) stop();
-    else start();
-  }, [start, stop]);
-
-  useEffect(() => () => {
-    const rec = recognitionRef.current;
-    if (rec) { try { rec.stop(); } catch { /* ignore */ } }
-  }, []);
-
-  return { supported, listening, lang, setLang, start, stop, toggle };
-}
 
 // ─── Component ──────────────────────────────────────────────────────
 
