@@ -43,6 +43,7 @@
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
     "@vonzio/dashboard-registry": "*",
+    "@vonzio/dictation": "*",
     "@vonzio/plugin-api": "*",
     "@vonzio/plugin-slack": "*",
     "@vonzio/plugin-telegram": "*",

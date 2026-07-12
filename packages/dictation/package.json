@@ -1,0 +1,31 @@
+{
+  "name": "@vonzio/dictation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless voice-dictation engine for the browser (Web Speech API). A React hook that streams speech into a text field for review before sending, with language persistence and a transform seam for formatting/proofreading. Published so any project can reuse it.",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://vonzio.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vonzio/vonzio.git",
+    "directory": "packages/dictation"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare-dist": "node ../../scripts/prepare-sdk-dist.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  }
+}

@@ -142,3 +142,4 @@ jobs:
           publish_pkg packages/shared
           publish_pkg packages/plugin-api
           publish_pkg packages/dashboard-registry
+          publish_pkg packages/dictation

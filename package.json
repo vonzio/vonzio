@@ -13,6 +13,7 @@
     "packages/shared",
     "packages/plugin-api",
     "packages/dashboard-registry",
+    "packages/dictation",
     "packages/plugins/*",
     "packages/core-server",
     "packages/dashboard",
