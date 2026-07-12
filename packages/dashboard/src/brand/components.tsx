@@ -95,13 +95,14 @@ export function Wordmark({ size = 28, color }: { size?: number; color?: string }
   );
 }
 
-/** Inline text wordmark — "vonzio" with the first "o" in sodium. The canonical
- *  brand treatment for running text (chat header, CLI, etc.). Inherits font size
- *  from its parent; pass `style` to set weight/color of the non-accent letters. */
+/** Inline text wordmark — "vonzio" with the "v" in sodium (the sodium "v" mark
+ *  per the brand guide). The canonical brand treatment for running text (chat
+ *  header, CLI, etc.). Inherits font size from its parent; pass `style` to set
+ *  weight/color of the non-accent letters. */
 export function WordmarkText({ style }: { style?: CSSProperties }) {
   return (
     <span style={{ color: "var(--vz-ink)", ...style }}>
-      v<span style={{ color: "var(--vz-sodium)" }}>o</span>nzio
+      <span style={{ color: "var(--vz-sodium)" }}>v</span>onzio
     </span>
   );
 }
