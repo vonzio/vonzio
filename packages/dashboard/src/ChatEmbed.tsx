@@ -634,7 +634,7 @@ export function ChatEmbed() {
               <path d="M18 22 L32 44 L46 22" fill="none" stroke="var(--vz-sodium, #FF6B35)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
               <rect x="22" y="49" width="20" height="4" rx="2" fill="var(--vz-sodium, #FF6B35)" />
             </svg>
-            <span>Powered by <strong style={{ color: "var(--vz-ink)" }}>v<span style={{ color: "var(--vz-sodium)" }}>o</span>nzio</strong></span>
+            <span>Powered by <strong style={{ color: "var(--vz-ink)" }}><span style={{ color: "var(--vz-sodium)" }}>v</span>onzio</strong></span>
           </p>
         </div>
       </div>
