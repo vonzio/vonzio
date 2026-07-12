@@ -20,6 +20,7 @@ services:
       # Mount source code for hot reload
       - ../packages/shared/src:/app/packages/shared/src
       - ../packages/plugin-api/src:/app/packages/plugin-api/src
+      - ../packages/dictation/src:/app/packages/dictation/src
       - ../packages/plugins/telegram/src:/app/packages/plugins/telegram/src
       - ../packages/plugins/slack/src:/app/packages/plugins/slack/src
       - ../packages/core-server/src:/app/packages/core-server/src
