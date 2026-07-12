@@ -17,6 +17,9 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./tests",
+  // Warm the Vite dev server before any spec so the cold-start dep
+  // re-optimization + full reload doesn't race the first-run assertions.
+  globalSetup: "./global-setup.ts",
   // The first-run flow is inherently sequential (setup → login → onboarding
   // against one shared DB), so workers don't help and would race on /setup.
   fullyParallel: false,
