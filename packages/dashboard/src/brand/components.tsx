@@ -87,9 +87,8 @@ export function Wordmark({ size = 28, color }: { size?: number; color?: string }
   return (
     <svg height={size} viewBox="0 0 240 64" aria-label="vonzio" role="img">
       <text x="0" y="48" fontFamily="'DM Sans', system-ui, sans-serif" fontSize="56" fontWeight="700" letterSpacing="-1.5">
-        <tspan fill={ink}>v</tspan>
-        <tspan fill="#FF5722">o</tspan>
-        <tspan fill={ink}>nzio</tspan>
+        <tspan fill="#FF5722">v</tspan>
+        <tspan fill={ink}>onzio</tspan>
       </text>
     </svg>
   );
