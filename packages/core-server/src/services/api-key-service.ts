@@ -10,6 +10,9 @@ export interface CreateApiKeyInput {
   name: string;
   provider: ProfileProvider;
   api_key?: string;
+  /** Secondary secret for OAuth-subscription providers: the rotating refresh
+   *  token (the access token goes in `api_key`). Stored encrypted. */
+  auth_token?: string | null;
   /** OpenAI-compatible endpoint override (openai provider only). */
   base_url?: string | null;
   allowed_user_ids?: string[];
@@ -54,7 +57,7 @@ export class ApiKeyService {
       name: input.name,
       provider: input.provider,
       encrypted_api_key: input.api_key ? encrypt(input.api_key, this.encryptionKey) : null,
-      encrypted_auth_token: null,
+      encrypted_auth_token: input.auth_token ? encrypt(input.auth_token, this.encryptionKey) : null,
       base_url: input.base_url || null,
       created_at: now,
       last_used_at: null,
@@ -85,6 +88,18 @@ export class ApiKeyService {
     if (rows.length === 0) return null;
     const allowedUserIds = await this.getAllowedUserIds(id);
     return this.mapRow(rows[0], false, allowedUserIds);
+  }
+
+  /** Persist a rotated OAuth-subscription credential (new access + refresh
+   *  token). Used by the resolve-time refresh: OpenAI refresh tokens are
+   *  single-use, so the rotated refresh token MUST be stored or the next
+   *  refresh fails. Writes secrets directly without touching name/sharing. */
+  async rotateSubscriptionTokens(id: string, accessToken: string, refreshToken: string): Promise<void> {
+    await this.db.update(schema.anthropicKeys).set({
+      encrypted_api_key: encrypt(accessToken, this.encryptionKey),
+      encrypted_auth_token: encrypt(refreshToken, this.encryptionKey),
+    }).where(eq(schema.anthropicKeys.id, id));
+    this.onKeyChanged?.(id);
   }
 
   /** List keys visible to a user: their own + shared keys where they are in api_key_users.
@@ -154,6 +169,9 @@ export class ApiKeyService {
     if (input.provider !== undefined) updates.provider = input.provider;
     if (input.api_key !== undefined && input.api_key !== "••••••••") {
       updates.encrypted_api_key = input.api_key ? encrypt(input.api_key, this.encryptionKey) : null;
+    }
+    if (input.auth_token !== undefined) {
+      updates.encrypted_auth_token = input.auth_token ? encrypt(input.auth_token, this.encryptionKey) : null;
     }
     if (input.base_url !== undefined) updates.base_url = (typeof input.base_url === "string" ? input.base_url.trim() : input.base_url) || null;
 
@@ -246,6 +264,11 @@ export class ApiKeyService {
       api_key: redact
         ? (row.encrypted_api_key ? "••••••••" : undefined)
         : (row.encrypted_api_key ? decrypt(row.encrypted_api_key, this.encryptionKey) : undefined),
+      // Refresh token: never surfaced in redacted reads; decrypted for the
+      // orchestrator's refresh-before-use path.
+      auth_token: redact
+        ? undefined
+        : (row.encrypted_auth_token ? decrypt(row.encrypted_auth_token, this.encryptionKey) : undefined),
       // base_url is non-secret config — returned in both redacted and
       // with-secrets reads so the editor can show it and the orchestrator
       // can resolve it.

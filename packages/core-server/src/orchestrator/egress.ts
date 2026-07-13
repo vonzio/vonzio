@@ -49,7 +49,18 @@ export function modelHostsFromEnv(env: Record<string, string>): string[] {
       if (host && !isLocalHost(host)) hosts.add(host);
     } catch { /* not a URL — ignore */ }
   }
+  // Codex mode's upstream is implicit (the gateway defaults to the ChatGPT
+  // backend rather than reading LLM_GATEWAY_TARGET_URL), so it isn't captured
+  // by the URL scan above — add it explicitly or enforcement would block it.
+  if (env.LLM_GATEWAY_MODE === "codex") {
+    const codexHost = env.LLM_GATEWAY_TARGET_URL ? safeHost(env.LLM_GATEWAY_TARGET_URL) : "chatgpt.com";
+    if (codexHost) hosts.add(codexHost);
+  }
   return [...hosts];
+}
+
+function safeHost(url: string): string | null {
+  try { return new URL(url).hostname; } catch { return null; }
 }
 
 /**

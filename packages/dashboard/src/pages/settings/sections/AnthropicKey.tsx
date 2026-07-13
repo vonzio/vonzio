@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Trash2, KeyRound, CheckCircle, Plus, ExternalLink } from "lucide-react";
+import { Trash2, KeyRound, CheckCircle, Plus, ExternalLink, AlertTriangle } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
   createAnthropicKey,
@@ -225,14 +225,38 @@ export function AnthropicKeySection() {
   // Provider list + per-provider labels/placeholders come from the shared
   // PROVIDER_CATALOG so this editor stays in lockstep with the onboarding
   // wizard and the first-key modal.
-  const providerOpts: SelectOption[] = PROVIDER_CATALOG.map((p) => ({
-    value: p.provider,
-    label: p.label,
-  }));
+  const providerOpts: SelectOption[] = PROVIDER_CATALOG
+    // OAuth-login providers (ChatGPT subscription) are added via a Sign-in flow,
+    // not a pasted token, so they don't belong in this paste-a-key picker.
+    .filter((p) => !p.oauthLogin)
+    .map((p) => ({
+      value: p.provider,
+      label: p.label,
+    }));
   const createMeta = providerInfoByProvider(provider);
   // How-to-get-a-key hint, catalog-driven: the provider's one-line instruction
   // (e.g. "Run `claude setup-token` …" for a subscription token) plus a docs
   // link. Shown under the credential field so the user isn't left guessing.
+  // Catalog-driven caution (e.g. the deprecated Claude-subscription token).
+  // Rendered above the credential field in both the add and edit dialogs so a
+  // user cannot paste a now-disallowed token without seeing why not.
+  const ProviderWarning = ({ m }: { m: ProviderInfo }) =>
+    m.warning ? (
+      <div
+        role="alert"
+        style={{
+          display: "flex", gap: 8, alignItems: "flex-start",
+          padding: "10px 12px", borderRadius: "var(--vz-radius-md)",
+          background: "color-mix(in srgb, var(--vz-warn) 12%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--vz-warn) 40%, transparent)",
+          fontSize: 12.5, lineHeight: 1.45, color: "var(--vz-ink)",
+        }}
+      >
+        <AlertTriangle size={15} style={{ color: "var(--vz-warn)", flexShrink: 0, marginTop: 1 }} />
+        <span>{m.warning}</span>
+      </div>
+    ) : null;
+
   const credHint = (m: ProviderInfo) => (
     <>
       {m.hint}
@@ -294,6 +318,7 @@ export function AnthropicKeySection() {
           <Field label="Provider">
             <Select options={providerOpts} value={provider} onChange={(v) => setProvider(v as typeof provider)} />
           </Field>
+          <ProviderWarning m={createMeta} />
           <Field label={createMeta.fieldLabel} hint={credHint(createMeta)}>
             <Input
               type="password"
@@ -360,6 +385,7 @@ export function AnthropicKeySection() {
               {providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider).label}
             </span>
           </div>
+          <ProviderWarning m={providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider)} />
           <Field
             label={providerInfoByProvider((editingKey?.provider ?? "api_key") as typeof provider).fieldLabel}
             hint={

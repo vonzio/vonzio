@@ -1,4 +1,5 @@
 import { useState, useEffect, type FormEvent } from "react";
+import { AlertTriangle } from "lucide-react";
 import { PROVIDER_CATALOG, type ProviderInfo } from "@vonzio/shared";
 import { createProfile } from "../api/client.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
@@ -185,7 +186,10 @@ function CredentialStep({
 
       <form className="login-form" onSubmit={onSubmit}>
         <fieldset style={{ border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.65rem" }}>
-          {(Object.keys(CRED_META) as CredentialKind[]).map((k) => (
+          {(Object.keys(CRED_META) as CredentialKind[])
+            // OAuth-login providers use a Sign-in flow, not a pasted key.
+            .filter((k) => !CRED_META[k].oauthLogin)
+            .map((k) => (
             <CredOption
               key={k}
               value={k}
@@ -196,6 +200,22 @@ function CredentialStep({
             />
           ))}
         </fieldset>
+
+        {CRED_META[kind].warning && (
+          <div
+            role="alert"
+            style={{
+              display: "flex", gap: 8, alignItems: "flex-start",
+              padding: "10px 12px", borderRadius: "var(--vz-radius-md)",
+              background: "color-mix(in srgb, var(--vz-warn) 12%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--vz-warn) 40%, transparent)",
+              fontSize: 12.5, lineHeight: 1.45, color: "var(--vz-ink)", margin: "0.35rem 0",
+            }}
+          >
+            <AlertTriangle size={15} style={{ color: "var(--vz-warn)", flexShrink: 0, marginTop: 1 }} />
+            <span>{CRED_META[kind].warning}</span>
+          </div>
+        )}
 
         <label className="vz-field">
           <span className="vz-field__label">{CRED_META[kind].fieldLabel}</span>

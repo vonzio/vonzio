@@ -16,7 +16,17 @@ const gw = require("../../../../docker/llm-gateway.cjs") as {
   parseContextLimit: (t: string) => number | null;
   trimOpenAIToolsToFit: (oa: any, limit: number) => { dropped: number; changed: boolean };
   estimateTokens: (s: string) => number;
+  anthropicToCodexRequest: (b: unknown, o?: unknown) => any;
+  makeCodexStreamTranslator: (m: string) => { push: (e: unknown) => string[]; end: () => string[] };
+  codexResponsesUrl: (base: string) => string;
+  translateMessageToResponses: (m: unknown, out: unknown[]) => void;
+  foldAnthropicSSE: (events: string[], model: string) => any;
 };
+
+/** Parse an Anthropic SSE string array into typed event objects. */
+function parseSSE(events: string[]): any[] {
+  return events.map((e) => JSON.parse(/^data: (.*)$/m.exec(e)![1]));
+}
 
 /** Parse the gateway's Anthropic SSE strings into {event, data} objects. */
 function parseSse(frames: string[]) {
@@ -269,5 +279,134 @@ describe("llm-gateway adaptive tool trimming", () => {
     expect(names).toContain("Bash");
     expect(names).not.toContain("mcp__rare");
     expect(oa.tool_choice).toBe("auto");
+  });
+});
+
+// ─── Codex mode: Anthropic <-> OpenAI Responses API ──────────────────────
+
+describe("codex request translation (Anthropic -> Responses API)", () => {
+  it("maps system→instructions, messages→input, and forces store:false", () => {
+    const cx = gw.anthropicToCodexRequest({
+      model: "gpt-5.5",
+      system: "be terse",
+      stream: true,
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(cx.model).toBe("gpt-5.5");
+    expect(cx.instructions).toBe("be terse");
+    expect(cx.store).toBe(false);
+    expect(cx.stream).toBe(true);
+    expect(cx.include).toEqual(["reasoning.encrypted_content"]);
+    // Codex rejects max_output_tokens — the SDK's max_tokens must be dropped.
+    expect(cx.max_output_tokens).toBeUndefined();
+    expect(cx.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "hi" }] }]);
+  });
+
+  it("emits function_call / function_call_output as top-level input items", () => {
+    const input: any[] = [];
+    gw.translateMessageToResponses(
+      { role: "assistant", content: [{ type: "text", text: "let me check" }, { type: "tool_use", id: "call_1", name: "ls", input: { path: "/" } }] },
+      input,
+    );
+    gw.translateMessageToResponses(
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "file.txt" }] },
+      input,
+    );
+    expect(input[0]).toEqual({ role: "assistant", content: [{ type: "output_text", text: "let me check" }] });
+    expect(input[1]).toEqual({ type: "function_call", call_id: "call_1", name: "ls", arguments: JSON.stringify({ path: "/" }) });
+    expect(input[2]).toEqual({ type: "function_call_output", call_id: "call_1", output: "file.txt" });
+  });
+
+  it("translates tools to the flat Responses shape", () => {
+    const cx = gw.anthropicToCodexRequest({
+      model: "gpt-5.5",
+      messages: [],
+      tools: [{ name: "ls", description: "list", input_schema: { type: "object", properties: {} } }],
+      tool_choice: { type: "tool", name: "ls" },
+    });
+    expect(cx.tools[0]).toMatchObject({ type: "function", name: "ls", description: "list" });
+    expect(cx.tool_choice).toEqual({ type: "function", name: "ls" });
+  });
+});
+
+describe("codexResponsesUrl", () => {
+  it("appends /codex/responses and tolerates partial bases", () => {
+    expect(gw.codexResponsesUrl("https://chatgpt.com/backend-api")).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(gw.codexResponsesUrl("https://chatgpt.com/backend-api/codex")).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(gw.codexResponsesUrl("https://x/backend-api/codex/responses")).toBe("https://x/backend-api/codex/responses");
+  });
+});
+
+describe("codex streaming translation (Responses SSE -> Anthropic SSE)", () => {
+  // These are the REAL event shapes captured from chatgpt.com/backend-api/codex.
+  const stream = [
+    { type: "response.created", response: { id: "resp_1" } },
+    { type: "response.output_item.added", item: { id: "rs_1", type: "reasoning", encrypted_content: "xxx" } },
+    { type: "response.output_item.added", item: { id: "msg_1", type: "message" } },
+    { type: "response.output_text.delta", item_id: "msg_1", content_index: 0, delta: "po" },
+    { type: "response.output_text.delta", item_id: "msg_1", content_index: 0, delta: "ng" },
+    { type: "response.output_text.done", item_id: "msg_1" },
+    { type: "response.output_item.done", item: { id: "msg_1", type: "message" } },
+    { type: "response.completed", response: { status: "completed", usage: { input_tokens: 21, output_tokens: 17 } } },
+  ];
+
+  it("drops reasoning, streams text, and closes with usage + end_turn", () => {
+    const tr = gw.makeCodexStreamTranslator("gpt-5.5");
+    const out: string[] = [];
+    for (const e of stream) out.push(...tr.push(e));
+    out.push(...tr.end());
+    const evts = parseSSE(out);
+    const types = evts.map((e) => e.type);
+    expect(types[0]).toBe("message_start");
+    expect(types).toContain("content_block_start");
+    // exactly one text block opened (reasoning dropped)
+    expect(evts.filter((e) => e.type === "content_block_start").length).toBe(1);
+    const text = evts.filter((e) => e.type === "content_block_delta").map((e) => e.delta.text).join("");
+    expect(text).toBe("pong");
+    const md = evts.find((e) => e.type === "message_delta");
+    expect(md.delta.stop_reason).toBe("end_turn");
+    expect(md.usage).toEqual({ input_tokens: 21, output_tokens: 17 });
+    expect(types.at(-1)).toBe("message_stop");
+  });
+
+  it("maps a function call to a tool_use block with input_json_delta and tool_use stop", () => {
+    const tr = gw.makeCodexStreamTranslator("gpt-5.5");
+    const evseq = [
+      { type: "response.created", response: { id: "r" } },
+      { type: "response.output_item.added", item: { id: "fc_1", type: "function_call", call_id: "call_abc", name: "ls" } },
+      { type: "response.function_call_arguments.delta", item_id: "fc_1", delta: '{"path":' },
+      { type: "response.function_call_arguments.delta", item_id: "fc_1", delta: '"/"}' },
+      { type: "response.output_item.done", item: { id: "fc_1", type: "function_call" } },
+      { type: "response.completed", response: { status: "completed", usage: { input_tokens: 5, output_tokens: 3 } } },
+    ];
+    const out: string[] = [];
+    for (const e of evseq) out.push(...tr.push(e));
+    out.push(...tr.end());
+    const evts = parseSSE(out);
+    const start = evts.find((e) => e.type === "content_block_start");
+    expect(start.content_block).toMatchObject({ type: "tool_use", id: "call_abc", name: "ls" });
+    const json = evts.filter((e) => e.type === "content_block_delta").map((e) => e.delta.partial_json).join("");
+    expect(JSON.parse(json)).toEqual({ path: "/" });
+    expect(evts.find((e) => e.type === "message_delta").delta.stop_reason).toBe("tool_use");
+  });
+});
+
+describe("foldAnthropicSSE (non-streaming collapse)", () => {
+  it("reassembles text + usage into a Messages response", () => {
+    const tr = gw.makeCodexStreamTranslator("gpt-5.5");
+    const out: string[] = [];
+    for (const e of [
+      { type: "response.output_item.added", item: { id: "m", type: "message" } },
+      { type: "response.output_text.delta", item_id: "m", delta: "hello" },
+      { type: "response.output_item.done", item: { id: "m" } },
+      { type: "response.completed", response: { status: "completed", usage: { input_tokens: 2, output_tokens: 1 } } },
+    ]) out.push(...tr.push(e));
+    out.push(...tr.end());
+    const msg = gw.foldAnthropicSSE(out, "gpt-5.5");
+    expect(msg.type).toBe("message");
+    expect(msg.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(msg.stop_reason).toBe("end_turn");
+    expect(msg.usage).toEqual({ input_tokens: 2, output_tokens: 1 });
   });
 });

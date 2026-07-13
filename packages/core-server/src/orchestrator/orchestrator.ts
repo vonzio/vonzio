@@ -78,6 +78,8 @@ const PROVIDER_ROUTE_ENV = [
   "LLM_GATEWAY_MODE",
   "LLM_GATEWAY_TARGET_URL",
   "LLM_GATEWAY_PASSTHROUGH_RAW",
+  "CODEX_ACCOUNT_ID",
+  "CODEX_ORIGINATOR",
 ] as const;
 
 const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- LEARNING SKILLS: when you work out a non-trivial, repeatable procedure, save it as a skill with create_skill (bundle helper scripts via files) so future runs reuse it. skill_list first to avoid duplicates; improve an existing one with skill_update rather than duplicating. This is how you improve over time.\n- PREREQUISITES: sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
@@ -2289,6 +2291,20 @@ export class Orchestrator extends EventEmitter {
       // vars it sets, so without this the OAuth call inherits the gateway URL and
       // the model 404s ("may not exist or you may not have access to it").
       env.ANTHROPIC_BASE_URL = ANTHROPIC_NATIVE_BASE_URL;
+    } else if (profile.resolved_provider === "openai_subscription" && profile.resolved_api_key) {
+      // ChatGPT subscription (Codex OAuth): resolved_api_key is a short-lived
+      // access token (refreshed at resolve time by ProfileService). The SDK
+      // sends it to the in-container gateway as x-api-key; the gateway's "codex"
+      // mode translates Anthropic Messages <-> the OpenAI Responses API against
+      // the ChatGPT Codex backend. Account id + originator ride in as env.
+      const { accountIdFromJwt } = await import("../services/codex-oauth-service.js");
+      env.ANTHROPIC_API_KEY = profile.resolved_api_key;
+      env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
+      env.LLM_GATEWAY_MODE = "codex";
+      env.CODEX_ACCOUNT_ID = accountIdFromJwt(profile.resolved_api_key) ?? "";
+      // Truthful by default (see feature 0047 §5); a self-hoster can set
+      // CODEX_ORIGINATOR=codex_cli_rs for full CLI parity at their own risk.
+      env.CODEX_ORIGINATOR = process.env.CODEX_ORIGINATOR || "vonzio";
     } else if (profile.resolved_api_key) {
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
       // Same gateway-leak guard as above for native Anthropic API keys.

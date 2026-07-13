@@ -261,6 +261,24 @@ export class ProfileService {
         resolvedApiKey = apiKey.api_key;
         resolvedProvider = apiKey.provider;
         resolvedBaseUrl = apiKey.base_url ?? undefined;
+
+        // OAuth-subscription refresh-before-use: the stored access token is
+        // short-lived; if it's near expiry, rotate it with the (single-use)
+        // refresh token and persist the new pair before the turn runs. A
+        // refresh failure is non-fatal here — fall through with the existing
+        // token so the actual model call surfaces the auth error to the user.
+        if (apiKey.provider === "openai_subscription" && apiKey.api_key && apiKey.auth_token) {
+          const { expiryFromAccessToken, needsRefresh, refreshTokens } = await import("./codex-oauth-service.js");
+          if (needsRefresh({ expiresAt: expiryFromAccessToken(apiKey.api_key) })) {
+            try {
+              const rotated = await refreshTokens(apiKey.auth_token);
+              await this.apiKeyService.rotateSubscriptionTokens(effectiveKeyId, rotated.accessToken, rotated.refreshToken);
+              resolvedApiKey = rotated.accessToken;
+            } catch {
+              /* keep the existing (possibly expired) token; the call will 401 */
+            }
+          }
+        }
       }
     }
 

@@ -10,13 +10,18 @@
  *
  * Modes (LLM_GATEWAY_MODE):
  *   - "openai"      translate Anthropic Messages <-> OpenAI Chat Completions
+ *   - "codex"       translate Anthropic Messages <-> OpenAI RESPONSES API,
+ *                   against the ChatGPT Codex backend (subscription OAuth)
  *   - "passthrough" forward verbatim, only rewriting x-api-key -> Bearer
  *                   (the legacy ollama-proxy behavior; kept for completeness)
  *
  * Env:
- *   LLM_GATEWAY_MODE        "openai" | "passthrough"   (default "openai")
- *   LLM_GATEWAY_TARGET_URL  upstream base URL          (default https://api.openai.com)
+ *   LLM_GATEWAY_MODE        "openai" | "codex" | "passthrough"  (default "openai")
+ *   LLM_GATEWAY_TARGET_URL  upstream base URL          (default https://api.openai.com;
+ *                           codex default https://chatgpt.com/backend-api)
  *   LLM_GATEWAY_PORT        local listen port          (default 11434)
+ *   CODEX_ACCOUNT_ID        ChatGPT account id header  (codex mode)
+ *   CODEX_ORIGINATOR        originator header          (codex mode, default "vonzio")
  *
  * The pure translation functions are exported for unit testing; the HTTP server
  * only starts when this file is run directly. Delete this file to remove
@@ -471,6 +476,226 @@ function makeStreamTranslator(model) {
   return { push, end };
 }
 
+// ===========================================================================
+// Codex mode: Anthropic Messages <-> OpenAI RESPONSES API (ChatGPT Codex)
+//
+// A ChatGPT subscription reaches models through the Codex backend
+// (https://chatgpt.com/backend-api/codex/responses), which speaks the OpenAI
+// *Responses* API — a different request shape AND a different SSE event
+// vocabulary than Chat Completions. This is a SECOND translator; the token is a
+// ChatGPT OAuth access token (feature 0047), account id + originator ride in as
+// env-provided headers.
+// ===========================================================================
+
+/** Resolve the Codex responses endpoint from a base URL, mirroring the Codex
+ *  CLI: tolerate a base already ending in /codex or /codex/responses. */
+function codexResponsesUrl(base) {
+  const b = (base || "https://chatgpt.com/backend-api").replace(/\/+$/, "");
+  if (b.endsWith("/codex/responses")) return b;
+  if (b.endsWith("/codex")) return `${b}/responses`;
+  return `${b}/codex/responses`;
+}
+
+/** Anthropic content (string | block[]) -> Responses API input item(s). Tool
+ *  calls/results become top-level function_call / function_call_output items
+ *  (NOT nested in a message), which is how the Responses API represents them. */
+function translateMessageToResponses(msg, out) {
+  const role = msg.role;
+  const content = msg.content;
+  const textType = role === "assistant" ? "output_text" : "input_text";
+
+  if (typeof content === "string") {
+    if (content) out.push({ role, content: [{ type: textType, text: content }] });
+    return;
+  }
+  if (!Array.isArray(content)) return;
+
+  const parts = [];
+  for (const b of content) {
+    if (!b) continue;
+    if (b.type === "text") {
+      parts.push({ type: textType, text: b.text || "" });
+    } else if (b.type === "image" && role !== "assistant") {
+      const src = b.source || {};
+      const url = src.type === "url" ? src.url : `data:${src.media_type};base64,${src.data}`;
+      parts.push({ type: "input_image", image_url: url });
+    } else if (b.type === "tool_use") {
+      // Flush any accumulated message parts before the function_call item so
+      // ordering (assistant text, then its call) is preserved.
+      if (parts.length) { out.push({ role, content: parts.splice(0) }); }
+      out.push({ type: "function_call", call_id: b.id, name: b.name, arguments: JSON.stringify(b.input ?? {}) });
+    } else if (b.type === "tool_result") {
+      if (parts.length) { out.push({ role, content: parts.splice(0) }); }
+      out.push({ type: "function_call_output", call_id: b.tool_use_id, output: toolResultText(b.content) });
+    }
+  }
+  if (parts.length) out.push({ role, content: parts });
+}
+
+/** Responses API tool_choice from Anthropic tool_choice. */
+function translateToolChoiceResponses(tc) {
+  if (!tc) return undefined;
+  if (tc.type === "auto") return "auto";
+  if (tc.type === "any") return "required";
+  if (tc.type === "tool" && tc.name) return { type: "function", name: tc.name };
+  return undefined;
+}
+
+/** Full Anthropic Messages body -> Codex Responses API body. */
+function anthropicToCodexRequest(body, opts = {}) {
+  const input = [];
+  for (const m of body.messages || []) translateMessageToResponses(m, input);
+
+  const cx = {
+    model: body.model,
+    store: false,
+    stream: !!body.stream,
+    instructions: systemToText(body.system) || "You are a helpful assistant.",
+    input,
+    include: ["reasoning.encrypted_content"],
+    tool_choice: "auto",
+    parallel_tool_calls: true,
+  };
+  // NB: the Codex backend REJECTS `max_output_tokens` ("Unsupported parameter"),
+  // so the SDK's max_tokens is intentionally dropped — the subscription enforces
+  // its own limits server-side.
+
+  if (Array.isArray(body.tools) && body.tools.length > 0) {
+    const tools = body.tools
+      .filter((t) => t && t.name && (t.input_schema || t.parameters))
+      .map((t) => ({
+        type: "function",
+        name: t.name,
+        description: t.description || "",
+        parameters: t.input_schema || t.parameters || { type: "object", properties: {} },
+        strict: false,
+      }));
+    if (tools.length) cx.tools = tools;
+    const choice = translateToolChoiceResponses(body.tool_choice);
+    if (choice) cx.tool_choice = choice;
+  }
+  if (opts.reasoningEffort) cx.reasoning = { effort: opts.reasoningEffort, summary: "auto" };
+  return cx;
+}
+
+/**
+ * Stateful translator: parsed Responses-API SSE event objects (push) -> Anthropic
+ * SSE strings. Blocks are keyed by the Responses `item_id` since text and tool
+ * calls interleave across output items. Reasoning items are dropped (their
+ * encrypted_content is not user-facing). end() is idempotent.
+ */
+function makeCodexStreamTranslator(model) {
+  let started = false;
+  let ended = false;
+  let nextIndex = 0;
+  const blockByItem = new Map(); // item_id -> { index, type }
+  const toolItems = new Set(); // item_ids that are function_calls (→ tool_use stop_reason)
+  let usage = null;
+  let stopReason = null;
+  const id = `msg_${Date.now()}`;
+
+  function start(out) {
+    if (started) return;
+    started = true;
+    out.push(sse("message_start", {
+      type: "message_start",
+      message: { id, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } },
+    }));
+  }
+
+  function openText(out, itemId) {
+    if (blockByItem.has(itemId)) return blockByItem.get(itemId);
+    const index = nextIndex++;
+    const entry = { index, type: "text" };
+    blockByItem.set(itemId, entry);
+    out.push(sse("content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } }));
+    return entry;
+  }
+
+  function openTool(out, item) {
+    if (blockByItem.has(item.id)) return blockByItem.get(item.id);
+    const index = nextIndex++;
+    const entry = { index, type: "tool_use" };
+    blockByItem.set(item.id, entry);
+    toolItems.add(item.id);
+    out.push(sse("content_block_start", {
+      type: "content_block_start",
+      index,
+      content_block: { type: "tool_use", id: item.call_id || item.id, name: item.name || "", input: {} },
+    }));
+    return entry;
+  }
+
+  function closeItem(out, itemId) {
+    const entry = blockByItem.get(itemId);
+    if (!entry || entry.closed) return;
+    entry.closed = true;
+    out.push(sse("content_block_stop", { type: "content_block_stop", index: entry.index }));
+  }
+
+  function push(evt) {
+    const out = [];
+    start(out);
+    const type = evt && evt.type;
+    if (!type) return out;
+
+    if (type === "response.output_item.added") {
+      const item = evt.item || {};
+      if (item.type === "function_call") openTool(out, item);
+      // reasoning + message items: opened lazily on their first delta.
+      return out;
+    }
+    if (type === "response.output_text.delta") {
+      const entry = openText(out, evt.item_id);
+      if (typeof evt.delta === "string" && evt.delta.length) {
+        out.push(sse("content_block_delta", { type: "content_block_delta", index: entry.index, delta: { type: "text_delta", text: evt.delta } }));
+      }
+      return out;
+    }
+    if (type === "response.function_call_arguments.delta") {
+      const entry = blockByItem.get(evt.item_id);
+      if (entry && typeof evt.delta === "string" && evt.delta.length) {
+        out.push(sse("content_block_delta", { type: "content_block_delta", index: entry.index, delta: { type: "input_json_delta", partial_json: evt.delta } }));
+      }
+      return out;
+    }
+    if (type === "response.output_item.done" || type === "response.output_text.done") {
+      const itemId = evt.item_id || (evt.item && evt.item.id);
+      if (itemId) closeItem(out, itemId);
+      return out;
+    }
+    if (type === "response.completed" || type === "response.incomplete") {
+      const resp = evt.response || {};
+      usage = resp.usage || usage;
+      if (resp.status === "incomplete") stopReason = "max_tokens";
+      return out;
+    }
+    if (type === "response.failed" || type === "error") {
+      stopReason = "end_turn";
+      return out;
+    }
+    return out;
+  }
+
+  function end() {
+    const out = [];
+    if (ended) return out;
+    ended = true;
+    start(out);
+    for (const itemId of blockByItem.keys()) closeItem(out, itemId);
+    const finalStop = stopReason || (toolItems.size > 0 ? "tool_use" : "end_turn");
+    out.push(sse("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: finalStop, stop_sequence: null },
+      usage: { input_tokens: usage?.input_tokens ?? 0, output_tokens: usage?.output_tokens ?? 0 },
+    }));
+    out.push(sse("message_stop", { type: "message_stop" }));
+    return out;
+  }
+
+  return { push, end };
+}
+
 // ---------------------------------------------------------------------------
 // HTTP server
 // ---------------------------------------------------------------------------
@@ -798,9 +1023,138 @@ async function handlePassthrough(req, res) {
   req.pipe(proxyReq);
 }
 
+// Codex account id + originator ride in as env-provided headers (the token
+// itself arrives per-request as x-api-key, refreshed by the control plane).
+const CODEX_ACCOUNT_ID = process.env.CODEX_ACCOUNT_ID || "";
+const CODEX_ORIGINATOR = process.env.CODEX_ORIGINATOR || "vonzio";
+
+async function handleCodex(req, res) {
+  const token = req.headers["x-api-key"] || (req.headers["authorization"] || "").replace(/^Bearer\s+/i, "");
+
+  // count_tokens: no Responses equivalent — cheap char/4 estimate (parity with
+  // handleOpenAI) so the SDK's context bookkeeping keeps working.
+  if (req.method === "POST" && req.url.includes("count_tokens")) {
+    const raw = await readBody(req);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ input_tokens: Math.ceil(raw.toString("utf8").length / 4) }));
+    return;
+  }
+
+  if (req.method === "POST" && req.url.startsWith("/v1/messages")) {
+    const raw = await readBody(req);
+    let anthropicBody;
+    try {
+      anthropicBody = JSON.parse(raw.toString("utf8"));
+    } catch {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "bad json" } }));
+      return;
+    }
+    const wantStream = !!anthropicBody.stream;
+    // The Codex backend only streams; force stream upstream and aggregate below
+    // if the SDK asked for a non-streaming reply.
+    const cx = anthropicToCodexRequest({ ...anthropicBody, stream: true });
+    const buf = Buffer.from(JSON.stringify(cx));
+    // Codex has its own backend base; only honor LLM_GATEWAY_TARGET_URL if it
+    // was set for codex (the global TARGET default is api.openai.com, wrong here).
+    const codexBase = process.env.LLM_GATEWAY_TARGET_URL || "https://chatgpt.com/backend-api";
+    const endpoint = codexResponsesUrl(codexBase);
+    const upstream = await upstreamRequest("POST", endpoint, {
+      authorization: `Bearer ${token}`,
+      "chatgpt-account-id": CODEX_ACCOUNT_ID,
+      originator: CODEX_ORIGINATOR,
+      "openai-beta": "responses=experimental",
+      "content-type": "application/json",
+      accept: "text/event-stream",
+      "content-length": Buffer.byteLength(buf),
+    }, buf);
+
+    if (upstream.statusCode >= 400) {
+      const errText = (await readAll(upstream)).toString("utf8");
+      res.writeHead(upstream.statusCode, { "content-type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: `codex upstream ${upstream.statusCode}: ${errText.slice(0, 500)}` } }));
+      return;
+    }
+
+    const tr = makeCodexStreamTranslator(anthropicBody.model);
+    // Parse the upstream Responses SSE (event:/data: lines); we only need the
+    // data payloads, which carry `type`. response.completed ends the stream.
+    const parseInto = (chunkStr, sink, bufRef) => {
+      bufRef.s += chunkStr;
+      const lines = bufRef.s.split("\n");
+      bufRef.s = lines.pop() || "";
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith("data:")) continue;
+        const payload = t.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try { sink(JSON.parse(payload)); } catch { /* keep-alive / partial */ }
+      }
+    };
+
+    if (wantStream) {
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+      const bufRef = { s: "" };
+      let finished = false;
+      const finish = () => { if (finished) return; finished = true; for (const ev of tr.end()) res.write(ev); res.end(); };
+      upstream.on("data", (chunk) => {
+        if (finished) return;
+        parseInto(chunk.toString("utf8"), (obj) => { for (const ev of tr.push(obj)) res.write(ev); }, bufRef);
+      });
+      upstream.on("end", finish);
+      upstream.on("error", () => { if (!finished) { finished = true; res.end(); } });
+      return;
+    }
+
+    // Non-streaming: drain the upstream stream, run it through the translator,
+    // and fold the Anthropic SSE events back into a single Messages response.
+    const respBuf = await readAll(upstream);
+    const bufRef = { s: "" };
+    const events = [];
+    parseInto(respBuf.toString("utf8"), (obj) => { for (const ev of tr.push(obj)) events.push(ev); }, bufRef);
+    for (const ev of tr.end()) events.push(ev);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(foldAnthropicSSE(events, anthropicBody.model)));
+    return;
+  }
+
+  // No other Responses routes are needed (models are enumerated server-side).
+  res.writeHead(404, { "content-type": "application/json" });
+  res.end(JSON.stringify({ type: "error", error: { type: "not_found_error", message: "unsupported route" } }));
+}
+
+/** Collapse a sequence of Anthropic SSE strings into one non-streaming Messages
+ *  response object (used when the SDK asked for a non-streaming reply). */
+function foldAnthropicSSE(events, fallbackModel) {
+  const blocks = [];
+  let stopReason = "end_turn";
+  let usage = { input_tokens: 0, output_tokens: 0 };
+  let id = `msg_${Date.now()}`;
+  for (const raw of events) {
+    const m = /^data: (.*)$/m.exec(raw);
+    if (!m) continue;
+    let e;
+    try { e = JSON.parse(m[1]); } catch { continue; }
+    if (e.type === "message_start") { id = e.message?.id || id; }
+    else if (e.type === "content_block_start") { blocks[e.index] = JSON.parse(JSON.stringify(e.content_block)); if (blocks[e.index].type === "tool_use") blocks[e.index]._json = ""; }
+    else if (e.type === "content_block_delta") {
+      const b = blocks[e.index];
+      if (!b) continue;
+      if (e.delta.type === "text_delta") b.text = (b.text || "") + e.delta.text;
+      else if (e.delta.type === "input_json_delta") b._json = (b._json || "") + e.delta.partial_json;
+    } else if (e.type === "message_delta") { if (e.delta?.stop_reason) stopReason = e.delta.stop_reason; if (e.usage) usage = { ...usage, ...e.usage }; }
+  }
+  const content = blocks.filter(Boolean).map((b) => {
+    if (b.type === "tool_use") { let input = {}; try { input = JSON.parse(b._json || "{}"); } catch { /* keep {} */ } return { type: "tool_use", id: b.id, name: b.name, input }; }
+    return b;
+  });
+  if (content.length === 0) content.push({ type: "text", text: "" });
+  return { id, type: "message", role: "assistant", model: fallbackModel, content, stop_reason: stopReason, stop_sequence: null, usage };
+}
+
 function startServer() {
   const server = http.createServer((req, res) => {
-    const handler = MODE === "passthrough" ? handlePassthrough : handleOpenAI;
+    const handler = MODE === "passthrough" ? handlePassthrough : MODE === "codex" ? handleCodex : handleOpenAI;
     Promise.resolve(handler(req, res)).catch((e) => {
       if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: String(e && e.message || e) } }));
@@ -825,6 +1179,12 @@ module.exports = {
   estimateTokens,
   parseContextLimit,
   trimOpenAIToolsToFit,
+  // codex (Responses API) mode
+  anthropicToCodexRequest,
+  makeCodexStreamTranslator,
+  codexResponsesUrl,
+  translateMessageToResponses,
+  foldAnthropicSSE,
 };
 
 if (require.main === module) startServer();
