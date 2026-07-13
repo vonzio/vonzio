@@ -56,6 +56,54 @@ export class ProfileService {
     private maxMemoryLimit?: string,
   ) {}
 
+  /** In-flight Codex token refreshes, keyed by api-key id, so concurrent turns
+   *  on the same subscription share ONE rotation instead of each consuming the
+   *  single-use refresh token and racing (all but one would 401). */
+  private codexRefreshInFlight = new Map<string, Promise<string>>();
+
+  /** Rotate a near-expiry Codex access token; return the token to use this turn.
+   *  Returns the existing token unchanged when no refresh is needed. */
+  private async refreshCodexKeyIfNeeded(keyId: string, accessToken: string, refreshToken: string): Promise<string> {
+    if (!this.apiKeyService) return accessToken; // can't persist → don't consume the single-use token
+    const { expiryFromAccessToken, needsRefresh } = await import("./codex-oauth-service.js");
+    if (!needsRefresh({ expiresAt: expiryFromAccessToken(accessToken) })) return accessToken;
+
+    let inflight = this.codexRefreshInFlight.get(keyId);
+    if (!inflight) {
+      inflight = this.doRefreshCodexKey(keyId, refreshToken, accessToken);
+      this.codexRefreshInFlight.set(keyId, inflight);
+      void inflight.finally(() => {
+        if (this.codexRefreshInFlight.get(keyId) === inflight) this.codexRefreshInFlight.delete(keyId);
+      });
+    }
+    return inflight;
+  }
+
+  private async doRefreshCodexKey(keyId: string, refreshToken: string, oldAccess: string): Promise<string> {
+    const { refreshTokens } = await import("./codex-oauth-service.js");
+    let rotated;
+    try {
+      rotated = await refreshTokens(refreshToken);
+    } catch {
+      // The refresh CALL failed (network, or a racing turn already rotated this
+      // single-use token). The stored refresh token is untouched upstream in the
+      // network case; fall through with the old access token, which is still
+      // valid within the pre-expiry skew. The turn's model call surfaces any real
+      // auth error.
+      return oldAccess;
+    }
+    // Refresh SUCCEEDED — the single-use refresh token is now consumed upstream,
+    // so the rotated pair MUST be persisted. A persistence failure is NOT
+    // swallowed silently (that would strand the credential on a dead refresh
+    // token); log it loudly, but still use the fresh access token this turn.
+    try {
+      await this.apiKeyService!.rotateSubscriptionTokens(keyId, rotated.accessToken, rotated.refreshToken);
+    } catch (e) {
+      console.error(`[codex] rotated token but failed to persist for key ${keyId} — credential may need re-linking:`, e instanceof Error ? e.message : e);
+    }
+    return rotated.accessToken;
+  }
+
   // Resolves a default model id for a key (first available from the provider).
   // Injected post-construction because the model-list service depends on this
   // service (would be circular in the constructor).
@@ -249,18 +297,28 @@ export class ProfileService {
 
     const effectiveKeyId = opts?.apiKeyIdOverride || profile.api_key_id;
     if (this.apiKeyService && effectiveKeyId) {
+      // Track the id the key was actually LOADED from — the rotation below must
+      // persist there, not to effectiveKeyId, which differs on the fallback path.
+      let resolvedKeyId = effectiveKeyId;
       let apiKey = await this.apiKeyService.getWithSecrets(effectiveKeyId);
       // Override key vanished (deleted/revoked) — fall back to the profile's
       // own key so a stale per-conversation override doesn't leave the agent
       // with no credential.
       if (!apiKey && opts?.apiKeyIdOverride && profile.api_key_id && profile.api_key_id !== effectiveKeyId) {
         apiKey = await this.apiKeyService.getWithSecrets(profile.api_key_id);
+        resolvedKeyId = profile.api_key_id;
       }
 
       if (apiKey) {
         resolvedApiKey = apiKey.api_key;
         resolvedProvider = apiKey.provider;
         resolvedBaseUrl = apiKey.base_url ?? undefined;
+
+        // OAuth-subscription refresh-before-use: rotate a near-expiry access
+        // token before the turn (single-flight; see refreshCodexKeyIfNeeded).
+        if (apiKey.provider === "openai_subscription" && apiKey.api_key && apiKey.auth_token) {
+          resolvedApiKey = await this.refreshCodexKeyIfNeeded(resolvedKeyId, apiKey.api_key, apiKey.auth_token);
+        }
       }
     }
 

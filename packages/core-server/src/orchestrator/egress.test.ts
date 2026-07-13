@@ -28,6 +28,15 @@ describe("modelHostsFromEnv", () => {
   it("ignores non-URL values", () => {
     expect(modelHostsFromEnv({ LLM_GATEWAY_TARGET_URL: "not a url" })).toEqual([]);
   });
+
+  it("adds the ChatGPT backend for codex mode (implicit upstream, no target URL)", () => {
+    expect(modelHostsFromEnv({ LLM_GATEWAY_MODE: "codex", ANTHROPIC_BASE_URL: "http://127.0.0.1:11434" })).toEqual(["chatgpt.com"]);
+  });
+
+  it("honors an explicit codex target URL host when set", () => {
+    expect(modelHostsFromEnv({ LLM_GATEWAY_MODE: "codex", LLM_GATEWAY_TARGET_URL: "https://proxy.example.com/backend-api" }).sort())
+      .toEqual(["proxy.example.com"]);
+  });
 });
 
 describe("planEgress", () => {

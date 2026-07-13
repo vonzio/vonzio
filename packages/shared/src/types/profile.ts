@@ -1,4 +1,4 @@
-export const PROFILE_PROVIDERS = ["api_key", "ollama", "openai", "claude_subscription"] as const;
+export const PROFILE_PROVIDERS = ["api_key", "ollama", "openai", "claude_subscription", "openai_subscription"] as const;
 export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
 
 /**
@@ -11,7 +11,7 @@ export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
  */
 export interface ProviderInfo {
   /** UI discriminator used by the onboarding/settings forms. */
-  kind: "anthropic_key" | "openai" | "ollama" | "anthropic_oauth";
+  kind: "anthropic_key" | "openai" | "ollama" | "anthropic_oauth" | "openai_oauth";
   /** The stored `provider` value on the credential / profile. */
   provider: ProfileProvider;
   /** Human label shown in pickers ("Anthropic API key"). */
@@ -30,6 +30,15 @@ export interface ProviderInfo {
   keyPrefix?: string;
   /** Whether this provider accepts an OpenAI-compatible base URL override. */
   supportsBaseUrl: boolean;
+  /** True for providers whose credential is obtained via an interactive OAuth
+   *  device login rather than a pasted key/token — the paste-a-key forms hide
+   *  these and a "Sign in" flow handles them instead. */
+  oauthLogin?: boolean;
+  /** A prominent caution shown above the credential field — used for providers
+   *  whose subscription-token use now carries a terms-of-service/cost caveat
+   *  (e.g. Anthropic prohibited third-party OAuth-token use in Feb 2026, and
+   *  bills it per-token rather than against the plan). Omitted when none. */
+  warning?: string;
 }
 
 export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
@@ -79,6 +88,20 @@ export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
     consoleUrl: "https://code.claude.com/docs/en/authentication",
     keyPrefix: "sk-ant-oat01-",
     supportsBaseUrl: false,
+    warning:
+      "Anthropic's terms no longer permit using a Claude Pro/Max subscription token outside Anthropic's own apps, and since April 2026 such traffic is billed per token rather than drawn from your plan — so this gives no cost saving and risks your Anthropic account. Use an Anthropic API key instead.",
+  },
+  {
+    kind: "openai_oauth",
+    provider: "openai_subscription",
+    label: "ChatGPT subscription (Plus/Pro)",
+    hint: "Sign in with your ChatGPT account (Codex). Uses your own subscription instead of a metered API key.",
+    fieldLabel: "ChatGPT account",
+    placeholder: "",
+    defaultKeyName: "My ChatGPT subscription",
+    consoleUrl: "https://chatgpt.com",
+    supportsBaseUrl: false,
+    oauthLogin: true,
   },
 ] as const;
 
@@ -133,6 +156,13 @@ export interface AnthropicKey {
   name: string;
   provider: ProfileProvider;
   api_key?: string;
+  /**
+   * Secondary secret, only for OAuth-subscription providers: the rotating
+   * REFRESH token (the `api_key` field holds the short-lived access token).
+   * Stored in `encrypted_auth_token`; returned only from with-secrets reads,
+   * never in redacted listings. Undefined for key-based providers.
+   */
+  auth_token?: string;
   /**
    * OpenAI-compatible endpoint override (non-secret). Only meaningful for
    * `provider: "openai"` — lets a single instance mix OpenAI proper with

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Key, ExternalLink } from "lucide-react";
+import { Key, ExternalLink, AlertTriangle } from "lucide-react";
 import { Button, Field, Input, Select } from "@/brand/components.js";
 import { createUserAnthropicKey, fetchUserAnthropicKeys } from "@/api/client.js";
 import type { OnboardingStepProps } from "@/registry/index.js";
@@ -92,7 +92,7 @@ export function AddFirstApiKey({ onNext, onSkip }: OnboardingStepProps) {
         <Select
           value={provider}
           onChange={(v) => selectProvider(v as ProfileProvider)}
-          options={PROVIDER_CATALOG.map((p) => ({ value: p.provider, label: p.label }))}
+          options={PROVIDER_CATALOG.filter((p) => !p.oauthLogin).map((p) => ({ value: p.provider, label: p.label }))}
         />
       </Field>
 
@@ -104,6 +104,22 @@ export function AddFirstApiKey({ onNext, onSkip }: OnboardingStepProps) {
           autoFocus={false}
         />
       </Field>
+
+      {meta.warning && (
+        <div
+          role="alert"
+          style={{
+            display: "flex", gap: 8, alignItems: "flex-start",
+            padding: "10px 12px", borderRadius: "var(--vz-radius-md)",
+            background: "color-mix(in srgb, var(--vz-warn) 12%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--vz-warn) 40%, transparent)",
+            fontSize: 12.5, lineHeight: 1.45, color: "var(--vz-ink)",
+          }}
+        >
+          <AlertTriangle size={15} style={{ color: "var(--vz-warn)", flexShrink: 0, marginTop: 1 }} />
+          <span>{meta.warning}</span>
+        </div>
+      )}
 
       <Field
         label={meta.fieldLabel}
