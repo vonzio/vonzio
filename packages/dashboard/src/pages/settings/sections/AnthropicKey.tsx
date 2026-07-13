@@ -18,6 +18,7 @@ import {
   type DataColumn, type SelectOption,
 } from "../../../brand/components.js";
 import { PROVIDER_CATALOG, providerInfoByProvider, type ProfileProvider, type ProviderInfo } from "@vonzio/shared";
+import { useEntitlements } from "../../../registry/index.js";
 import { formatDate } from "../../../lib/utils.js";
 import { authClient } from "../../../lib/auth-client.js";
 import { useUser } from "../../../contexts/UserContext.js";
@@ -257,14 +258,22 @@ export function AnthropicKeySection() {
   // Provider list + per-provider labels/placeholders come from the shared
   // PROVIDER_CATALOG so this editor stays in lockstep with the onboarding
   // wizard and the first-key modal.
+  const entitlements = useEntitlements();
+  const isEntitled = (m: Pick<ProviderInfo, "entitlement">) => !m.entitlement || entitlements.includes(m.entitlement);
   const providerOpts: SelectOption[] = PROVIDER_CATALOG
     // OAuth-login providers (ChatGPT subscription) are added via a Sign-in flow,
     // not a pasted token, so they don't belong in this paste-a-key picker.
     .filter((p) => !p.oauthLogin)
+    // Entitlement-gated providers only show when the caller has the entitlement.
+    .filter(isEntitled)
     .map((p) => ({
       value: p.provider,
       label: p.label,
     }));
+  // The ChatGPT sign-in affordance is shown only when the subscription-OAuth
+  // provider is entitled (always on self-host; admin-allowlisted on SaaS).
+  const codexProviderInfo = PROVIDER_CATALOG.find((p) => p.provider === "openai_subscription");
+  const canConnectChatGPT = !!codexProviderInfo && isEntitled(codexProviderInfo);
   const createMeta = providerInfoByProvider(provider);
   // How-to-get-a-key hint, catalog-driven: the provider's one-line instruction
   // (e.g. "Run `claude setup-token` …" for a subscription token) plus a docs
@@ -321,7 +330,9 @@ export function AnthropicKeySection() {
         loading={loading}
         actions={
           <div style={{ display: "inline-flex", gap: 8 }}>
-            <Button size="sm" variant="ghost" onClick={startCodexSignIn}>Sign in with ChatGPT</Button>
+            {canConnectChatGPT && (
+              <Button size="sm" variant="ghost" onClick={startCodexSignIn}>Sign in with ChatGPT</Button>
+            )}
             <Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Add key</Button>
           </div>
         }
