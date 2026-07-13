@@ -34,6 +34,11 @@ export interface ProviderInfo {
    *  device login rather than a pasted key/token — the paste-a-key forms hide
    *  these and a "Sign in" flow handles them instead. */
   oauthLogin?: boolean;
+  /** Entitlement token required to see/use this provider, if any. Absent → shown
+   *  to everyone. Present → only when the caller's entitlements include it. OSS
+   *  self-host grants these by default; SaaS gates them (e.g. an admin allowlist
+   *  for `subscription_oauth`). Enforced in the UI (hide) and, on SaaS, server-side. */
+  entitlement?: string;
   /** A prominent caution shown above the credential field — used for providers
    *  whose subscription-token use now carries a terms-of-service/cost caveat
    *  (e.g. Anthropic prohibited third-party OAuth-token use in Feb 2026, and
@@ -102,6 +107,7 @@ export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
     consoleUrl: "https://chatgpt.com",
     supportsBaseUrl: false,
     oauthLogin: true,
+    entitlement: "subscription_oauth",
   },
 ] as const;
 
