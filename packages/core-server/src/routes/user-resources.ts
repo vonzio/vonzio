@@ -497,6 +497,58 @@ export const userResourceRoutes = fp(
       return reply.code(201).send(key);
     });
 
+    // Attach a freshly-created key to the user's default/first profile if none
+    // has a credential yet (shared by the paste-key and OAuth-login paths).
+    const attachKeyToProfile = async (userId: string, role: string, provider: ProfileProvider, keyId: string) => {
+      const own = (await profileService.list(userId)).filter((p) => p.user_id === userId);
+      if (own.length === 0) {
+        await profileService.create({ name: "default", provider, api_key_id: keyId }, userId);
+      } else if (own.every((p) => !p.api_key_id)) {
+        const target = own.find((p) => p.name === "default") ?? own[0];
+        await profileService.update(target.id, { api_key_id: keyId, provider }, role);
+      }
+    };
+
+    // ── ChatGPT subscription (Codex) OAuth device login ──────────────────
+    // Two-step: `start` returns a code the user approves in a browser; the
+    // client then polls `poll`, which on approval exchanges the code, stores
+    // the access + rotating refresh token as an `openai_subscription` key, and
+    // wires it to a default agent. See feature 0047.
+    server.post("/v1/anthropic-keys/codex/start", async (_request, reply) => {
+      const { startDeviceLogin } = await import("../services/codex-oauth-service.js");
+      try {
+        const d = await startDeviceLogin();
+        return { device_auth_id: d.deviceAuthId, user_code: d.userCode, verify_url: d.verifyUrl, interval_sec: d.intervalSec };
+      } catch (e) {
+        return reply.code(502).send(errorResponse(ErrorCodes.BAD_REQUEST, e instanceof Error ? e.message : "device login failed to start"));
+      }
+    });
+
+    server.post<{
+      Body: { device_auth_id: string; user_code: string; name?: string };
+    }>("/v1/anthropic-keys/codex/poll", async (request, reply) => {
+      const { device_auth_id, user_code, name } = request.body;
+      if (!device_auth_id || !user_code) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "device_auth_id and user_code are required"));
+      }
+      const { pollDeviceToken, exchangeAuthCode, CODEX_DEVICE_REDIRECT_URI } = await import("../services/codex-oauth-service.js");
+      const poll = await pollDeviceToken(device_auth_id, user_code);
+      if (poll.status === "pending" || poll.status === "slow_down") {
+        return { status: poll.status };
+      }
+      if (poll.status === "denied") {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, `login denied: ${poll.error}`));
+      }
+      // authorized → exchange (device redirect URI) and persist the credential.
+      const tokens = await exchangeAuthCode({ code: poll.authorizationCode, codeVerifier: poll.codeVerifier, redirectUri: CODEX_DEVICE_REDIRECT_URI });
+      const key = await apiKeyService.create(
+        { name: name?.trim() || "My ChatGPT subscription", provider: "openai_subscription", api_key: tokens.accessToken, auth_token: tokens.refreshToken },
+        request.user!.id,
+      );
+      await attachKeyToProfile(request.user!.id, request.user!.role, "openai_subscription", key.id);
+      return reply.code(201).send({ status: "created", key });
+    });
+
     // Validate a credential WITHOUT saving — powers the "Test connection"
     // button in the add/edit dialog. Accepts raw entered values (add form, or
     // a freshly-typed key in the edit form) and/or an existing key id (edit

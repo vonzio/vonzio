@@ -552,7 +552,12 @@ function anthropicToCodexRequest(body, opts = {}) {
     stream: !!body.stream,
     instructions: systemToText(body.system) || "You are a helpful assistant.",
     input,
-    include: ["reasoning.encrypted_content"],
+    // NB: we deliberately do NOT request `reasoning.encrypted_content`. With
+    // store:false the API returns encrypted reasoning items only so the client
+    // can echo them back on the next turn; the Anthropic wire format has no slot
+    // to carry them, so we'd drop them anyway — and requesting-then-omitting them
+    // makes some Responses deployments reject the tool-continuation turn with a
+    // "missing reasoning item" error. Full history is resent each turn instead.
     tool_choice: "auto",
     parallel_tool_calls: true,
   };
@@ -615,7 +620,7 @@ function makeCodexStreamTranslator(model) {
   function openTool(out, item) {
     if (blockByItem.has(item.id)) return blockByItem.get(item.id);
     const index = nextIndex++;
-    const entry = { index, type: "tool_use" };
+    const entry = { index, type: "tool_use", gotArgs: false };
     blockByItem.set(item.id, entry);
     toolItems.add(item.id);
     out.push(sse("content_block_start", {
@@ -655,12 +660,21 @@ function makeCodexStreamTranslator(model) {
     if (type === "response.function_call_arguments.delta") {
       const entry = blockByItem.get(evt.item_id);
       if (entry && typeof evt.delta === "string" && evt.delta.length) {
+        entry.gotArgs = true;
         out.push(sse("content_block_delta", { type: "content_block_delta", index: entry.index, delta: { type: "input_json_delta", partial_json: evt.delta } }));
       }
       return out;
     }
     if (type === "response.output_item.done" || type === "response.output_text.done") {
-      const itemId = evt.item_id || (evt.item && evt.item.id);
+      const item = evt.item || {};
+      const itemId = evt.item_id || item.id;
+      // Fallback: if a tool call streamed no argument deltas but the completed
+      // item carries the full `arguments`, emit them so tool_use.input isn't {}.
+      const entry = itemId && blockByItem.get(itemId);
+      if (entry && entry.type === "tool_use" && !entry.gotArgs && typeof item.arguments === "string" && item.arguments.length) {
+        entry.gotArgs = true;
+        out.push(sse("content_block_delta", { type: "content_block_delta", index: entry.index, delta: { type: "input_json_delta", partial_json: item.arguments } }));
+      }
       if (itemId) closeItem(out, itemId);
       return out;
     }
@@ -1023,10 +1037,28 @@ async function handlePassthrough(req, res) {
   req.pipe(proxyReq);
 }
 
-// Codex account id + originator ride in as env-provided headers (the token
-// itself arrives per-request as x-api-key, refreshed by the control plane).
-const CODEX_ACCOUNT_ID = process.env.CODEX_ACCOUNT_ID || "";
+// Originator is a static, truthful identity. The account id is NOT read from a
+// module-load env — it's decoded from the per-request token below, so a reused
+// container that switches between two ChatGPT subscriptions (different account
+// ids, same gateway process) always sends the id matching the CURRENT token
+// rather than a stale one baked in at first boot. CODEX_ACCOUNT_ID is only a
+// fallback for tokens whose account id can't be decoded.
 const CODEX_ORIGINATOR = process.env.CODEX_ORIGINATOR || "vonzio";
+const CODEX_ACCOUNT_ID_FALLBACK = process.env.CODEX_ACCOUNT_ID || "";
+
+/** Decode `chatgpt_account_id` from a Codex JWT (no signature check — it's only
+ *  a routing header). Mirrors accountIdFromJwt in codex-oauth-service.ts. */
+function codexAccountId(jwt) {
+  try {
+    const parts = String(jwt).split(".");
+    if (parts.length < 2) return "";
+    const payload = JSON.parse(Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+    const id = payload && payload["https://api.openai.com/auth"] && payload["https://api.openai.com/auth"].chatgpt_account_id;
+    return typeof id === "string" ? id : "";
+  } catch {
+    return "";
+  }
+}
 
 async function handleCodex(req, res) {
   const token = req.headers["x-api-key"] || (req.headers["authorization"] || "").replace(/^Bearer\s+/i, "");
@@ -1059,15 +1091,19 @@ async function handleCodex(req, res) {
     // was set for codex (the global TARGET default is api.openai.com, wrong here).
     const codexBase = process.env.LLM_GATEWAY_TARGET_URL || "https://chatgpt.com/backend-api";
     const endpoint = codexResponsesUrl(codexBase);
-    const upstream = await upstreamRequest("POST", endpoint, {
+    const accountId = codexAccountId(token) || CODEX_ACCOUNT_ID_FALLBACK;
+    const upstreamHeaders = {
       authorization: `Bearer ${token}`,
-      "chatgpt-account-id": CODEX_ACCOUNT_ID,
       originator: CODEX_ORIGINATOR,
       "openai-beta": "responses=experimental",
       "content-type": "application/json",
       accept: "text/event-stream",
       "content-length": Buffer.byteLength(buf),
-    }, buf);
+    };
+    // Omit the header entirely when we can't resolve an id — some backends
+    // reject an empty chatgpt-account-id rather than treating it as absent.
+    if (accountId) upstreamHeaders["chatgpt-account-id"] = accountId;
+    const upstream = await upstreamRequest("POST", endpoint, upstreamHeaders, buf);
 
     if (upstream.statusCode >= 400) {
       const errText = (await readAll(upstream)).toString("utf8");

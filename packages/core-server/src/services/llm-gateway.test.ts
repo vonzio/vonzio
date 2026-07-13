@@ -297,7 +297,10 @@ describe("codex request translation (Anthropic -> Responses API)", () => {
     expect(cx.instructions).toBe("be terse");
     expect(cx.store).toBe(false);
     expect(cx.stream).toBe(true);
-    expect(cx.include).toEqual(["reasoning.encrypted_content"]);
+    // We deliberately do NOT request reasoning.encrypted_content (we can't carry
+    // it back through the Anthropic wire format, and requesting-then-dropping it
+    // breaks tool continuation on some backends).
+    expect(cx.include).toBeUndefined();
     // Codex rejects max_output_tokens — the SDK's max_tokens must be dropped.
     expect(cx.max_output_tokens).toBeUndefined();
     expect(cx.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "hi" }] }]);
@@ -389,6 +392,22 @@ describe("codex streaming translation (Responses SSE -> Anthropic SSE)", () => {
     const json = evts.filter((e) => e.type === "content_block_delta").map((e) => e.delta.partial_json).join("");
     expect(JSON.parse(json)).toEqual({ path: "/" });
     expect(evts.find((e) => e.type === "message_delta").delta.stop_reason).toBe("tool_use");
+  });
+
+  it("falls back to the completed item's arguments when a tool call streams no deltas", () => {
+    const tr = gw.makeCodexStreamTranslator("gpt-5.5");
+    const out: string[] = [];
+    for (const e of [
+      { type: "response.created", response: { id: "r" } },
+      { type: "response.output_item.added", item: { id: "fc_2", type: "function_call", call_id: "call_x", name: "ls" } },
+      // no function_call_arguments.delta events — args only on the done item
+      { type: "response.output_item.done", item: { id: "fc_2", type: "function_call", arguments: '{"path":"/tmp"}' } },
+      { type: "response.completed", response: { status: "completed", usage: { input_tokens: 1, output_tokens: 1 } } },
+    ]) out.push(...tr.push(e));
+    out.push(...tr.end());
+    const evts = parseSSE(out);
+    const json = evts.filter((e) => e.type === "content_block_delta").map((e) => e.delta.partial_json).join("");
+    expect(JSON.parse(json)).toEqual({ path: "/tmp" });
   });
 });
 

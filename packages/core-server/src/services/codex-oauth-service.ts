@@ -32,6 +32,12 @@ export const CODEX_DEVICE_REDIRECT_URI = `${CODEX_ISSUER}/deviceauth/callback`;
 export const CODEX_SCOPE = "openid profile email offline_access";
 /** JWT claim namespace carrying `chatgpt_account_id`. */
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
+
+/** Models reachable via a ChatGPT subscription through the Codex backend. The
+ *  Codex backend has no cheap enumeration endpoint, so this is a curated list
+ *  (the model picker uses it); `gpt-5.5` is verified working on Plus. Update as
+ *  OpenAI ships new Codex-available models. */
+export const CODEX_MODELS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] as const;
 /** Device-code login times out after 15 minutes (the server doesn't return an
  *  expiry in the usercode response, so this constant bounds the poll loop). */
 export const CODEX_DEVICE_TIMEOUT_MS = 15 * 60 * 1000;

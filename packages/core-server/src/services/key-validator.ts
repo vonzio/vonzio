@@ -34,6 +34,17 @@ export async function validateAnthropicKey(
     return validateOpenAIKey(key, baseUrl);
   }
 
+  if (type === "openai_subscription") {
+    // The credential is a ChatGPT access-token JWT for the Codex backend (not
+    // api.anthropic.com). Validate offline: it must decode and not be expired
+    // (the resolve-time refresh renews it before real use).
+    const { expiryFromAccessToken } = await import("./codex-oauth-service.js");
+    const exp = expiryFromAccessToken(key);
+    if (exp === 0) return { valid: false, error: "Not a valid ChatGPT access token." };
+    if (exp <= Date.now()) return { valid: false, error: "ChatGPT session expired — sign in again." };
+    return { valid: true };
+  }
+
   // api_key → x-api-key; claude_subscription → Authorization: Bearer.
   // /v1/models is accepted by both (verified against a live oat token).
   const headers = anthropicAuthHeaders(type, key);

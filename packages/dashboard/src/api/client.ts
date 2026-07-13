@@ -663,6 +663,18 @@ export function deleteUserAnthropicKey(id: string): Promise<{ status: string }> 
   return request(`/anthropic-keys/${id}`, { method: "DELETE" });
 }
 
+// --- ChatGPT subscription (Codex) OAuth device login ---
+
+export function startCodexLogin(): Promise<{ device_auth_id: string; user_code: string; verify_url: string; interval_sec: number }> {
+  return request("/anthropic-keys/codex/start", { method: "POST" });
+}
+
+/** Poll once. Returns {status:"pending"|"slow_down"} while waiting, or
+ *  {status:"created", key} once the user approves and the credential is saved. */
+export function pollCodexLogin(body: { device_auth_id: string; user_code: string; name?: string }): Promise<{ status: string; key?: UserAnthropicKey }> {
+  return request("/anthropic-keys/codex/poll", { method: "POST", body: JSON.stringify(body) });
+}
+
 export function fetchOllamaModels(apiKeyId: string): Promise<{ models: Array<{ id: string; name: string }> }> {
   return request(`/ollama/models?api_key_id=${encodeURIComponent(apiKeyId)}`);
 }

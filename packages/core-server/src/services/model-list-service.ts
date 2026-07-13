@@ -138,6 +138,10 @@ export class ModelListService {
           display_name: m.name ?? null,
           provider: "openai" as const,
         }));
+      } else if (apiKey.provider === "openai_subscription") {
+        // The Codex backend has no cheap /models endpoint — use the curated list.
+        const { CODEX_MODELS } = await import("./codex-oauth-service.js");
+        models = CODEX_MODELS.map((id) => ({ id, display_name: null, provider: "openai" as const }));
       } else {
         if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
         // api_key → x-api-key; claude_subscription → Bearer (oat token).

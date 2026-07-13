@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Trash2, KeyRound, CheckCircle, Plus, ExternalLink, AlertTriangle } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
@@ -10,7 +10,7 @@ import {
 } from "../../../api/admin.js";
 import {
   fetchUserAnthropicKeys, createUserAnthropicKey, updateUserAnthropicKey, deleteUserAnthropicKey,
-  validateUserAnthropicKey,
+  validateUserAnthropicKey, startCodexLogin, pollCodexLogin,
 } from "../../../api/client.js";
 import {
   Button, Field, Input, Select, Checkbox,
@@ -56,6 +56,38 @@ export function AnthropicKeySection() {
 
   const [allUsers, setAllUsers] = useState<Array<{ id: string; name: string; email: string }>>([]);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
+
+  // ChatGPT subscription (Codex) OAuth device login.
+  const [codexOpen, setCodexOpen] = useState(false);
+  const [codexInfo, setCodexInfo] = useState<{ user_code: string; verify_url: string } | null>(null);
+  const [codexStatus, setCodexStatus] = useState<"starting" | "waiting" | "created" | "error">("starting");
+  const [codexError, setCodexError] = useState("");
+  const codexAbort = useRef(false);
+
+  const startCodexSignIn = async () => {
+    setCodexOpen(true); setCodexStatus("starting"); setCodexError(""); setCodexInfo(null);
+    codexAbort.current = false;
+    try {
+      const s = await startCodexLogin();
+      setCodexInfo({ user_code: s.user_code, verify_url: s.verify_url });
+      setCodexStatus("waiting");
+      window.open(s.verify_url, "_blank", "noopener");
+      const intervalMs = Math.max(2000, (s.interval_sec || 5) * 1000);
+      const deadline = Date.now() + 15 * 60 * 1000;
+      // Poll until the user approves in their browser (or it times out / closes).
+      while (!codexAbort.current && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        if (codexAbort.current) return;
+        const p = await pollCodexLogin({ device_auth_id: s.device_auth_id, user_code: s.user_code });
+        if (p.status === "created") { setCodexStatus("created"); refetch(); return; }
+        // pending / slow_down → keep waiting
+      }
+      if (!codexAbort.current) { setCodexStatus("error"); setCodexError("Sign-in timed out. Try again."); }
+    } catch (e) {
+      setCodexStatus("error"); setCodexError(e instanceof Error ? e.message : "Sign-in failed.");
+    }
+  };
+  const closeCodex = () => { codexAbort.current = true; setCodexOpen(false); };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -287,7 +319,12 @@ export function AnthropicKeySection() {
         rowKey={(k) => k.id}
         onRowClick={(k) => { if (!isTeamKey(k) && (isAdmin || k.user_id === currentUser.id)) openEditor(k); else setInfoKey(k); }}
         loading={loading}
-        actions={<Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Add key</Button>}
+        actions={
+          <div style={{ display: "inline-flex", gap: 8 }}>
+            <Button size="sm" variant="ghost" onClick={startCodexSignIn}>Sign in with ChatGPT</Button>
+            <Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Add key</Button>
+          </div>
+        }
         emptyState={
           <EmptyState
             icon={<KeyRound size={20} />}
@@ -506,6 +543,36 @@ export function AnthropicKeySection() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={codexOpen}
+        onClose={closeCodex}
+        title="Sign in with ChatGPT"
+        footer={<Button size="sm" variant={codexStatus === "created" ? "primary" : "ghost"} onClick={closeCodex}>{codexStatus === "created" ? "Done" : "Cancel"}</Button>}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, fontSize: 13.5, lineHeight: 1.5, color: "var(--vz-ink)" }}>
+          {codexStatus === "starting" && <div style={{ color: "var(--vz-muted)" }}>Starting sign-in…</div>}
+          {codexStatus === "waiting" && codexInfo && (
+            <>
+              <div>A ChatGPT tab should have opened. Enter this code there to connect your subscription:</div>
+              <div style={{ textAlign: "center", fontFamily: "var(--vz-font-mono)", fontSize: 26, letterSpacing: 3, fontWeight: 600, padding: "12px 0", color: "var(--vz-sodium)" }}>
+                {codexInfo.user_code}
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--vz-muted)" }}>
+                Didn't open?{" "}
+                <a href={codexInfo.verify_url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--vz-sodium)" }}>{codexInfo.verify_url}</a>
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--vz-muted)" }}>Waiting for approval…</div>
+            </>
+          )}
+          {codexStatus === "created" && (
+            <div style={{ color: "var(--vz-ok, #2faa6a)", display: "flex", alignItems: "center", gap: 8 }}>
+              <CheckCircle size={16} /> Connected. Your ChatGPT subscription is ready to use.
+            </div>
+          )}
+          {codexStatus === "error" && <div style={{ color: "var(--vz-fail)" }}>{codexError}</div>}
+        </div>
       </Modal>
     </>
   );
