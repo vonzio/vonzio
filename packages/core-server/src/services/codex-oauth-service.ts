@@ -34,10 +34,30 @@ export const CODEX_SCOPE = "openid profile email offline_access";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
 /** Models reachable via a ChatGPT subscription through the Codex backend. The
- *  Codex backend has no cheap enumeration endpoint, so this is a curated list
- *  (the model picker uses it); `gpt-5.5` is verified working on Plus. Update as
- *  OpenAI ships new Codex-available models. */
-export const CODEX_MODELS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] as const;
+ *  Codex backend has no cheap enumeration endpoint (even the Codex CLI/Pi bake a
+ *  static list), so this is a curated list the model picker renders — kept in
+ *  sync with the Codex CLI's set. Flagship first. Actual availability depends on
+ *  the plan tier (some are Pro-only); an unavailable pick surfaces a clear error.
+ *  Update as OpenAI ships new Codex models. */
+export const CODEX_MODELS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex-spark",
+] as const;
+
+/** The Codex model list to surface, honoring a `CODEX_MODELS` env override
+ *  (comma/space-separated ids) so an operator can add a newly-shipped model
+ *  without a release. Falls back to the baked default when unset/empty. */
+export function codexModels(): string[] {
+  const raw = (process.env.CODEX_MODELS ?? "").trim();
+  if (!raw) return [...CODEX_MODELS];
+  const ids = raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  return ids.length > 0 ? ids : [...CODEX_MODELS];
+}
 /** Device-code login times out after 15 minutes (the server doesn't return an
  *  expiry in the usercode response, so this constant bounds the poll loop). */
 export const CODEX_DEVICE_TIMEOUT_MS = 15 * 60 * 1000;

@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
+  codexModels,
+  CODEX_MODELS,
   generateCodeVerifier,
   codeChallengeS256,
   buildAuthorizeUrl,
@@ -197,5 +199,23 @@ describe("refreshTokens", () => {
   it("throws on a failed refresh", async () => {
     const { fetch } = fakeFetch(() => ({ status: 401, body: { error: "invalid_grant" } }));
     await expect(refreshTokens("rt1", fetch)).rejects.toThrow(/refresh failed/);
+  });
+});
+
+describe("codexModels (env override)", () => {
+  const orig = process.env.CODEX_MODELS;
+  afterEach(() => { if (orig === undefined) delete process.env.CODEX_MODELS; else process.env.CODEX_MODELS = orig; });
+
+  it("returns the baked default when unset", () => {
+    delete process.env.CODEX_MODELS;
+    expect(codexModels()).toEqual([...CODEX_MODELS]);
+  });
+  it("parses a comma/space-separated override", () => {
+    process.env.CODEX_MODELS = "gpt-9, gpt-9-mini  gpt-8";
+    expect(codexModels()).toEqual(["gpt-9", "gpt-9-mini", "gpt-8"]);
+  });
+  it("falls back to the default on a blank override", () => {
+    process.env.CODEX_MODELS = "   ";
+    expect(codexModels()).toEqual([...CODEX_MODELS]);
   });
 });

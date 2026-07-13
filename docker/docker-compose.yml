@@ -115,6 +115,10 @@ services:
       # Shared cap (MB) for chat attachments + Files-panel uploads. Raise on a
       # host that needs to push large files into a workspace.
       - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-100}
+      # Override the ChatGPT-subscription (Codex) model list shown in the picker
+      # (comma-separated ids) — lets an operator surface a newly-shipped Codex
+      # model without a release. Empty = the baked-in default set.
+      - CODEX_MODELS=${CODEX_MODELS:-}
       - "DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:?required — set in .env}@postgres:5432/vonzio"
       # Route Docker API through the socket-proxy (see docker-proxy service
       # above). DOCKER_HOST takes precedence over DOCKER_SOCKET in
