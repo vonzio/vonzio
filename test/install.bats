@@ -214,15 +214,26 @@ setup() {
   grep -qx 'FOO=bar' .env          # untouched
 }
 
-@test "apply_bumped_ports: writes all five coupled values coherently" {
+# NB: assertions are &&-chained — setup() relaxes set -e, so a failing bare
+# grep mid-body would otherwise be swallowed and only the last line would count.
+@test "apply_bumped_ports: pull mode (default) points BETTER_AUTH_URL at the SERVER port" {
   cd "$BATS_TEST_TMPDIR"
   printf 'BETTER_AUTH_URL=http://localhost:5173\nCORS_ORIGIN=http://localhost:5173,http://localhost:3000\n' > .env
+  BUILD_FROM_SOURCE=false IN_CLONE=false
   DASHBOARD_PORT=5273 SERVER_PORT=3100 apply_bumped_ports >/dev/null
-  grep -qx 'DASHBOARD_PORT=5273' .env
-  grep -qx 'SERVER_PORT=3100' .env
+  grep -qx 'DASHBOARD_PORT=5273' .env &&
+    grep -qx 'SERVER_PORT=3100' .env &&
+    grep -qx 'BETTER_AUTH_URL=http://localhost:3100' .env &&
+    grep -qx 'CORS_ORIGIN=http://localhost:5273,http://localhost:3100' .env &&
+    grep -q 'PREVIEW_URL_TEMPLATE=http://localhost:3100/preview/' .env
+}
+
+@test "apply_bumped_ports: build/dev mode keeps BETTER_AUTH_URL on the dashboard (vite) port" {
+  cd "$BATS_TEST_TMPDIR"
+  printf 'BETTER_AUTH_URL=http://localhost:5173\n' > .env
+  BUILD_FROM_SOURCE=true IN_CLONE=false
+  DASHBOARD_PORT=5273 SERVER_PORT=3100 apply_bumped_ports >/dev/null
   grep -qx 'BETTER_AUTH_URL=http://localhost:5273' .env
-  grep -qx 'CORS_ORIGIN=http://localhost:5273,http://localhost:3100' .env
-  grep -q 'PREVIEW_URL_TEMPLATE=http://localhost:3100/preview/' .env
 }
 
 # Regression: the installer runs under `set -e`. setup_env ended with
@@ -353,12 +364,40 @@ setup() {
   ( set -e; do_uninstall >/dev/null 2>&1 )   # fails the test if it returns non-zero
 }
 
+@test "do_uninstall: --purge with --yes alone refuses (data deletion needs --force)" {
+  mkdir -p "$BATS_TEST_TMPDIR/inst2/docker"
+  : > "$BATS_TEST_TMPDIR/inst2/.env"
+  INSTALL_DIR="$BATS_TEST_TMPDIR/inst2"
+  PURGE=true; FORCE=false; ASSUME_YES=true
+  docker() { return 0; }; export -f docker
+  run do_uninstall
+  [ "$status" -eq 1 ] &&
+    [[ "$output" == *"--force"* ]] &&
+    [ -d "$BATS_TEST_TMPDIR/inst2" ]   # nothing was deleted
+}
+
+@test "do_uninstall: --purge --force skips the confirmation and purges" {
+  mkdir -p "$BATS_TEST_TMPDIR/inst3/docker"
+  : > "$BATS_TEST_TMPDIR/inst3/.env"
+  INSTALL_DIR="$BATS_TEST_TMPDIR/inst3"
+  PURGE=true; FORCE=true; REMOVE_DIR=false; ASSUME_YES=false
+  docker() { return 0; }; export -f docker
+  run do_uninstall
+  [ "$status" -eq 0 ] &&
+    [[ "$output" == *"Deep uninstall complete"* ]]
+}
+
+@test "parse_args: --force sets FORCE" {
+  parse_args --uninstall --purge --force
+  [ "$ACTION" = "uninstall" ] && [ "$PURGE" = "true" ] && [ "$FORCE" = "true" ]
+}
+
 @test "do_uninstall --remove-dir resolves a relative --dir (never nukes the CWD)" {
   cd "$BATS_TEST_TMPDIR"
   mkdir -p inst/docker; : > inst/.env
   : > SENTINEL                # in the CWD — must survive; proves no `rm -rf .`
   INSTALL_DIR="inst"          # RELATIVE (as `make nuke` passes `--dir .`)
-  PURGE=true; REMOVE_BASE=false; REMOVE_DIR=true; ASSUME_YES=true
+  PURGE=true; REMOVE_BASE=false; REMOVE_DIR=true; FORCE=true
   docker() { return 0; }; export -f docker
   ( set -e; do_uninstall >/dev/null 2>&1 ) || true
   [ ! -d "$BATS_TEST_TMPDIR/inst" ]      # resolved to abs path + removed the install dir

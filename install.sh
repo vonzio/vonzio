@@ -44,6 +44,9 @@
 #   --uninstall --purge IRREVERSIBLE: also remove all volumes (DB + sessions) +
 #                       app images. The ENCRYPTION_KEY in .env is the only key to
 #                       your stored credentials — gone for good.
+#   --force             Skip the purge confirmation. Required for a
+#                       non-interactive purge: --yes alone does NOT consent to
+#                       data deletion (it only auto-confirms the benign prompts).
 #   --remove-base       With --purge, also drop the heavy agent-base image.
 #   --remove-dir        Also delete the checkout directory.
 #
@@ -87,8 +90,11 @@ RESET_ENV=false
 ACTION="install"
 # Uninstall tiers (see do_uninstall): --purge removes data + images,
 # --remove-dir deletes the checkout, --remove-base also drops the heavy
-# agent-base image (kept by default).
+# agent-base image (kept by default). --force skips the purge confirmation —
+# deliberately separate from --yes so "auto-confirm the benign prompts" and
+# "delete my data without asking" are two different consents.
 PURGE=false
+FORCE=false
 REMOVE_DIR=false
 REMOVE_BASE=false
 # --build forces building from source instead of pulling prebuilt images.
@@ -518,16 +524,28 @@ port_is_this_instance() {
 
 preflight_ports() {
   local dash="${DASHBOARD_PORT:-5173}" api="${SERVER_PORT:-3000}"
-  if ! port_in_use "$dash" && ! port_in_use "$api"; then
-    ok "Ports ${dash} + ${api} are free."
+  # The vite dashboard port only matters for source builds (dev stack). The
+  # default pull install serves the dashboard from the server port itself, so
+  # checking/bumping 5173 there is noise — and its number would contradict the
+  # final "Dashboard http://localhost:<api>" summary.
+  local need_dash=false
+  if $BUILD_FROM_SOURCE || $IN_CLONE; then need_dash=true; fi
+
+  local dash_busy=false api_busy=false
+  $need_dash && port_in_use "$dash" && dash_busy=true
+  port_in_use "$api" && api_busy=true
+  if ! $dash_busy && ! $api_busy; then
+    if $need_dash; then ok "Ports ${dash} + ${api} are free."
+    else ok "Port ${api} is free."
+    fi
     return 0
   fi
 
   # If THIS instance ($PROJECT) is already running on these ports, don't spin up
   # a duplicate — point the user at it instead. (A DIFFERENT instance falls
   # through to the port-bump below.)
-  if { port_in_use "$dash" && port_is_this_instance "$dash"; } ||
-     { port_in_use "$api" && port_is_this_instance "$api"; }; then
+  if { $dash_busy && port_is_this_instance "$dash"; } ||
+     { $api_busy && port_is_this_instance "$api"; }; then
     warn "vonzio instance '${PROJECT}' already appears to be running on ${dash}/${api}."
     log  "  Open ${C_BOLD}http://localhost:${dash}${C_RESET} — or stop it first and re-run:"
     log  "    ${C_DIM}(cd ${INSTALL_DIR:-<install-dir>} && make docker-down)${C_RESET}"
@@ -538,19 +556,21 @@ preflight_ports() {
   # Another process (or a DIFFERENT vonzio instance) holds a port → offer to
   # bump to the next free pair. This is the multi-instance path: a second
   # install lands on 3001/5174, etc.
-  local busy="" new_dash new_api
-  port_in_use "$dash" && busy="${dash} (dashboard)"
-  port_in_use "$api"  && busy="${busy:+$busy, }${api} (API)"
-  new_dash="$(find_free_port "$dash")"
+  local busy="" new_dash="$dash" new_api
+  $dash_busy && busy="${dash} (dashboard)"
+  $api_busy  && busy="${busy:+$busy, }${api} (API)"
+  $need_dash && new_dash="$(find_free_port "$dash")"
   new_api="$(find_free_port "$api")"
   [[ "$new_api" == "$new_dash" ]] && new_api="$(find_free_port "$(( new_dash + 1 ))")"
 
+  local offer="free port ${new_api} (API)"
+  $need_dash && offer="free ports ${new_dash} (dashboard) + ${new_api} (API)"
   warn "Port(s) already in use: ${busy}."
-  if confirm "Use free ports ${new_dash} (dashboard) + ${new_api} (API) instead?" "default-yes"; then
+  if confirm "Use ${offer} instead?" "default-yes"; then
     DASHBOARD_PORT="$new_dash"; SERVER_PORT="$new_api"
     export DASHBOARD_PORT SERVER_PORT
     PORTS_BUMPED=true
-    ok "Using ports ${new_dash} (dashboard) + ${new_api} (API)."
+    ok "Using ${offer#free }."
   else
     err "Free the port(s) and re-run, or set DASHBOARD_PORT / SERVER_PORT yourself."
     exit 1
@@ -597,6 +617,7 @@ parse_args() {
       --reset-env) RESET_ENV=true; shift ;;
       --build) BUILD_FROM_SOURCE=true; shift ;;
       --purge) PURGE=true; shift ;;
+      --force) FORCE=true; shift ;;
       --remove-dir) REMOVE_DIR=true; shift ;;
       --remove-base) REMOVE_BASE=true; shift ;;
       *) echo "Unknown arg: $1 (try --help)" >&2; exit 2 ;;
@@ -678,6 +699,16 @@ detect_mode() {
       # install at another path would silently operate on the repo instead.
       if [[ -z "$INSTALL_DIR" && "$ACTION" != "uninstall" ]]; then
         INSTALL_DIR="$SCRIPT_DIR"
+      elif [[ -n "$INSTALL_DIR" && "$ACTION" != "uninstall" ]]; then
+        # --dir points OUTSIDE this checkout: install there in fetch mode.
+        # Staying IN_CLONE would make setup_source_tree treat the (possibly
+        # empty) target as a checkout and fail on the cd.
+        local want
+        want="$(cd "$INSTALL_DIR" 2>/dev/null && pwd || printf '%s' "$INSTALL_DIR")"
+        if [[ "$want" != "$SCRIPT_DIR" ]]; then
+          IN_CLONE=false
+          info "--dir points outside this checkout — installing to ${INSTALL_DIR} in fetch mode."
+        fi
       fi
     fi
   fi
@@ -711,10 +742,10 @@ do_uninstall() {
   # "vonzio". Everything below is scoped to this project so uninstalling one
   # instance never touches another on the same host.
   local proj net
-  proj="$(grep -E '^COMPOSE_PROJECT_NAME=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
+  proj="$(grep -E '^COMPOSE_PROJECT_NAME=' .env 2>/dev/null | head -1 | cut -d= -f2- || true)"
   [[ -z "$proj" ]] && proj="$(sanitize_project "$(basename "$target")")"
   [[ -z "$proj" ]] && proj="vonzio"
-  net="$(grep -E '^VONZIO_NETWORK=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
+  net="$(grep -E '^VONZIO_NETWORK=' .env 2>/dev/null | head -1 | cut -d= -f2- || true)"
   [[ -z "$net" ]] && net="${proj}-network"
   info "Uninstalling instance '${proj}' at ${target}."
 
@@ -729,11 +760,26 @@ do_uninstall() {
   else
     docker ps -aq --filter "label=com.docker.compose.project=${proj}" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
   fi
-  docker rm -f vonzio-pg 2>/dev/null && info "Removed legacy standalone postgres" || true
+  # Guard with inspect: docker >= 25 exits 0 on `rm -f <missing>`, so the bare
+  # `rm -f && info` printed "Removed legacy standalone postgres" on every run.
+  if docker container inspect vonzio-pg >/dev/null 2>&1; then
+    docker rm -f vonzio-pg >/dev/null 2>&1 && info "Removed legacy standalone postgres" || true
+  fi
   # Spawned agent containers are ephemeral (not in compose). Scope removal to
   # THIS instance's network so other running instances' agents are untouched.
   docker ps -aq --filter "network=${net}" --filter "label=managed-by=vonzio" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
   docker network rm "$net" >/dev/null 2>&1 && info "Removed network ${net}." || true
+  # Egress network: per-instance since EGRESS_PROXY_NETWORK became
+  # ${PROJECT}-egress; older installs shared the literal "vonzio-egress". Both
+  # removals are best-effort — a shared network still used by another running
+  # instance survives the rm.
+  # `|| true`: pipefail + no EGRESS_PROXY_NETWORK line in .env (any pre-rename
+  # install) would otherwise kill the uninstall right here, mid-cleanup.
+  local enet
+  enet="$(grep -E '^EGRESS_PROXY_NETWORK=' .env 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  [[ -z "$enet" ]] && enet="vonzio-egress"
+  docker network rm "$enet" >/dev/null 2>&1 && info "Removed network ${enet}." || true
+  [[ "$enet" != "vonzio-egress" ]] && docker network rm "vonzio-egress" >/dev/null 2>&1 && info "Removed legacy shared network vonzio-egress." || true
   ok "Stack stopped + containers removed."
 
   if ! $PURGE; then
@@ -743,26 +789,40 @@ do_uninstall() {
     return 0
   fi
 
-  # --purge: irreversible.
+  # --purge: irreversible. Consent tiers: --force skips the prompt; --yes alone
+  # does NOT (confirm() would auto-yes everything, so gate BEFORE calling it) —
+  # an automation flag meant for dep prompts must never silently delete data.
   log ""
   warn "${C_BOLD}--purge permanently deletes your database and credentials.${C_RESET}"
   warn "  The ENCRYPTION_KEY in .env is the only key to your stored credentials."
-  if ! confirm "Delete all vonzio volumes + images? (irreversible)" "default-no"; then
+  if $FORCE; then
+    info "--force given — skipping the purge confirmation."
+  elif $ASSUME_YES; then
+    err "--purge won't run non-interactively on --yes alone — deleting data needs its own consent."
+    err "  Add --force to confirm, or re-run without --yes to be prompted."
+    exit 1
+  elif ! confirm "Delete all vonzio volumes + images? (irreversible)" "default-no"; then
     err "Aborted — nothing purged."
     exit 1
   fi
 
   # Volumes: this instance's data (project-prefixed) + legacy names + per-session.
-  docker volume rm "${proj}_pgdata" "${proj}_vonzio-data" 2>/dev/null || true
-  [[ "$proj" == "vonzio" ]] && docker volume rm docker_pgdata docker_vonzio-data 2>/dev/null || true
+  docker volume rm "${proj}_pgdata" "${proj}_vonzio-data" >/dev/null 2>&1 || true
+  [[ "$proj" == "vonzio" ]] && docker volume rm docker_pgdata docker_vonzio-data >/dev/null 2>&1 || true
   docker volume ls -q 2>/dev/null | grep -E "^${proj}-(ws|sdk)-" | xargs -r docker volume rm >/dev/null 2>&1 || true
   ok "Volumes removed."
 
-  # Images: app images always; agent-base only with --remove-base (it's the
-  # ~GB one with the slow rebuild, so we keep it unless asked).
+  # Images: app images always — both the source-build names AND the pulled
+  # ghcr ones (the default install pulls ghcr.io/…/server:<tag> + agent:<tag>;
+  # matching only the build names left ~8 GB behind while claiming "Images
+  # removed"). NB: rm -f UNTAGS an image another running instance still uses
+  # (its containers keep running on the image ID; its next docker-pull-oss
+  # re-pulls). agent-base only goes with --remove-base (it's the ~GB one with
+  # the slow rebuild, so we keep it unless asked).
   docker image rm -f vonzio-server:latest vonzio-agent:latest >/dev/null 2>&1 || true
   docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-    | grep -E '^vonzio-agent-' | xargs -r docker image rm -f >/dev/null 2>&1 || true
+    | grep -E '^(vonzio-agent-|ghcr\.io/vonzio/vonzio/(server|agent):)' \
+    | xargs -r docker image rm -f >/dev/null 2>&1 || true
   if $REMOVE_BASE; then
     docker image rm -f ghcr.io/vonzio/vonzio/agent-base:latest >/dev/null 2>&1 || true
     ok "Images removed (including agent-base)."
@@ -830,8 +890,8 @@ write_run_makefile() {
     printf 'uninstall:\n'
     printf '\tcurl -fsSL $(INSTALL_URL) | bash -s -- --uninstall --dir $(CURDIR)\n\n'
     printf '# Remove EVERYTHING for this instance: containers, network, volumes\n'
-    printf '# (your DB!), and this directory. Shared images are kept (other\n'
-    printf '# instances may use them; re-pulled on next install). IRREVERSIBLE.\n'
+    printf '# (your DB!), app images (unless another running instance uses them;\n'
+    printf '# agent-base is kept), and this directory. IRREVERSIBLE.\n'
     printf 'nuke:\n'
     printf '\tcurl -fsSL $(INSTALL_URL) | bash -s -- --uninstall --purge --remove-dir --dir $(CURDIR)\n'
   } > "$mk"
@@ -976,6 +1036,16 @@ setup_env() {
     # For the default install both equal the legacy values, so nothing changes.
     set_env_var "COMPOSE_PROJECT_NAME" "$PROJECT"
     set_env_var "VONZIO_NETWORK" "${PROJECT}-network"
+    # Per-instance egress network too. A shared literal "vonzio-egress" made
+    # every additional instance's compose warn ("exists but was not created for
+    # project …") and left the network orphaned after the last uninstall.
+    # Skew guard: the installer is fetched from main but the run files from the
+    # release tag — only rename when THIS compose file passes the var through
+    # to the server, else its config would still default to "vonzio-egress"
+    # and diverge from the renamed network once egress is enabled.
+    if grep -q 'EGRESS_PROXY_NETWORK=\${EGRESS_PROXY_NETWORK' docker/docker-compose.yml 2>/dev/null; then
+      set_env_var "EGRESS_PROXY_NETWORK" "${PROJECT}-egress"
+    fi
     ok ".env created (random ENCRYPTION_KEY + BETTER_AUTH_SECRET + POSTGRES_PASSWORD)."
     [[ "$PROJECT" != "vonzio" ]] && ok "Instance '${PROJECT}': isolated project, volumes (${PROJECT}_*) + network (${PROJECT}-network)."
     warn "Back up .env now — losing ENCRYPTION_KEY bricks your credential vault."
@@ -1000,9 +1070,15 @@ set_env_var() {
 # (BETTER_AUTH_URL), CORS, and agent previews (PREVIEW_URL_TEMPLATE) all encode
 # the ports. Rewrite them together so a bumped install actually works.
 apply_bumped_ports() {
+  # The user-facing origin auth must trust: the dev stack serves the dashboard
+  # on DASHBOARD_PORT (vite); the default pull stack serves it from the server
+  # port itself — pointing BETTER_AUTH_URL at the (unused) vite port there
+  # would break auth on every port-bumped pull install.
+  local web_port="$SERVER_PORT"
+  if $BUILD_FROM_SOURCE || $IN_CLONE; then web_port="$DASHBOARD_PORT"; fi
   set_env_var DASHBOARD_PORT "$DASHBOARD_PORT"
   set_env_var SERVER_PORT "$SERVER_PORT"
-  set_env_var BETTER_AUTH_URL "http://localhost:${DASHBOARD_PORT}"
+  set_env_var BETTER_AUTH_URL "http://localhost:${web_port}"
   set_env_var CORS_ORIGIN "http://localhost:${DASHBOARD_PORT},http://localhost:${SERVER_PORT}"
   set_env_var PREVIEW_URL_TEMPLATE "http://localhost:${SERVER_PORT}/preview/{container_id}/{port}/"
   info "Wrote bumped ports + coupled URLs (BETTER_AUTH_URL, CORS_ORIGIN, PREVIEW_URL_TEMPLATE) to .env."

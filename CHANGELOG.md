@@ -7,6 +7,43 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Added
 
+- **Installer: `--force` flag for non-interactive purge.** `--yes` no longer
+  auto-confirms the irreversible `--uninstall --purge` step — it keeps
+  auto-confirming the benign prompts (deps, ports), but deleting the database
+  now needs its own explicit consent: pass `--force`, or run without `--yes`
+  to be prompted. `--purge --yes` without `--force` refuses with a clear
+  message instead of deleting data.
+
+### Fixed
+
+- **Installer: purge now removes the pulled app images.** `--uninstall --purge`
+  only matched the source-build image names (`vonzio-server:latest`,
+  `vonzio-agent:latest`), silently leaving the ~8 GB of pulled
+  `ghcr.io/vonzio/vonzio/server|agent:<tag>` images behind while reporting
+  "Images removed". (`agent-base` is still kept unless `--remove-base`.)
+- **Installer: port-bumped pull installs got a broken `BETTER_AUTH_URL`.** On a
+  second instance the installer wrote `BETTER_AUTH_URL=http://localhost:<vite
+  port>` — a port nothing listens on in pull mode (the server serves the
+  dashboard itself). Auth URLs now follow the port that actually serves the
+  dashboard per install mode. Pull-mode installs also stop checking/bumping the
+  unused vite dashboard port entirely.
+- **Per-instance egress network.** Every instance previously shared the literal
+  `vonzio-egress` network: additional instances warned ("exists but was not
+  created for project …") and the network was orphaned after the last
+  uninstall. `EGRESS_PROXY_NETWORK=<project>-egress` is now written per install
+  and passed through to the server (new compose env passthrough), with a skew
+  guard so a new installer against an older release's compose files keeps the
+  old shared name. Uninstall now cleans up the egress network, including the
+  legacy shared one once the last instance is gone.
+- **Installer: in-clone `./install.sh --dir <elsewhere>` crashed.** It treated
+  the (possibly empty) target as a checkout; it now falls back to the fetch-mode
+  install into that directory.
+- **Installer: false "Removed legacy standalone postgres" on every uninstall.**
+  Docker ≥ 25 exits 0 on `rm -f <missing container>`, defeating the message
+  guard; now gated on `container inspect`. Uninstall output no longer leaks raw
+  `docker volume rm` output, and the `.env` var reads no longer abort the
+  uninstall mid-cleanup under `pipefail` when a var is absent.
+
 - **GitHub App support for git providers.** Alongside the existing OAuth App and
   PAT paths, you can now connect GitHub via a **GitHub App**: per-repository
   selection (including org repos), org-owner approval handled inline by the
