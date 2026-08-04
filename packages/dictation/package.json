@@ -26,6 +26,6 @@
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "react": "^19.0.0"
+    "react": "^19.2.8"
   }
 }
