@@ -33,7 +33,18 @@ RUN echo "apt snapshot ${APT_SNAPSHOT}" \
 # Upgrade npm globally so its dependency tree is patched. agent-runner
 # uses npx + npm install at agent startup, so an out-of-date npm here
 # means an out-of-date dep tree there.
-RUN npm install -g npm@latest
+#
+# Then patch npm's OWN bundled deps (same fix as Dockerfile.server, see the
+# comment there): npm@latest still vendors brace-expansion 5.0.7 and
+# ip-address 10.2.0 with HIGH advisories.
+RUN npm install -g npm@latest && \
+    mkdir /tmp/npm-dep-patch && cd /tmp/npm-dep-patch && \
+    npm install --no-audit --no-fund brace-expansion@^5.0.9 ip-address@^10.3.1 && \
+    NPMDIR=/usr/local/lib/node_modules/npm/node_modules && \
+    for p in brace-expansion ip-address; do \
+      rm -rf "$NPMDIR/$p" && cp -r "/tmp/npm-dep-patch/node_modules/$p" "$NPMDIR/$p"; \
+    done && \
+    cd / && rm -rf /tmp/npm-dep-patch
 
 # System tools for Claude Code agents.
 RUN apt-get update && apt-get install -y --no-install-recommends \
