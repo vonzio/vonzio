@@ -176,3 +176,43 @@ CVE-2026-10014
 CVE-2026-10015
 CVE-2026-10016
 CVE-2026-10019
+
+# ============================================================================
+# REACT-ROUTER (dashboard bundle inside the server image)
+# ============================================================================
+# Expires: 2026-11-01
+#
+# GHSA-qwww-vcr4-c8h2: "RSC Mode CSRF Bypass Allows Action Execution Before
+# 400 Response". Only exploitable in react-router's RSC (React Server
+# Components / framework) mode, where server actions execute during request
+# handling. The vonzio dashboard uses react-router-dom in plain LIBRARY mode
+# (<BrowserRouter> + <Routes> in packages/dashboard/src/App.tsx, bundled by
+# vite as a static SPA) — there is no RSC runtime, no server actions, and no
+# react-router code executing on the server at all. The fixed version (8.3.0)
+# is a major upgrade; taking it for an unreachable code path isn't worth the
+# churn right now.
+#
+# When this expires: re-evaluate upgrading react-router-dom to v8 (or later)
+# as its ecosystem settles, or renew with the same justification if the
+# dashboard still doesn't use RSC mode.
+GHSA-qwww-vcr4-c8h2
+
+# ============================================================================
+# TYPESCRIPT NATIVE COMPILER (agent-base image only)
+# ============================================================================
+# Expires: 2026-11-01
+#
+# CVE-2026-56852 (golang.org/x/text v0.38.0, norm.Iter infinite loop) and
+# CVE-2026-39822 (Go stdlib) are compiled into Microsoft's prebuilt
+# @typescript/typescript-linux-x64 native tsc binary — we cannot rebuild it,
+# only Microsoft can bump its toolchain. Both are DoS-class (hang/loop), and
+# tsc only ever processes workspace source inside the sandboxed agent
+# container (unprivileged user, PID + memory limits, no host access). Worst
+# case is a wedged compile in a disposable container — not a security
+# boundary crossing.
+#
+# When this expires: `npm view typescript version` and rebuild agent-base —
+# a typescript release built with Go x/text >= 0.39.0 clears both. Renew
+# with the same justification if Microsoft hasn't shipped one.
+CVE-2026-56852
+CVE-2026-39822

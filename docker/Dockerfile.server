@@ -10,7 +10,21 @@ RUN apt-get update && apt-get upgrade -y && \
 # The bundled npm in node:22-slim ships an older picomatch (CVE-2026-33671,
 # ReDoS, HIGH). Upgrade npm globally so its dependency tree is patched --
 # we use npm at image-build time (npm install) and at runtime (`npx`).
-RUN npm install -g npm@latest
+#
+# Then patch npm's OWN bundled deps: npm@latest still vendors brace-expansion
+# 5.0.7 (CVE-2026-14257 / CVE-2026-69152) and ip-address 10.2.0
+# (CVE-2026-69192). Installing inside npm's package dir doesn't work (its
+# workspaces 404), so resolve the fixed versions in a scratch dir and copy
+# them over the vendored copies. Drop this once npm ships patched bundles
+# (check with: node -p "require('/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json').version").
+RUN npm install -g npm@latest && \
+    mkdir /tmp/npm-dep-patch && cd /tmp/npm-dep-patch && \
+    npm install --no-audit --no-fund brace-expansion@^5.0.9 ip-address@^10.3.1 && \
+    NPMDIR=/usr/local/lib/node_modules/npm/node_modules && \
+    for p in brace-expansion ip-address; do \
+      rm -rf "$NPMDIR/$p" && cp -r "/tmp/npm-dep-patch/node_modules/$p" "$NPMDIR/$p"; \
+    done && \
+    cd / && rm -rf /tmp/npm-dep-patch
 
 WORKDIR /app
 

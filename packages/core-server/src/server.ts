@@ -994,8 +994,10 @@ export async function buildServer(deps: ServerDeps) {
       index: false,
       // Hashed assets ship with content-addressed filenames, immutable for a
       // year. (index.html no longer flows through here.)
-      setHeaders: (res) => {
-        res.setHeader("cache-control", "public, max-age=31536000, immutable");
+      // @fastify/static v10 passes the FastifyReply here, not the raw
+      // ServerResponse v9 passed.
+      setHeaders: (reply) => {
+        reply.header("cache-control", "public, max-age=31536000, immutable");
       },
     });
     // index.html + SPA fallback: serve with a per-request CSP nonce. "/" and any
