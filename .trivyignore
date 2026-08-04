@@ -196,3 +196,23 @@ CVE-2026-10019
 # as its ecosystem settles, or renew with the same justification if the
 # dashboard still doesn't use RSC mode.
 GHSA-qwww-vcr4-c8h2
+
+# ============================================================================
+# TYPESCRIPT NATIVE COMPILER (agent-base image only)
+# ============================================================================
+# Expires: 2026-11-01
+#
+# CVE-2026-56852 (golang.org/x/text v0.38.0, norm.Iter infinite loop) and
+# CVE-2026-39822 (Go stdlib) are compiled into Microsoft's prebuilt
+# @typescript/typescript-linux-x64 native tsc binary — we cannot rebuild it,
+# only Microsoft can bump its toolchain. Both are DoS-class (hang/loop), and
+# tsc only ever processes workspace source inside the sandboxed agent
+# container (unprivileged user, PID + memory limits, no host access). Worst
+# case is a wedged compile in a disposable container — not a security
+# boundary crossing.
+#
+# When this expires: `npm view typescript version` and rebuild agent-base —
+# a typescript release built with Go x/text >= 0.39.0 clears both. Renew
+# with the same justification if Microsoft hasn't shipped one.
+CVE-2026-56852
+CVE-2026-39822
