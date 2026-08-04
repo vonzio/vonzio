@@ -134,6 +134,11 @@ services:
       # install). Defaults to vonzio-network for a single default install.
       # MUST match the `name:` under `networks:` below.
       - DOCKER_NETWORK=${VONZIO_NETWORK:-vonzio-network}
+      # Same per-instance treatment for the egress network (install.sh sets
+      # EGRESS_PROXY_NETWORK=<project>-egress). Without this passthrough the
+      # server's config default ("vonzio-egress") diverges from the network
+      # compose actually created below.
+      - EGRESS_PROXY_NETWORK=${EGRESS_PROXY_NETWORK:-vonzio-egress}
       # Docker-in-Docker access (feature 0001) — off by default. Set to
       # dind-privileged (single-tenant/own-box) or sysbox (needs Sysbox on the
       # host) to let profiles flagged docker_access run nested compose stacks. The
