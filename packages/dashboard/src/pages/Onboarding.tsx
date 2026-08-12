@@ -3,6 +3,8 @@ import { AlertTriangle } from "lucide-react";
 import { PROVIDER_CATALOG, type ProviderInfo } from "@vonzio/shared";
 import { createProfile } from "../api/client.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
+import { useChatGptSignIn, ChatGptSignInPanel } from "../components/ChatGptSignIn.js";
+import { useEntitlements } from "../registry/index.js";
 import "./login.css";
 
 /**
@@ -68,6 +70,26 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
     }
   }
 
+  // Both credential paths (pasted key + ChatGPT OAuth) auto-create the
+  // default profile server-side; fetch it so step 2 can ask for
+  // /v1/profiles/:id/models with the right id.
+  async function advanceToModelStep() {
+    const profilesRes = await fetch("/v1/profiles", { credentials: "include" });
+    const profiles = (await profilesRes.json()) as Array<{ id: string; user_id: string | null }>;
+    const own = profiles.find((p) => p.user_id);
+    if (!own) throw new Error("Default agent was not created — please retry.");
+    setProfileId(own.id);
+    setStep("model");
+  }
+
+  // The ChatGPT device-login's poll route created the credential + default
+  // profile (same attachKeyToProfile as the paste path) — just advance.
+  function onOauthConnected() {
+    advanceToModelStep().catch((err) => {
+      setError(err instanceof Error ? err.message : "Setup failed");
+    });
+  }
+
   async function onCredentialSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
@@ -94,15 +116,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      // The endpoint auto-created a default profile when the user had zero.
-      // Fetch it so step 2 can ask for /v1/profiles/:id/models with the
-      // right id (the POST response is the key, not the profile).
-      const profilesRes = await fetch("/v1/profiles", { credentials: "include" });
-      const profiles = (await profilesRes.json()) as Array<{ id: string; user_id: string | null }>;
-      const own = profiles.find((p) => p.user_id);
-      if (!own) throw new Error("Default agent was not created — please retry.");
-      setProfileId(own.id);
-      setStep("model");
+      await advanceToModelStep();
       setSubmitting(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Setup failed");
@@ -141,6 +155,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
             submitting={submitting}
             error={error}
             onSubmit={onCredentialSubmit}
+            onOauthConnected={onOauthConnected}
             onSkip={onSkip}
             skipping={skipping}
           />
@@ -160,7 +175,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
 }
 
 function CredentialStep({
-  kind, setKind, secret, setSecret, baseUrl, setBaseUrl, showAdvanced, setShowAdvanced, submitting, error, onSubmit, onSkip, skipping,
+  kind, setKind, secret, setSecret, baseUrl, setBaseUrl, showAdvanced, setShowAdvanced, submitting, error, onSubmit, onOauthConnected, onSkip, skipping,
 }: {
   kind: CredentialKind;
   setKind: (k: CredentialKind) => void;
@@ -173,9 +188,22 @@ function CredentialStep({
   submitting: boolean;
   error: string | null;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
+  onOauthConnected: () => void;
   onSkip: () => void;
   skipping: boolean;
 }) {
+  const entitlements = useEntitlements();
+  // ChatGPT-subscription device login (shared with Settings → Keys). The poll
+  // route creates the credential + default profile server-side, so success
+  // just advances the wizard.
+  const codex = useChatGptSignIn(onOauthConnected);
+  const oauthSelected = !!CRED_META[kind].oauthLogin;
+  const signingIn = codex.status === "starting" || codex.status === "waiting";
+  // Switching provider mid-sign-in abandons the device flow — stop polling.
+  useEffect(() => {
+    if (!oauthSelected) codex.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [oauthSelected]);
   return (
     <div className="login-card login-card--wide">
       <span className="vz-eyebrow">Step 1 of 2 — credential</span>
@@ -187,8 +215,16 @@ function CredentialStep({
       <form className="login-form" onSubmit={onSubmit}>
         <fieldset className="cred-options" aria-label="Provider">
           {(Object.keys(CRED_META) as CredentialKind[])
-            // OAuth-login providers use a Sign-in flow, not a pasted key.
-            .filter((k) => !CRED_META[k].oauthLogin)
+            // Entitlement-gated providers only show for entitled users (OSS
+            // grants subscription_oauth by default). Of the oauthLogin
+            // providers, the ChatGPT device login is wired into this wizard
+            // via the shared ChatGptSignIn flow; any future ones stay hidden
+            // until they are.
+            .filter((k) => {
+              const m = CRED_META[k];
+              if (m.entitlement && !entitlements.includes(m.entitlement)) return false;
+              return !m.oauthLogin || m.kind === "openai_oauth";
+            })
             .map((k) => (
             <CredOption
               key={k}
@@ -217,7 +253,9 @@ function CredentialStep({
           </div>
         )}
 
-        <label className="vz-field">
+        {/* OAuth providers replace the paste-a-token field with the shared
+            device-login flow (button below + inline status panel here). */}
+        {!oauthSelected && <label className="vz-field">
           <span className="vz-field__label">{CRED_META[kind].fieldLabel}</span>
           <input
             type="password"
@@ -229,7 +267,9 @@ function CredentialStep({
             autoComplete="off"
             autoFocus
           />
-        </label>
+        </label>}
+
+        {oauthSelected && codex.status !== "idle" && <ChatGptSignInPanel state={codex} />}
 
         {kind === "openai" && (showAdvanced ? (
           <label className="vz-field">
@@ -258,13 +298,24 @@ function CredentialStep({
 
         {error && <p className="login-error" role="alert">{error}</p>}
 
-        <button
-          type="submit"
-          className="vz-btn vz-btn--primary vz-btn--mono login-submit"
-          disabled={submitting || skipping}
-        >
-          {submitting ? "Validating credential…" : "Continue →"}
-        </button>
+        {oauthSelected ? (
+          <button
+            type="button"
+            onClick={codex.start}
+            className="vz-btn vz-btn--primary vz-btn--mono login-submit"
+            disabled={signingIn || skipping}
+          >
+            {signingIn ? "Waiting for ChatGPT approval…" : "Sign in with ChatGPT →"}
+          </button>
+        ) : (
+          <button
+            type="submit"
+            className="vz-btn vz-btn--primary vz-btn--mono login-submit"
+            disabled={submitting || skipping}
+          >
+            {submitting ? "Validating credential…" : "Continue →"}
+          </button>
+        )}
 
         {/* Escape hatch for a cautious user: create a keyless default agent and
             drop into the app. The workspace's no-key state guides them to add a
