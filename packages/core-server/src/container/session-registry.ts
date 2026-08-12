@@ -696,12 +696,17 @@ export class SessionRegistry {
 
       // Non-persistent sessions: destroy on idle. "paused" is included so a
       // container paused by the branch above still gets torn down at the TTL
-      // (rm -f works on paused containers — no unpause needed).
+      // (rm -f works on paused containers — no unpause needed). The pausable
+      // predicate gates teardown too: a playbook in a >TTL chain_delay_ms gap
+      // must not lose its container (and workspace files) mid-run — it was
+      // exempt from this teardown by nothing before #333 either, which could
+      // wipe a long-gapped chain's workspace; absolute expiry still bounds it.
       if (
         (session.status === "idle" || session.status === "paused") &&
         !session.persistent &&
         session.container_id &&
-        idleMs > this.config.idleTtlSecs * 1000
+        idleMs > this.config.idleTtlSecs * 1000 &&
+        this.isSessionPausable(id)
       ) {
         this.logPausedSavings(id, "idle-ttl teardown");
         await this.callbacks.onIdleExpiry(id, session.container_id);

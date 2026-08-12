@@ -52,7 +52,7 @@ export const workspaceFilesRoutes = fp(
       if (!command) return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "command is required"));
       // The idle sweep may have paused this container (issue #333) — exec
       // against a paused container 409s, so resume it first. Same below.
-      await ensureContainerRunning(containerManager, workspace.container_id);
+      await ensureContainerRunning(containerManager, workspace.container_id, sessionRegistry);
 
       const MAX_BYTES = 64_000;
       const TIMEOUT_MS = 30_000;
@@ -102,7 +102,7 @@ export const workspaceFilesRoutes = fp(
       }
       const path = reqPath;
       const cmd = ["find", path, "-maxdepth", "1", "-not", "-path", path, "-printf", "%f\t%s\t%y\n"];
-      await ensureContainerRunning(containerManager, workspace.container_id);
+      await ensureContainerRunning(containerManager, workspace.container_id, sessionRegistry);
 
       const lines: string[] = [];
       for await (const line of containerManager.execInContainer(workspace.container_id, cmd)) {
@@ -132,7 +132,7 @@ export const workspaceFilesRoutes = fp(
       if (!workspace || !workspace.container_id || !authorizeTenantAccess(request, workspace)) {
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found or no container"));
       }
-      await ensureContainerRunning(containerManager, workspace.container_id);
+      await ensureContainerRunning(containerManager, workspace.container_id, sessionRegistry);
 
       const uploaded: { name: string; size: number }[] = [];
       const parts = request.parts();
@@ -226,7 +226,7 @@ export const workspaceFilesRoutes = fp(
         return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Workspace not found"));
       }
 
-      await ensureContainerRunning(containerManager, workspace.container_id);
+      await ensureContainerRunning(containerManager, workspace.container_id, sessionRegistry);
       const raw = request.query.paths;
       const inputPaths = Array.isArray(raw) ? raw : raw ? [raw] : [];
       if (inputPaths.length === 0) {
@@ -303,7 +303,7 @@ export const workspaceFilesRoutes = fp(
       const safePath = filePath.startsWith("/workspace/") ? filePath : `/workspace/${filePath}`;
 
       const cmd = ["rm", "-f", safePath];
-      await ensureContainerRunning(containerManager, workspace.container_id);
+      await ensureContainerRunning(containerManager, workspace.container_id, sessionRegistry);
       for await (const _ of containerManager.execInContainer(workspace.container_id, cmd)) {
         // drain
       }

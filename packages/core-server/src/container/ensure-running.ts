@@ -1,4 +1,5 @@
 import type { ContainerManager } from "@vonzio/shared";
+import type { SessionRegistry } from "./session-registry.js";
 
 /**
  * Unpause a container if the idle sweep paused it (issue #333). Call before
@@ -6,18 +7,30 @@ import type { ContainerManager } from "@vonzio/shared";
  * (Files panel, terminal, ports, previews) — docker exec against a paused
  * container 409s, and a proxied HTTP request to one hangs.
  *
+ * When a registry is provided, an unpause also syncs it: updateActivity flips
+ * the session back to "active" and refreshes last_active_at. Without that,
+ * the registry still says "paused" with a stale clock and the sweeper would
+ * tear the (now running, in-use) container down at the original idle TTL.
+ *
  * Deliberately does nothing for other states: "exited"/"not_found" keep their
  * existing error paths, which produce clearer messages than anything generic
  * we could throw here.
  */
 export async function ensureContainerRunning(
-  containerManager: ContainerManager,
+  // Structural minimum so routes that only hold a Pick<> of the manager
+  // (e.g. workspaces.ts) can still call this.
+  containerManager: Pick<ContainerManager, "getContainerStatus" | "unpauseContainer">,
   containerId: string,
+  sessionRegistry?: SessionRegistry,
 ): Promise<void> {
   const status = await containerManager
     .getContainerStatus(containerId)
     .catch(() => null);
   if (status === "paused") {
     await containerManager.unpauseContainer(containerId);
+    if (sessionRegistry) {
+      const ws = sessionRegistry.getByContainer(containerId);
+      if (ws) await sessionRegistry.updateActivity(ws.session_id);
+    }
   }
 }

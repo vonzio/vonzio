@@ -19,6 +19,7 @@ import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
+import { ensureContainerRunning } from "../container/ensure-running.js";
 import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID, parseMemory } from "../container/docker-manager.js";
 import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK, VOLUME_PREFIX_DOCKER } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
@@ -841,6 +842,8 @@ export class Orchestrator extends EventEmitter {
     if (status === "running") return containerId;
     if (status === "paused") {
       await this.deps.containerManager.unpauseContainer(containerId);
+      // Sync the registry so the sweep doesn't act on a stale "paused" state.
+      await this.deps.sessionRegistry.updateActivity(task.session_id!);
       return containerId;
     }
     const exit = await this.deps.containerManager.getContainerExit(containerId).catch(() => null);
@@ -896,6 +899,12 @@ export class Orchestrator extends EventEmitter {
     let session = this.deps.sessionRegistry.get(task.session_id);
     let containerId: string;
     let needsInit = false;
+
+    // Restart the idle clock BEFORE any container work. activeTasks (the
+    // sweep's other pause exemption) is only populated after init — without
+    // this bump, a session with stale last_active_at could be idle-paused
+    // mid-provision/setup when those run long. (Issue #333.)
+    if (session) await this.deps.sessionRegistry.updateActivity(task.session_id);
 
     if (session && session.container_id) {
       const status = await this.deps.containerManager.getContainerStatus(session.container_id);
@@ -961,6 +970,13 @@ export class Orchestrator extends EventEmitter {
       needsInit = true;
     }
 
+    // Register in activeTasks BEFORE workspace provisioning/setup: the idle
+    // sweep's pausable predicate reads this map, and long-running setup
+    // commands would otherwise leave the fresh container pausable mid-init
+    // (the updateActivity bump above only buys sessionIdlePauseSecs).
+    this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
+    this.emit("task:container", task.id, containerId);
+
     if (needsInit) {
       if (task.workspace) {
         const workspacePath = await this.deps.workspace.provision(task.workspace);
@@ -974,9 +990,6 @@ export class Orchestrator extends EventEmitter {
         await this.runSetupCommands(containerId, profile.setup_commands, env);
       }
     }
-
-    this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
-    this.emit("task:container", task.id, containerId);
 
     let result: TaskResult;
     try {
@@ -2175,10 +2188,10 @@ export class Orchestrator extends EventEmitter {
 
   async answerUserQuestion(containerId: string, answers: Record<string, string>): Promise<void> {
     // The agent may be parked on an AskUserQuestion long enough for the idle
-    // sweep to pause the container; the answer must land regardless.
-    if ((await this.deps.containerManager.getContainerStatus(containerId)) === "paused") {
-      await this.deps.containerManager.unpauseContainer(containerId);
-    }
+    // sweep to pause the container; the answer must land regardless (and the
+    // registry must learn about the resume, or the sweep re-pauses/tears it
+    // down on the stale clock).
+    await ensureContainerRunning(this.deps.containerManager, containerId, this.deps.sessionRegistry);
     const json = JSON.stringify({ answers });
     const cmd = ["sh", "-c", `echo '${json.replace(/'/g, "'\\''")}' > /tmp/vonzio_ask_user_answer.json`];
     for await (const _ of this.deps.containerManager.execInContainer(containerId, cmd)) {

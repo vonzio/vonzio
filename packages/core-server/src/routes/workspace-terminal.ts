@@ -104,10 +104,14 @@ export const workspaceTerminalRoutes = fp(
       (async () => {
         let status = await containerManager.getContainerStatus(containerId).catch(() => "not_found");
         // Idle-paused container (issue #333): opening a terminal is an
-        // explicit "I'm back" — resume it instead of rejecting.
+        // explicit "I'm back" — resume it instead of rejecting. Sync the
+        // registry too, or the sweeper still sees a stale paused session and
+        // tears the container down under the live terminal at the idle TTL.
         if (status === "paused") {
           try {
             await containerManager.unpauseContainer(containerId);
+            const ws = sessionRegistry.getByContainer(containerId);
+            if (ws) await sessionRegistry.updateActivity(ws.session_id);
             status = "running";
           } catch { /* fall through to the rejection below */ }
         }

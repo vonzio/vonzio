@@ -130,6 +130,7 @@ jobs:
             packages/core-server/src/orchestrator/retry.test.ts \
             packages/core-server/src/orchestrator/agent-comms.test.ts \
             packages/core-server/src/container/session-registry-sweep.test.ts \
+            packages/core-server/src/container/ensure-running.test.ts \
             packages/core-server/src/queue/queue.test.ts \
             packages/core-server/src/services/format-message.test.ts \
             packages/core-server/src/services/agent-output-rewriter.test.ts \
