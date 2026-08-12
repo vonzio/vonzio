@@ -169,7 +169,18 @@ const server = http.createServer((req, res) => {
     let bodyBuf = Buffer.concat(chunks);
     try {
       const json = JSON.parse(bodyBuf.toString("utf8"));
-      if (relocateToolResultImages(json)) bodyBuf = Buffer.from(JSON.stringify(json), "utf8");
+      let changed = relocateToolResultImages(json);
+      // Subagent model aliases ("haiku" etc.) resolve to claude-* ids Ollama
+      // doesn't serve — substitute the session's model (set by the
+      // orchestrator) instead of failing the subagent. Mirror of the
+      // llm-gateway's substituteClaudeModel; alias env remaps make this rare.
+      const defaultModel = process.env.LLM_GATEWAY_DEFAULT_MODEL || "";
+      if (defaultModel && /^claude-/i.test(json?.model || "")) {
+        process.stdout.write(`ollama-proxy: rewrote unsupported model '${json.model}' -> '${defaultModel}'\n`);
+        json.model = defaultModel;
+        changed = true;
+      }
+      if (changed) bodyBuf = Buffer.from(JSON.stringify(json), "utf8");
     } catch { /* not JSON / unparsable — forward original bytes unchanged */ }
     forward(req, res, headers, bodyBuf);
   });

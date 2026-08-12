@@ -717,6 +717,21 @@ function makeCodexStreamTranslator(model) {
 const TARGET = process.env.LLM_GATEWAY_TARGET_URL || "https://api.openai.com";
 const MODE = process.env.LLM_GATEWAY_MODE || "openai";
 const PORT = parseInt(process.env.LLM_GATEWAY_PORT || "11434", 10);
+// The session's actual model (set by the orchestrator). Safety net: the
+// Claude Agent SDK resolves subagent model aliases ("haiku"/"sonnet"/"opus")
+// to claude-* ids; those alias envs are remapped per turn, but any claude-*
+// id that still reaches this gateway would be forwarded verbatim and rejected
+// by every non-Anthropic upstream (e.g. Codex 400 "claude-haiku… is not
+// supported when using Codex with a ChatGPT account"). Substitute the
+// session model instead of failing the whole subagent.
+const DEFAULT_MODEL = process.env.LLM_GATEWAY_DEFAULT_MODEL || "";
+function substituteClaudeModel(body) {
+  if (DEFAULT_MODEL && /^claude-/i.test(body?.model || "")) {
+    console.log(`[llm-gateway] rewrote unsupported model '${body.model}' -> '${DEFAULT_MODEL}'`);
+    body.model = DEFAULT_MODEL;
+  }
+  return body;
+}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -857,6 +872,7 @@ async function handleOpenAI(req, res) {
       return;
     }
     const wantStream = !!anthropicBody.stream;
+    substituteClaudeModel(anthropicBody);
     const oa = anthropicToOpenAIRequest(anthropicBody);
     const send = (body) => {
       const buf = Buffer.from(JSON.stringify(body));
@@ -1083,6 +1099,7 @@ async function handleCodex(req, res) {
       return;
     }
     const wantStream = !!anthropicBody.stream;
+    substituteClaudeModel(anthropicBody);
     // The Codex backend only streams; force stream upstream and aggregate below
     // if the SDK asked for a non-streaming reply.
     const cx = anthropicToCodexRequest({ ...anthropicBody, stream: true });

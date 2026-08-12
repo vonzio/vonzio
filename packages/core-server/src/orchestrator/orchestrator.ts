@@ -79,8 +79,16 @@ const PROVIDER_ROUTE_ENV = [
   "LLM_GATEWAY_MODE",
   "LLM_GATEWAY_TARGET_URL",
   "LLM_GATEWAY_PASSTHROUGH_RAW",
+  "LLM_GATEWAY_DEFAULT_MODEL",
   "CODEX_ACCOUNT_ID",
   "CODEX_ORIGINATOR",
+  // Model-alias remaps (issue: subagent model:"haiku" on a non-Anthropic
+  // provider resolves to a claude-* id the upstream rejects). Set for
+  // gateway-routed providers; must reset on a switch back to Anthropic or
+  // the aliases would keep pointing at the previous provider's model.
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
 ] as const;
 
 const PLATFORM_MCP_PRIMER = `\n\n## The "vonzio" platform tools\nYou have a "vonzio" toolset that controls the Vonzio platform you run on — it acts on the USER'S ACCOUNT, not the machine you're executing in. Don't confuse platform objects with your own runtime:\n- A WORKSPACE is a Vonzio chat session (its own container), NOT your working directory or the container you're in. For "how many workspaces/chats do I have", call workspace_list — never inspect the filesystem or run ls to answer that.\n- An AGENT (profile) is a saved config (model/tools/skills/prompt) → profile_list/profile_*. A SKILL is a reusable playbook (skill_list/create_skill). A SUBAGENT is a delegate template (subagent_*). KNOWLEDGE = docs at /knowledge (knowledge_*). A PLAYBOOK is a scheduled/repeatable automation; a TASK is a single run.\n- SCHEDULING: when the user asks for recurring or time-based work ("every day at 2pm…", "remind me…", "each Monday…", "keep checking…"), CREATE A PLAYBOOK with a cron schedule (playbook_create) — don't just do it once. Put the recurring instructions in the playbook's prompt.\n- NOTIFYING: to alert/message the user (reminders, findings, "ping me on Slack/Telegram"), use the notify_user tool — it routes to the user's configured channel automatically. Don't assume a specific channel.\n- LEARNING SKILLS: when you work out a non-trivial, repeatable procedure, save it as a skill with create_skill (bundle helper scripts via files) so future runs reuse it. skill_list first to avoid duplicates; improve an existing one with skill_update rather than duplicating. This is how you improve over time.\n- PREREQUISITES: sending to Slack/Telegram needs that integration connected. You can't connect integrations yourself — check with integration_list and, if a channel is missing, ask the user to connect it in Settings before scheduling.\nUse the vonzio tools for questions about the user's account/history/agents/automations; use your normal filesystem tools (Read/Bash/…) for the files in front of you.`;
@@ -1851,6 +1859,23 @@ export class Orchestrator extends EventEmitter {
     const model = resolveTaskModel(task, workspace, profile);
     const effort = task.effort ?? profile.effort;
 
+    // Non-Anthropic providers: pin the SDK's model ALIASES to the session
+    // model. A subagent spawned with model:"haiku"/"sonnet"/"opus" otherwise
+    // resolves to a claude-* id that the gateway forwards verbatim and the
+    // upstream rejects (e.g. Codex 400: "claude-haiku… is not supported when
+    // using Codex with a ChatGPT account"). The SDK honors these env remaps
+    // at alias-resolution time; LLM_GATEWAY_DEFAULT_MODEL is the gateway-side
+    // safety net for any claude-* id that still slips through.
+    const gatewayProvider = profile.resolved_provider === "ollama"
+      || profile.resolved_provider === "openai"
+      || profile.resolved_provider === "openai_subscription";
+    if (gatewayProvider && model && env) {
+      env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+      env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+      env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+      env.LLM_GATEWAY_DEFAULT_MODEL = model;
+    }
+
     // Whether the effective model can accept image input. Claude (api_key /
     // claude_subscription) is vision-capable; OpenAI we can't introspect so we
     // assume yes (image_url usually works); Ollama varies per model — query its
@@ -2282,7 +2307,7 @@ export class Orchestrator extends EventEmitter {
     return { serveraddress: reg.url, username: reg.username, password: reg.password };
   }
 
-  private async buildEnvFromProfile(profile: { resolved_api_key?: string; resolved_provider?: string; resolved_base_url?: string; git_provider_id?: string; git_provider_ids?: string[]; id: string; user_id?: string | null }): Promise<Record<string, string>> {
+  private async buildEnvFromProfile(profile: { resolved_api_key?: string; resolved_provider?: string; resolved_base_url?: string; git_provider_id?: string; git_provider_ids?: string[]; id: string; user_id?: string | null; model?: string | null }): Promise<Record<string, string>> {
     // Inject the secrets granted to this profile — system vars (API key,
     // git tokens) override below. Per-agent scoping (feature #17): a secret
     // with scope='all' goes to every profile; scope='agents' only to those
@@ -2295,11 +2320,18 @@ export class Orchestrator extends EventEmitter {
       const secrets = await this.deps.secretVaultService.getDecryptedForProfile(profile.user_id, profile.id);
       Object.assign(env, secrets);
     }
+    // Non-Anthropic providers: the gateway daemon reads this at container
+    // boot as its substitute for any claude-* model id that reaches it (the
+    // SDK's subagent model aliases resolve to claude-* — see runAgent, which
+    // also sets the per-turn alias remap envs). Boot-time fallback only; the
+    // per-turn runAgent value wins for the runner process.
+    const gatewayDefaultModel = profile.model ?? "";
     if (profile.resolved_provider === "ollama" && profile.resolved_api_key) {
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
       env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
       const { OLLAMA_BASE_URL } = await import("../services/ollama-service.js");
       env.OLLAMA_TARGET_URL = OLLAMA_BASE_URL;
+      if (gatewayDefaultModel) env.LLM_GATEWAY_DEFAULT_MODEL = gatewayDefaultModel;
     } else if (profile.resolved_provider === "openai" && profile.resolved_api_key) {
       // The Claude Agent SDK still speaks the Anthropic Messages API; the
       // in-container llm-gateway translates it to OpenAI Chat Completions and
@@ -2313,6 +2345,7 @@ export class Orchestrator extends EventEmitter {
       env.LLM_GATEWAY_TARGET_URL = profile.resolved_base_url
         ? normalizeOpenAIBaseUrl(profile.resolved_base_url)
         : OPENAI_BASE_URL;
+      if (gatewayDefaultModel) env.LLM_GATEWAY_DEFAULT_MODEL = gatewayDefaultModel;
     } else if (profile.resolved_provider === "claude_subscription" && profile.resolved_api_key) {
       // Claude Pro/Max subscription: the value is an sk-ant-oat01- OAuth token,
       // not an API key. The Agent SDK / Claude Code uses CLAUDE_CODE_OAUTH_TOKEN
@@ -2344,6 +2377,7 @@ export class Orchestrator extends EventEmitter {
       // Truthful by default (see feature 0047 §5); a self-hoster can set
       // CODEX_ORIGINATOR=codex_cli_rs for full CLI parity at their own risk.
       env.CODEX_ORIGINATOR = process.env.CODEX_ORIGINATOR || "vonzio";
+      if (gatewayDefaultModel) env.LLM_GATEWAY_DEFAULT_MODEL = gatewayDefaultModel;
     } else if (profile.resolved_api_key) {
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
       // Same gateway-leak guard as above for native Anthropic API keys.
