@@ -206,7 +206,12 @@ function anthropicToOpenAIRequest(body) {
 const modelCaps = new Map(); // model id -> { tokenParam?, reasoningEffortNone?, noReasoningEffortParam? }
 function capsFor(model) {
   let c = modelCaps.get(model || "");
-  if (!c) { c = {}; modelCaps.set(model || "", c); }
+  if (!c) {
+    // Defensive bound: model ids come from the client, so pathological unique
+    // ids could grow this forever. Losing learned facts just re-learns them.
+    if (modelCaps.size >= 200) modelCaps.clear();
+    c = {}; modelCaps.set(model || "", c);
+  }
   return c;
 }
 
@@ -218,10 +223,15 @@ function capsFor(model) {
 function applyCapabilityFix(oa, errText) {
   const caps = capsFor(oa.model);
 
+  // NB: every matcher requires rejection keywords or remedy phrasing IN
+  // PROXIMITY to the parameter name — a plain substring test would let any
+  // 400 whose body merely echoes these words (validation details, content
+  // filters, proxies quoting the request) poison the cache permanently.
+
   // Tools + reasoning_effort unsupported on chat/completions (gpt-5 family):
   // "Function tools with reasoning_effort are not supported … set
   // reasoning_effort to 'none'".
-  if (/reasoning_effort/i.test(errText) && /not supported|unsupported/i.test(errText)
+  if (/(tools[\s\S]{0,60}reasoning_effort|reasoning_effort[\s\S]{0,60}tools|set reasoning_effort to '?none'?)/i.test(errText)
       && oa.reasoning_effort !== "none" && Array.isArray(oa.tools) && oa.tools.length > 0) {
     caps.reasoningEffortNone = true;
     oa.reasoning_effort = "none";
@@ -230,7 +240,8 @@ function applyCapabilityFix(oa, errText) {
 
   // The opposite failure: a server that doesn't know the param at all (or an
   // o-series model that rejects the value "none" our hint pinned). Remove it.
-  if (/reasoning_effort/i.test(errText) && oa.reasoning_effort !== undefined) {
+  if (/(unsupported|not supported|unrecognized|unknown|unexpected|invalid|extra)[^.]{0,40}reasoning_effort|reasoning_effort[^.]{0,40}(unsupported|not supported|unrecognized|unknown|unexpected|invalid)/i.test(errText)
+      && oa.reasoning_effort !== undefined) {
     caps.noReasoningEffortParam = true;
     caps.reasoningEffortNone = false;
     delete oa.reasoning_effort;
@@ -239,7 +250,8 @@ function applyCapabilityFix(oa, errText) {
 
   // Reasoning models: "Unsupported parameter: 'max_tokens' … use
   // 'max_completion_tokens' instead."
-  if (/max_completion_tokens/.test(errText) && oa.max_tokens != null) {
+  if (/(max_tokens[\s\S]{0,80}max_completion_tokens|use ['"]?max_completion_tokens)/i.test(errText)
+      && oa.max_tokens != null) {
     caps.tokenParam = "max_completion_tokens";
     oa.max_completion_tokens = oa.max_tokens;
     delete oa.max_tokens;
