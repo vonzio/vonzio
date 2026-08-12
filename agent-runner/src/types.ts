@@ -67,7 +67,9 @@ export interface JudgePayload {
   agent_result: string;
   /** What the previous round still had outstanding. */
   prior_missing?: string[];
-  model: string;
+  /** Omitted → the SDK's default model (on gateway providers the alias-remap
+   *  envs pin that default to the session's model). */
+  model?: string;
   effort?: string;
 }
 

@@ -69,7 +69,9 @@ export async function judgeGoal(p: JudgePayload): Promise<GoalVerdict> {
     allowedTools: ["Read", "Grep", "Glob"],
     permissionMode: "bypassPermissions",
     maxTurns: 14,
-    model: p.model,
+    // No model → SDK default (alias-remapped to the session model on
+    // gateway providers) — mirrors the effort handling below.
+    ...(p.model ? { model: p.model } : {}),
     // Only set effort when provided — some models reject the param (mirrors the
     // agent). Verification is bounded by maxTurns + read-only tools anyway.
     ...(p.effort ? { effort: p.effort } : {}),

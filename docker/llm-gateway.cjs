@@ -148,13 +148,14 @@ function anthropicToOpenAIRequest(body) {
   // GPT-5 and o-series reasoning models reject the legacy `max_tokens` and
   // require `max_completion_tokens`; gpt-4* and most OpenAI-compatible
   // servers (vLLM, LM Studio, OpenRouter) only understand `max_tokens`.
-  // Anthropic always sends `max_tokens`, so pick by target model family.
+  // The model-family regex is only a FIRST-GUESS hint — what the provider
+  // actually accepts is learned from its 400s (applyCapabilityFix) and
+  // cached, so a mis-guess costs one request, once, per daemon lifetime.
+  const caps = capsFor(body.model);
   if (body.max_tokens != null) {
-    if (/^(o\d|gpt-5)/i.test(body.model || "")) {
-      oa.max_completion_tokens = body.max_tokens;
-    } else {
-      oa.max_tokens = body.max_tokens;
-    }
+    const tokenParam = caps.tokenParam
+      || (/^(o\d|gpt-5)/i.test(body.model || "") ? "max_completion_tokens" : "max_tokens");
+    oa[tokenParam] = body.max_tokens;
   }
   if (oa.stream) oa.stream_options = { include_usage: true };
 
@@ -172,9 +173,102 @@ function anthropicToOpenAIRequest(body) {
       }));
     const choice = translateToolChoice(body.tool_choice);
     if (choice) oa.tool_choice = choice;
+
+    // gpt-5.x reasoning models on /v1/chat/completions DEFAULT reasoning_effort
+    // to a non-none level and then reject it in combination with function
+    // tools ("Function tools with reasoning_effort are not supported … use
+    // /v1/responses or set reasoning_effort to 'none'"). The SDK always sends
+    // tools, so without this every agent turn 400s. Working tools beat hidden
+    // reasoning until this mode speaks the Responses API (issue #349). The
+    // regex is a first-guess hint; learned capabilities override it in both
+    // directions (a server that rejects the param entirely gets it removed).
+    if (!caps.noReasoningEffortParam
+        && (caps.reasoningEffortNone || /^gpt-5/i.test(body.model || ""))) {
+      oa.reasoning_effort = "none";
+    }
   }
 
   return oa;
+}
+
+// ---------------------------------------------------------------------------
+// Learned per-model capabilities
+//
+// Model-name regexes only PREDICT provider behavior; the provider's own 400s
+// are the authoritative capability signal (a rename like gpt-6, or the same
+// model behind OpenRouter's "openai/…" alias, silently defeats any regex).
+// So: send the natural request first, and when the provider rejects it with a
+// recognizable capability error, learn the fact, adjust, and retry — cached
+// per model for the daemon's lifetime so each capability costs at most one
+// failed request. Same philosophy as the adaptive tool trim below.
+// ---------------------------------------------------------------------------
+
+const modelCaps = new Map(); // model id -> { tokenParam?, reasoningEffortNone?, noReasoningEffortParam? }
+function capsFor(model) {
+  let c = modelCaps.get(model || "");
+  if (!c) {
+    // Defensive bound: model ids come from the client, so pathological unique
+    // ids could grow this forever. Losing learned facts just re-learns them.
+    if (modelCaps.size >= 200) modelCaps.clear();
+    c = {}; modelCaps.set(model || "", c);
+  }
+  return c;
+}
+
+/** Inspect a 4xx error body for a KNOWN capability complaint; if found, learn
+ *  it (cache) and mutate `oa` accordingly. Returns a log line, or null when
+ *  the error isn't a capability we understand. Every branch changes `oa` in a
+ *  way that makes the same complaint impossible on the retry, so the caller's
+ *  retry loop can't spin. */
+function applyCapabilityFix(oa, errText) {
+  const caps = capsFor(oa.model);
+
+  // NB: every matcher requires rejection keywords or remedy phrasing IN
+  // PROXIMITY to the parameter name — a plain substring test would let any
+  // 400 whose body merely echoes these words (validation details, content
+  // filters, proxies quoting the request) poison the cache permanently.
+
+  // Tools + reasoning_effort unsupported on chat/completions (gpt-5 family):
+  // "Function tools with reasoning_effort are not supported … set
+  // reasoning_effort to 'none'".
+  if (/(tools[\s\S]{0,60}reasoning_effort|reasoning_effort[\s\S]{0,60}tools|set reasoning_effort to '?none'?)/i.test(errText)
+      && oa.reasoning_effort !== "none" && Array.isArray(oa.tools) && oa.tools.length > 0) {
+    caps.reasoningEffortNone = true;
+    oa.reasoning_effort = "none";
+    return `model '${oa.model}' rejects tools+reasoning_effort — pinned reasoning_effort=none`;
+  }
+
+  // The opposite failure: a server that doesn't know the param at all (or an
+  // o-series model that rejects the value "none" our hint pinned). Remove it.
+  if (/(unsupported|not supported|unrecognized|unknown|unexpected|invalid|extra)[^.]{0,40}reasoning_effort|reasoning_effort[^.]{0,40}(unsupported|not supported|unrecognized|unknown|unexpected|invalid)/i.test(errText)
+      && oa.reasoning_effort !== undefined) {
+    caps.noReasoningEffortParam = true;
+    caps.reasoningEffortNone = false;
+    delete oa.reasoning_effort;
+    return `model '${oa.model}' rejects the reasoning_effort param — removed`;
+  }
+
+  // Reasoning models: "Unsupported parameter: 'max_tokens' … use
+  // 'max_completion_tokens' instead."
+  if (/(max_tokens[\s\S]{0,80}max_completion_tokens|use ['"]?max_completion_tokens)/i.test(errText)
+      && oa.max_tokens != null) {
+    caps.tokenParam = "max_completion_tokens";
+    oa.max_completion_tokens = oa.max_tokens;
+    delete oa.max_tokens;
+    return `model '${oa.model}' wants max_completion_tokens`;
+  }
+
+  // The reverse: an OpenAI-compatible server (vLLM/LM Studio) that only knows
+  // the legacy field, serving a model whose NAME matched the reasoning hint.
+  if (/(unsupported|not supported|unrecognized|unknown|unexpected|invalid|extra)[^.]{0,40}max_completion_tokens|max_completion_tokens[^.]{0,40}(unsupported|not supported|unrecognized|unknown|unexpected|invalid)/i.test(errText)
+      && oa.max_completion_tokens != null) {
+    caps.tokenParam = "max_tokens";
+    oa.max_tokens = oa.max_completion_tokens;
+    delete oa.max_completion_tokens;
+    return `model '${oa.model}' wants legacy max_tokens`;
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -717,6 +811,31 @@ function makeCodexStreamTranslator(model) {
 const TARGET = process.env.LLM_GATEWAY_TARGET_URL || "https://api.openai.com";
 const MODE = process.env.LLM_GATEWAY_MODE || "openai";
 const PORT = parseInt(process.env.LLM_GATEWAY_PORT || "11434", 10);
+// The session's actual model (set by the orchestrator). Safety net: the
+// Claude Agent SDK resolves subagent model aliases ("haiku"/"sonnet"/"opus")
+// to claude-* ids; those alias envs are remapped per turn, but any claude-*
+// id that still reaches this gateway would be forwarded verbatim and rejected
+// by every non-Anthropic upstream (e.g. Codex 400 "claude-haiku… is not
+// supported when using Codex with a ChatGPT account"). Substitute the
+// session model instead of failing the whole subagent.
+// Read the CURRENT session model per request: this daemon outlives the exec
+// that started it, so its process env is frozen — a mid-session model switch
+// only reaches us through the per-turn file the orchestrator writes.
+function currentDefaultModel() {
+  try {
+    const m = require("fs").readFileSync("/tmp/llm-gateway.model", "utf8").trim();
+    if (m) return m;
+  } catch { /* no file yet — boot env below */ }
+  return process.env.LLM_GATEWAY_DEFAULT_MODEL || "";
+}
+function substituteClaudeModel(body) {
+  const fallback = currentDefaultModel();
+  if (fallback && fallback !== body?.model && /^claude-/i.test(body?.model || "")) {
+    console.log(`[llm-gateway] rewrote unsupported model '${body.model}' -> '${fallback}'`);
+    body.model = fallback;
+  }
+  return body;
+}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -857,6 +976,7 @@ async function handleOpenAI(req, res) {
       return;
     }
     const wantStream = !!anthropicBody.stream;
+    substituteClaudeModel(anthropicBody);
     const oa = anthropicToOpenAIRequest(anthropicBody);
     const send = (body) => {
       const buf = Buffer.from(JSON.stringify(body));
@@ -869,30 +989,51 @@ async function handleOpenAI(req, res) {
     };
     let upstream = await send(oa);
 
-    // Adaptive tool trim: if the model rejects the request for exceeding its
-    // context window, drop lowest-priority tools to fit and retry ONCE. Only
-    // fires on the error, so large-context models are never trimmed. Disable
-    // with LLM_GATEWAY_NO_TOOL_TRIM=1.
-    if (
+    // Adaptive error-driven retries. Two learners share the loop:
+    //  - capability fixes (applyCapabilityFix): the provider says a param
+    //    combination is unsupported → learn it for this model, adjust, retry;
+    //  - tool trim: context-window overflow → drop lowest-priority tools ONCE.
+    // Each fix provably changes the request, and attempts are bounded, so the
+    // loop can't spin. Unrecognized errors surface to the caller unchanged.
+    let trimmed = false;
+    let attempts = 0;
+    while (
       (upstream.statusCode === 400 || upstream.statusCode === 413 || upstream.statusCode === 422) &&
-      process.env.LLM_GATEWAY_NO_TOOL_TRIM !== "1" &&
-      Array.isArray(oa.tools) && oa.tools.length > 0
+      attempts < 3
     ) {
       const errText = (await readAll(upstream)).toString("utf8");
-      const limit = parseContextLimit(errText);
-      const trim = limit ? trimOpenAIToolsToFit(oa, limit) : { dropped: 0, changed: false };
-      if (trim.changed) {
-        console.error(`[llm-gateway] context limit ${limit}: capped descriptions${trim.dropped ? ` + dropped ${trim.dropped} tool(s)` : ""} to fit, retrying`);
+
+      const fix = applyCapabilityFix(oa, errText);
+      if (fix) {
+        attempts++;
+        console.error(`[llm-gateway] ${fix}, retrying`);
         upstream = await send(oa);
-      } else {
-        // Not a context error, or nothing left to trim — surface as-is,
-        // preserving the upstream status + content-type.
-        res.writeHead(upstream.statusCode, {
-          "content-type": upstream.headers["content-type"] || "application/json",
-        });
-        res.end(errText);
-        return;
+        continue;
       }
+
+      if (
+        !trimmed &&
+        process.env.LLM_GATEWAY_NO_TOOL_TRIM !== "1" &&
+        Array.isArray(oa.tools) && oa.tools.length > 0
+      ) {
+        const limit = parseContextLimit(errText);
+        const trim = limit ? trimOpenAIToolsToFit(oa, limit) : { dropped: 0, changed: false };
+        if (trim.changed) {
+          trimmed = true;
+          attempts++;
+          console.error(`[llm-gateway] context limit ${limit}: capped descriptions${trim.dropped ? ` + dropped ${trim.dropped} tool(s)` : ""} to fit, retrying`);
+          upstream = await send(oa);
+          continue;
+        }
+      }
+
+      // Not an error we know how to fix — surface as-is, preserving the
+      // upstream status + content-type.
+      res.writeHead(upstream.statusCode, {
+        "content-type": upstream.headers["content-type"] || "application/json",
+      });
+      res.end(errText);
+      return;
     }
 
     if (upstream.statusCode >= 400) {
@@ -1083,6 +1224,7 @@ async function handleCodex(req, res) {
       return;
     }
     const wantStream = !!anthropicBody.stream;
+    substituteClaudeModel(anthropicBody);
     // The Codex backend only streams; force stream upstream and aggregate below
     // if the SDK asked for a non-streaming reply.
     const cx = anthropicToCodexRequest({ ...anthropicBody, stream: true });

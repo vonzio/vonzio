@@ -24,7 +24,10 @@ export interface JudgePayload {
   acceptance_criteria?: string[];
   agent_result: string;
   prior_missing?: string[];
-  model: string;
+  /** Omitted → the SDK's default model. On gateway providers the alias-remap
+   *  envs pin that default to the session's model, so "no model" is the
+   *  correct spelling of "whatever this session actually runs on". */
+  model?: string;
   effort?: string;
 }
 
