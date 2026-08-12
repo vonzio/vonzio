@@ -248,7 +248,7 @@ function applyCapabilityFix(oa, errText) {
 
   // The reverse: an OpenAI-compatible server (vLLM/LM Studio) that only knows
   // the legacy field, serving a model whose NAME matched the reasoning hint.
-  if (/(unrecognized|unknown|unexpected|invalid|extra).{0,40}max_completion_tokens|max_completion_tokens.{0,40}(unrecognized|unknown|unexpected|invalid|not supported)/i.test(errText)
+  if (/(unsupported|not supported|unrecognized|unknown|unexpected|invalid|extra)[^.]{0,40}max_completion_tokens|max_completion_tokens[^.]{0,40}(unsupported|not supported|unrecognized|unknown|unexpected|invalid)/i.test(errText)
       && oa.max_completion_tokens != null) {
     caps.tokenParam = "max_tokens";
     oa.max_tokens = oa.max_completion_tokens;
