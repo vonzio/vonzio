@@ -28,6 +28,11 @@ COPY packages/dictation/package.json packages/dictation/
 COPY packages/plugins/ packages/plugins/
 COPY packages/core-server/package.json packages/core-server/
 COPY packages/dashboard/package.json packages/dashboard/
+# dashboard-registry is a WORKSPACE — without this COPY, npm resolves the
+# PUBLISHED @vonzio/dashboard-registry from npmjs instead of the repo's,
+# pinning stale peer ranges (bit us on the lucide-react 1.x bump) and
+# potentially stale registry code in image builds.
+COPY packages/dashboard-registry/ packages/dashboard-registry/
 COPY agent-runner/package.json agent-runner/
 
 RUN npm install
