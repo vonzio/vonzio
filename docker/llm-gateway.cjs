@@ -172,6 +172,17 @@ function anthropicToOpenAIRequest(body) {
       }));
     const choice = translateToolChoice(body.tool_choice);
     if (choice) oa.tool_choice = choice;
+
+    // gpt-5.x reasoning models on /v1/chat/completions DEFAULT reasoning_effort
+    // to a non-none level and then reject it in combination with function
+    // tools ("Function tools with reasoning_effort are not supported … use
+    // /v1/responses or set reasoning_effort to 'none'"). The SDK always sends
+    // tools, so without this every agent turn 400s. Working tools beat hidden
+    // reasoning until this mode speaks the Responses API (tracked upstream in
+    // the repo); o-series models don't accept "none", hence gpt-5 only.
+    if (/^gpt-5/i.test(body.model || "")) {
+      oa.reasoning_effort = "none";
+    }
   }
 
   return oa;
