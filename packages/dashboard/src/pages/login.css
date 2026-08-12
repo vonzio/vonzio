@@ -313,3 +313,28 @@
 .sodium-shell .login-footer .links a:hover {
   color: var(--vz-sodium);
 }
+
+/* ── Onboarding: wider card + two-column provider picker ─────────────────
+   The provider step stacks 4+ radio cards; at the login card's 420px that
+   forces vertical scrolling. Widen ONLY the onboarding steps (login/setup
+   keep the narrow card) and lay the options out in two columns so the whole
+   step fits on screen. Collapses back to one column on small viewports. */
+.sodium-shell .login-card--wide {
+  max-width: 720px;
+}
+
+.sodium-shell .cred-options {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+  /* Radio cards in the same row get equal heights so rows read as rows. */
+  align-items: stretch;
+}
+
+@media (max-width: 680px) {
+  .sodium-shell .login-card--wide { max-width: 420px; }
+  .sodium-shell .cred-options { grid-template-columns: 1fr; }
+}
