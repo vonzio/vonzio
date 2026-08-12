@@ -521,16 +521,25 @@ export function setupWsHandler(
             opts.sessionRegistry.extendExpiry(msg.session_id, new Date(Date.now() + 86400 * 1000).toISOString());
             opts.sessionRegistry.setStatus(msg.session_id, "active");
 
-            try {
-              const profile = await opts.profileService.getResolved(session.profile_id);
-              if (profile) {
-                const containerId = await orchestrator.wakeWorkspaceContainer(msg.session_id, profile);
-                if (containerId) {
-                  newContainerName = await opts.containerManager.getContainerName(containerId) ?? containerId.slice(0, 12);
+            // Lazy claim (issue #333): only PERSISTENT sessions get an eager
+            // wake — their volume survives, so replayed preview URLs can be
+            // rewritten to the recovered container and actually work. A
+            // non-persistent resumable session lost its container AND its
+            // files; waking eagerly costs a container for a conversation the
+            // user may only be re-reading. Its container is created on the
+            // first turn (dispatchSession), same as a brand-new chat.
+            if (session.persistent) {
+              try {
+                const profile = await opts.profileService.getResolved(session.profile_id);
+                if (profile) {
+                  const containerId = await orchestrator.wakeWorkspaceContainer(msg.session_id, profile);
+                  if (containerId) {
+                    newContainerName = await opts.containerManager.getContainerName(containerId) ?? containerId.slice(0, 12);
+                  }
                 }
+              } catch (err) {
+                wsLog?.error({ sessionId: msg.session_id, err }, "Failed to wake container on resume");
               }
-            } catch (err) {
-              wsLog?.error({ sessionId: msg.session_id, err }, "Failed to wake container on resume");
             }
           }
           await resumeIfPaused(msg.session_id, session);

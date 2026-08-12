@@ -13,6 +13,10 @@ export interface SessionRegistryCallbacks {
 
 export interface SessionRegistryConfig {
   idleTtlSecs: number;
+  /** Pause a NON-persistent session's container after this idle window (0 =
+   *  disabled). Distinct from workstationIdlePauseSecs, which governs
+   *  persistent sessions. Issue #333. */
+  sessionIdlePauseSecs: number;
   maxLifetimeSecs: number;
   workstationIdlePauseSecs: number;
   workstationMaxLifetimeSecs: number;
@@ -40,6 +44,14 @@ export class SessionRegistry {
   private containerManager: ContainerManager | null = null;
   /** Callback to get session IDs with live WS connections. Injected by server. */
   getConnectedSessionIds: () => Set<string> = () => new Set();
+  /** Whether a session may be idle-paused. Injected by server to exempt
+   *  playbook sessions (pb-*) and sessions with a task currently dispatching —
+   *  a playbook sitting in a chain_delay_ms gap has no WS connection and no
+   *  active task, so wall-clock idleness alone would freeze it mid-run. */
+  isSessionPausable: (sessionId: string) => boolean = () => true;
+  /** When each paused container was paused — for logging the CPU-idle time
+   *  actually saved (issue #333 metrics). In-memory only. */
+  private pausedAtMs = new Map<string, number>();
   /** Ephemeral, connection-scoped local-exec state (CLI `--local-exec`). NOT
    *  persisted — it's a property of the live WS connection, not the workspace
    *  row. Set on session.start when the client advertised the capability;
@@ -206,6 +218,7 @@ export class SessionRegistry {
   async updateActivity(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session) {
+      if (session.status === "paused") this.logPausedSavings(sessionId, "resumed");
       const now = new Date().toISOString();
       session.last_active_at = now;
       session.status = "active";
@@ -623,6 +636,7 @@ export class SessionRegistry {
 
       // Check absolute expiry
       if (new Date(session.expires_at).getTime() <= now) {
+        this.logPausedSavings(id, "absolute expiry");
         // Destroy container if it exists (covers paused sessions too)
         if (session.container_id) {
           try {
@@ -662,13 +676,34 @@ export class SessionRegistry {
         continue;
       }
 
-      // Non-persistent sessions: destroy on idle
+      // Non-persistent sessions: pause early (issue #333). A parked chat
+      // otherwise burns CPU/scheduler for the whole idle TTL window before
+      // teardown; docker pause freezes it at ~zero CPU while keeping resume
+      // instant (unpause — no rebuild, no context replay). Full teardown
+      // still happens at idleTtlSecs below.
       if (
-        session.status === "idle" &&
+        session.status === "active" &&
+        !session.persistent &&
+        session.container_id &&
+        this.config.sessionIdlePauseSecs > 0 &&
+        idleMs > this.config.sessionIdlePauseSecs * 1000 &&
+        idleMs <= this.config.idleTtlSecs * 1000 &&
+        this.isSessionPausable(id)
+      ) {
+        await this.pauseSession(id, session);
+        continue;
+      }
+
+      // Non-persistent sessions: destroy on idle. "paused" is included so a
+      // container paused by the branch above still gets torn down at the TTL
+      // (rm -f works on paused containers — no unpause needed).
+      if (
+        (session.status === "idle" || session.status === "paused") &&
         !session.persistent &&
         session.container_id &&
         idleMs > this.config.idleTtlSecs * 1000
       ) {
+        this.logPausedSavings(id, "idle-ttl teardown");
         await this.callbacks.onIdleExpiry(id, session.container_id);
         session.status = "resumable";
         session.container_id = null;
@@ -684,8 +719,10 @@ export class SessionRegistry {
   }
 
   private async pauseSession(sessionId: string, session: Workspace): Promise<void> {
-    // Evict oldest paused session if at capacity
-    await this.evictIfNeeded();
+    // Evict oldest paused workstation if at capacity. Only persistent sessions
+    // count against (or fall victim to) the workstation pause budget —
+    // non-persistent paused chats are bounded by their own idle TTL teardown.
+    if (session.persistent) await this.evictIfNeeded();
 
     // Call pause callback first — only update status on success
     try {
@@ -696,22 +733,42 @@ export class SessionRegistry {
     }
 
     session.status = "paused";
+    this.pausedAtMs.set(sessionId, Date.now());
     await this.db
       .update(schema.workspaces)
       .set({ status: "paused" as WorkspaceStatus })
       .where(eq(schema.workspaces.session_id, sessionId));
 
-    this.log.info({ sessionId, containerId: session.container_id }, "Session paused");
+    this.log.info(
+      { sessionId, containerId: session.container_id, persistent: session.persistent },
+      "Session paused",
+    );
+  }
+
+  /** Log how long a container sat paused (CPU-idle time saved, issue #333)
+   *  and drop the bookkeeping entry. No-op if the session was never paused. */
+  private logPausedSavings(sessionId: string, reason: string): void {
+    const pausedAt = this.pausedAtMs.get(sessionId);
+    if (pausedAt === undefined) return;
+    this.pausedAtMs.delete(sessionId);
+    this.log.info(
+      { sessionId, pausedSecs: Math.round((Date.now() - pausedAt) / 1000), reason },
+      "Paused-container savings",
+    );
   }
 
   private async evictIfNeeded(): Promise<void> {
-    if (this.pausedCount < this.config.maxPaused) return;
+    let pausedPersistent = 0;
+    for (const s of this.sessions.values()) {
+      if (s.status === "paused" && s.persistent) pausedPersistent++;
+    }
+    if (pausedPersistent < this.config.maxPaused) return;
 
-    // Find oldest paused by last_active_at (single pass)
+    // Find oldest paused workstation by last_active_at (single pass)
     let victim: Workspace | null = null;
     let oldestTime = Infinity;
     for (const s of this.sessions.values()) {
-      if (s.status === "paused") {
+      if (s.status === "paused" && s.persistent) {
         const t = new Date(s.last_active_at).getTime();
         if (t < oldestTime) {
           oldestTime = t;
@@ -726,6 +783,7 @@ export class SessionRegistry {
       "Evicting oldest paused session to make room",
     );
 
+    this.logPausedSavings(victim.session_id, "paused-capacity eviction");
     if (victim.container_id) {
       try {
         await this.callbacks.onIdleExpiry(victim.session_id, victim.container_id);

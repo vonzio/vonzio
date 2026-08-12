@@ -178,6 +178,11 @@ const configSchema = z.object({
 
   // Session (Mode C)
   SESSION_IDLE_TTL_SECS: z.coerce.number().default(14400),
+  // Pause (docker pause) a non-persistent chat session's container after this
+  // much inactivity — well before the full teardown at SESSION_IDLE_TTL_SECS.
+  // Frees CPU/scheduler for parked conversations while keeping resume instant
+  // (unpause, no context replay). 0 disables pausing. Issue #333.
+  SESSION_IDLE_PAUSE_SECS: z.coerce.number().default(900),
   SESSION_MAX_LIFETIME_SECS: z.coerce.number().default(86400),
   MAX_SESSION_CONTAINERS: z.coerce.number().default(50),
 

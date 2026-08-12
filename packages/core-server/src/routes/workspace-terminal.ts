@@ -102,7 +102,15 @@ export const workspaceTerminalRoutes = fp(
       });
 
       (async () => {
-        const status = await containerManager.getContainerStatus(containerId).catch(() => "not_found");
+        let status = await containerManager.getContainerStatus(containerId).catch(() => "not_found");
+        // Idle-paused container (issue #333): opening a terminal is an
+        // explicit "I'm back" — resume it instead of rejecting.
+        if (status === "paused") {
+          try {
+            await containerManager.unpauseContainer(containerId);
+            status = "running";
+          } catch { /* fall through to the rejection below */ }
+        }
         if (status !== "running") { socket.close(4004, "Container not running"); return; }
 
         let session: TerminalSession;

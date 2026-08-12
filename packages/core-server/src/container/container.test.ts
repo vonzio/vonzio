@@ -359,6 +359,7 @@ describe("ContainerPool orphan reaping", () => {
 const defaultRegistryConfig = {
   idleTtlSecs: 1800,
   maxLifetimeSecs: 86400,
+  sessionIdlePauseSecs: 0,
   workstationIdlePauseSecs: 1800,
   workstationMaxLifetimeSecs: 604800,
   maxPaused: 10,
@@ -680,3 +681,4 @@ describe("DockerManager createContainer HostConfig (feature 0001)", () => {
     expect(created[0].HostConfig.PidsLimit).toBe(4096);
   });
 });
+

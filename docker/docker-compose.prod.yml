@@ -100,6 +100,7 @@ services:
       # container cap / lengthen the idle TTL without editing this file. The
       # defaults match the historical hardcoded values.
       - SESSION_IDLE_TTL_SECS=${SESSION_IDLE_TTL_SECS:-3600}
+      - SESSION_IDLE_PAUSE_SECS=${SESSION_IDLE_PAUSE_SECS:-900}
       - MAX_SESSION_CONTAINERS=${MAX_SESSION_CONTAINERS:-20}
       - WORKSTATION_MAX_PAUSED=${WORKSTATION_MAX_PAUSED:-10}
       - PREVIEW_MODE=hostname

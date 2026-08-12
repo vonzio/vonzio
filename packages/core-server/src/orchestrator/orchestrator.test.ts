@@ -199,7 +199,7 @@ describe("Orchestrator", () => {
     await pool.init();
 
     sessionRegistry = new SessionRegistry(
-      { idleTtlSecs: 1800, maxLifetimeSecs: 86400, workstationIdlePauseSecs: 1800, workstationMaxLifetimeSecs: 604800, maxPaused: 10, volumeTtlDays: 7 },
+      { idleTtlSecs: 1800, sessionIdlePauseSecs: 0, maxLifetimeSecs: 86400, workstationIdlePauseSecs: 1800, workstationMaxLifetimeSecs: 604800, maxPaused: 10, volumeTtlDays: 7 },
       {
         onIdleExpiry: vi.fn(),
         onIdlePause: vi.fn(),

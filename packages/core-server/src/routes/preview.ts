@@ -6,6 +6,7 @@ import type { SessionRegistry } from "../container/session-registry.js";
 import type { Auth } from "../auth/better-auth.js";
 import { createPreviewAuthChecker, unauthorizedHtml, brandedErrorHtml, previewCodeGateHtml, CODE_COOKIE_NAME, type PreviewAuthChecker } from "../auth/preview-auth.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
+import { ensureContainerRunning } from "../container/ensure-running.js";
 
 // Read the `vonzio_preview` cookie value. Same-origin cookie set on the
 // preview subdomain after a successful _pvt exchange.
@@ -137,6 +138,11 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
     // Resolve short ID → full ID
     const fullId = await containerManager.resolveContainerId(shortId);
     if (!fullId) return null;
+
+    // A proxied request to an idle-paused container hangs (frozen processes
+    // never accept) — resume it first. Cache TTL is 30s, so a paused
+    // container (paused after >=15 min idle) always re-enters this path.
+    await ensureContainerRunning(containerManager, fullId);
 
     // Get container IP
     const ip = await containerManager.getContainerIp(fullId);
@@ -421,6 +427,7 @@ export function setupHostnamePreviewProxy(
     if (cached && Date.now() - cached.ts < CACHE_TTL) return { fullId: cached.fullId, ip: cached.ip, port };
     const fullId = await containerManager.resolveContainerId(shortId);
     if (!fullId) return null;
+    await ensureContainerRunning(containerManager, fullId); // idle-paused → resume (issue #333)
     const ip = await containerManager.getContainerIp(fullId);
     if (!ip) return null;
     ipCache.set(shortId, { fullId, ip, ts: Date.now() });
@@ -631,6 +638,7 @@ export function setupPreviewWebSocketProxy(
 
     const fullId = await containerManager.resolveContainerId(shortId);
     if (!fullId) return null;
+    await ensureContainerRunning(containerManager, fullId); // idle-paused → resume (issue #333)
     const ip = await containerManager.getContainerIp(fullId);
     if (!ip) return null;
     ipCache.set(shortId, { fullId, ip, ts: Date.now() });

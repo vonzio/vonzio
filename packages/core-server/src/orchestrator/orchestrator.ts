@@ -847,6 +847,11 @@ export class Orchestrator extends EventEmitter {
     if (exit?.oomKilled) {
       throw new Error("workspace container was OOM-killed (out of memory) — raise CONTAINER_MEMORY_LIMIT_SESSION");
     }
+    if (!session.persistent || !session.volume_id) {
+      // Non-persistent caller reached us expecting the paused→unpause path,
+      // but the container died in the meantime. No volume to rebuild from.
+      throw new Error("workspace container is not running and the session has no persistent volume to recover from");
+    }
     return this.recoverPersistentContainer(task, session, profile, env);
   }
 
@@ -985,12 +990,18 @@ export class Orchestrator extends EventEmitter {
       // resume (the SDK session is on the volume). Don't retry an OOM kill —
       // ensureContainerRunning surfaces that with an actionable message, and a
       // retry would just OOM again.
-      if (
-        !isContainerNotRunningError(err) ||
-        !session.persistent ||
-        !session.volume_id
-      ) {
+      if (!isContainerNotRunningError(err)) {
         throw err;
+      }
+      // Non-persistent sessions have no volume to rebuild from, so the only
+      // recoverable case is a pause that raced the exec (issue #333's
+      // idle-pause makes that window real): unpause and retry. Anything
+      // deader stays fatal for them.
+      if (!session.persistent || !session.volume_id) {
+        const status = await this.deps.containerManager
+          .getContainerStatus(containerId)
+          .catch(() => "not_found" as const);
+        if (status !== "paused") throw err;
       }
       containerId = await this.reviveSessionContainer(task, session, profile, env, containerId);
       this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
@@ -2152,7 +2163,22 @@ export class Orchestrator extends EventEmitter {
     return containerId;
   }
 
+  /** True when a task is currently dispatching for this session. Used by the
+   *  idle sweep's pausable predicate — a session mid-dispatch (including the
+   *  goal loop's rounds) must never be paused out from under its exec. */
+  hasActiveSessionTask(sessionId: string): boolean {
+    for (const t of this.activeTasks.values()) {
+      if (t.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
   async answerUserQuestion(containerId: string, answers: Record<string, string>): Promise<void> {
+    // The agent may be parked on an AskUserQuestion long enough for the idle
+    // sweep to pause the container; the answer must land regardless.
+    if ((await this.deps.containerManager.getContainerStatus(containerId)) === "paused") {
+      await this.deps.containerManager.unpauseContainer(containerId);
+    }
     const json = JSON.stringify({ answers });
     const cmd = ["sh", "-c", `echo '${json.replace(/'/g, "'\\''")}' > /tmp/vonzio_ask_user_answer.json`];
     for await (const _ of this.deps.containerManager.execInContainer(containerId, cmd)) {
