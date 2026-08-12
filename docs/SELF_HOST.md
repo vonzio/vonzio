@@ -208,6 +208,7 @@ The full env var reference is in [packages/core-server/src/config.ts](../package
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Legacy fallback. Used only when `DOCKER_HOST` is unset. |
 | `POOL_MIN_SIZE` | `0` | Warm container count |
 | `SESSION_IDLE_TTL_SECS` | `14400` | How long a paused session sticks around |
+| `SESSION_IDLE_PAUSE_SECS` | `900` | Idle seconds before a chat's container is paused (`docker pause`) — near-zero CPU while parked, instant resume on the next message. `0` disables. Persistent workstations use `WORKSTATION_IDLE_PAUSE_SECS` instead. |
 
 OAuth integrations (GitHub, Google, Slack, etc.) require their client id/secret pairs — see `config.ts` for the variable names.
 

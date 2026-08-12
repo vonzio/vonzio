@@ -18,6 +18,7 @@ describe("loadConfig", () => {
     expect(config.POOL_MIN_SIZE).toBe(3);
     expect(config.POOL_MAX_SIZE).toBe(10);
     expect(config.SESSION_IDLE_TTL_SECS).toBe(14400);
+    expect(config.SESSION_IDLE_PAUSE_SECS).toBe(900);
     expect(config.RATE_LIMIT_CALLER_RPM).toBe(60);
     expect(config.CONTAINER_MEMORY_LIMIT_BATCH).toBe("1g");
     expect(config.CONTAINER_MEMORY_LIMIT_SESSION).toBe("768m");

@@ -153,6 +153,9 @@ services:
       - POOL_MIN_SIZE=2
       - POOL_MAX_SIZE=5
       - SESSION_IDLE_TTL_SECS=1800
+      # Pause (docker pause) idle non-persistent chat containers after this many
+      # seconds — near-zero CPU while parked, instant resume. 0 disables. #333
+      - SESSION_IDLE_PAUSE_SECS=${SESSION_IDLE_PAUSE_SECS:-900}
       - MAX_SESSION_CONTAINERS=10
       # Path-mode preview: agent dev servers are reachable through the
       # server's /preview/{container_id}/{port}/ route. No wildcard DNS

@@ -6,6 +6,7 @@ import type { SessionRegistry } from "../container/session-registry.js";
 import type { Auth } from "../auth/better-auth.js";
 import { createPreviewAuthChecker, unauthorizedHtml, brandedErrorHtml, previewCodeGateHtml, CODE_COOKIE_NAME, type PreviewAuthChecker } from "../auth/preview-auth.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
+import { ensureContainerRunning } from "../container/ensure-running.js";
 
 // Read the `vonzio_preview` cookie value. Same-origin cookie set on the
 // preview subdomain after a successful _pvt exchange.
@@ -128,15 +129,22 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
   const CACHE_TTL = 30_000; // 30 seconds
 
   async function resolveTarget(shortId: string, port: number): Promise<{ fullId: string; ip: string; port: number } | null> {
-    // Check cache
+    // Check cache. The running-state check must ALSO run on cache hits:
+    // preview traffic doesn't bump session activity, so the idle sweep can
+    // pause the container while the cache entry is still fresh — a proxied
+    // request to a paused container hangs (frozen processes never accept).
     const cached = ipCache.get(shortId);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      await ensureContainerRunning(containerManager, cached.fullId, sessionRegistry);
       return { fullId: cached.fullId, ip: cached.ip, port };
     }
 
     // Resolve short ID → full ID
     const fullId = await containerManager.resolveContainerId(shortId);
     if (!fullId) return null;
+
+    // Same resume-if-paused on the cold path (issue #333).
+    await ensureContainerRunning(containerManager, fullId, sessionRegistry);
 
     // Get container IP
     const ip = await containerManager.getContainerIp(fullId);
@@ -326,6 +334,8 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
     }
 
     try {
+      // readFile execs into the container — resume it if idle-paused (#333).
+      await ensureContainerRunning(containerManager, fullId, sessionRegistry);
       const content = await containerManager.readFile(fullId, safePath);
       const name = basename(safePath);
       const ext = extname(safePath).toLowerCase();
@@ -418,9 +428,14 @@ export function setupHostnamePreviewProxy(
 
   async function resolveTarget(shortId: string, port: number): Promise<{ fullId: string; ip: string; port: number } | null> {
     const cached = ipCache.get(shortId);
-    if (cached && Date.now() - cached.ts < CACHE_TTL) return { fullId: cached.fullId, ip: cached.ip, port };
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      // Must also run on cache hits — see resolveTarget in previewRoutes.
+      await ensureContainerRunning(containerManager, cached.fullId, sessionRegistry);
+      return { fullId: cached.fullId, ip: cached.ip, port };
+    }
     const fullId = await containerManager.resolveContainerId(shortId);
     if (!fullId) return null;
+    await ensureContainerRunning(containerManager, fullId, sessionRegistry); // idle-paused → resume (issue #333)
     const ip = await containerManager.getContainerIp(fullId);
     if (!ip) return null;
     ipCache.set(shortId, { fullId, ip, ts: Date.now() });
@@ -627,10 +642,15 @@ export function setupPreviewWebSocketProxy(
 
   async function resolve(shortId: string): Promise<{ fullId: string; ip: string } | null> {
     const cached = ipCache.get(shortId);
-    if (cached && Date.now() - cached.ts < CACHE_TTL) return { fullId: cached.fullId, ip: cached.ip };
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      // Must also run on cache hits — see resolveTarget in previewRoutes.
+      await ensureContainerRunning(containerManager, cached.fullId, sessionRegistry);
+      return { fullId: cached.fullId, ip: cached.ip };
+    }
 
     const fullId = await containerManager.resolveContainerId(shortId);
     if (!fullId) return null;
+    await ensureContainerRunning(containerManager, fullId, sessionRegistry); // idle-paused → resume (issue #333)
     const ip = await containerManager.getContainerIp(fullId);
     if (!ip) return null;
     ipCache.set(shortId, { fullId, ip, ts: Date.now() });

@@ -239,6 +239,10 @@ export const workspaceRoutes = fp(
       }
       let detected: number[] = [];
       try {
+        // Deliberately NO unpause here (#333): this is a read-only poll. The
+        // dashboard's picker only runs while connected (never paused), and an
+        // external monitor unpausing parked containers on every probe would
+        // defeat idle-pausing. A paused container just reports no ports.
         detected = await containerManager.listListeningPorts(workspace.container_id);
       } catch {
         detected = [];

@@ -100,6 +100,7 @@ services:
       - POOL_MIN_SIZE=0
       - POOL_MAX_SIZE=5
       - SESSION_IDLE_TTL_SECS=14400
+      - SESSION_IDLE_PAUSE_SECS=${SESSION_IDLE_PAUSE_SECS:-900}
       - MAX_SESSION_CONTAINERS=10
       # Path-mode preview: no wildcard DNS needed. Agent dev servers
       # are reachable through http://localhost:3000/preview/{container_id}/{port}/

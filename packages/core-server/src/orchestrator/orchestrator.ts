@@ -19,6 +19,7 @@ import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { ContainerPool } from "../container/pool.js";
+import { ensureContainerRunning } from "../container/ensure-running.js";
 import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID, parseMemory } from "../container/docker-manager.js";
 import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK, VOLUME_PREFIX_DOCKER } from "../container/session-registry.js";
 import { WorkspaceProvisioner } from "../container/workspace.js";
@@ -841,11 +842,18 @@ export class Orchestrator extends EventEmitter {
     if (status === "running") return containerId;
     if (status === "paused") {
       await this.deps.containerManager.unpauseContainer(containerId);
+      // Sync the registry so the sweep doesn't act on a stale "paused" state.
+      await this.deps.sessionRegistry.updateActivity(task.session_id!);
       return containerId;
     }
     const exit = await this.deps.containerManager.getContainerExit(containerId).catch(() => null);
     if (exit?.oomKilled) {
       throw new Error("workspace container was OOM-killed (out of memory) — raise CONTAINER_MEMORY_LIMIT_SESSION");
+    }
+    if (!session.persistent || !session.volume_id) {
+      // Non-persistent caller reached us expecting the paused→unpause path,
+      // but the container died in the meantime. No volume to rebuild from.
+      throw new Error("workspace container is not running and the session has no persistent volume to recover from");
     }
     return this.recoverPersistentContainer(task, session, profile, env);
   }
@@ -891,6 +899,12 @@ export class Orchestrator extends EventEmitter {
     let session = this.deps.sessionRegistry.get(task.session_id);
     let containerId: string;
     let needsInit = false;
+
+    // Restart the idle clock BEFORE any container work. activeTasks (the
+    // sweep's other pause exemption) is only populated after init — without
+    // this bump, a session with stale last_active_at could be idle-paused
+    // mid-provision/setup when those run long. (Issue #333.)
+    if (session) await this.deps.sessionRegistry.updateActivity(task.session_id);
 
     if (session && session.container_id) {
       const status = await this.deps.containerManager.getContainerStatus(session.container_id);
@@ -956,6 +970,13 @@ export class Orchestrator extends EventEmitter {
       needsInit = true;
     }
 
+    // Register in activeTasks BEFORE workspace provisioning/setup: the idle
+    // sweep's pausable predicate reads this map, and long-running setup
+    // commands would otherwise leave the fresh container pausable mid-init
+    // (the updateActivity bump above only buys sessionIdlePauseSecs).
+    this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
+    this.emit("task:container", task.id, containerId);
+
     if (needsInit) {
       if (task.workspace) {
         const workspacePath = await this.deps.workspace.provision(task.workspace);
@@ -970,9 +991,6 @@ export class Orchestrator extends EventEmitter {
       }
     }
 
-    this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
-    this.emit("task:container", task.id, containerId);
-
     let result: TaskResult;
     try {
       result = await this.runAgent(task, containerId, profile, env, !needsInit);
@@ -985,12 +1003,18 @@ export class Orchestrator extends EventEmitter {
       // resume (the SDK session is on the volume). Don't retry an OOM kill —
       // ensureContainerRunning surfaces that with an actionable message, and a
       // retry would just OOM again.
-      if (
-        !isContainerNotRunningError(err) ||
-        !session.persistent ||
-        !session.volume_id
-      ) {
+      if (!isContainerNotRunningError(err)) {
         throw err;
+      }
+      // Non-persistent sessions have no volume to rebuild from, so the only
+      // recoverable case is a pause that raced the exec (issue #333's
+      // idle-pause makes that window real): unpause and retry. Anything
+      // deader stays fatal for them.
+      if (!session.persistent || !session.volume_id) {
+        const status = await this.deps.containerManager
+          .getContainerStatus(containerId)
+          .catch(() => "not_found" as const);
+        if (status !== "paused") throw err;
       }
       containerId = await this.reviveSessionContainer(task, session, profile, env, containerId);
       this.activeTasks.set(task.id, { containerId, profileId: task.profile_id, sessionId: task.session_id });
@@ -2152,7 +2176,22 @@ export class Orchestrator extends EventEmitter {
     return containerId;
   }
 
+  /** True when a task is currently dispatching for this session. Used by the
+   *  idle sweep's pausable predicate — a session mid-dispatch (including the
+   *  goal loop's rounds) must never be paused out from under its exec. */
+  hasActiveSessionTask(sessionId: string): boolean {
+    for (const t of this.activeTasks.values()) {
+      if (t.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
   async answerUserQuestion(containerId: string, answers: Record<string, string>): Promise<void> {
+    // The agent may be parked on an AskUserQuestion long enough for the idle
+    // sweep to pause the container; the answer must land regardless (and the
+    // registry must learn about the resume, or the sweep re-pauses/tears it
+    // down on the stale clock).
+    await ensureContainerRunning(this.deps.containerManager, containerId, this.deps.sessionRegistry);
     const json = JSON.stringify({ answers });
     const cmd = ["sh", "-c", `echo '${json.replace(/'/g, "'\\''")}' > /tmp/vonzio_ask_user_answer.json`];
     for await (const _ of this.deps.containerManager.execInContainer(containerId, cmd)) {

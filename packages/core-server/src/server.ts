@@ -174,6 +174,7 @@ export async function buildServer(deps: ServerDeps) {
   const sessionRegistry = new SessionRegistry(
     {
       idleTtlSecs: config.SESSION_IDLE_TTL_SECS,
+      sessionIdlePauseSecs: config.SESSION_IDLE_PAUSE_SECS,
       maxLifetimeSecs: config.SESSION_MAX_LIFETIME_SECS,
       workstationIdlePauseSecs: config.WORKSTATION_IDLE_PAUSE_SECS,
       workstationMaxLifetimeSecs: config.WORKSTATION_MAX_LIFETIME_SECS,
@@ -188,10 +189,16 @@ export async function buildServer(deps: ServerDeps) {
         server.log.info({ sessionId, containerId }, "Session container destroyed on idle TTL");
       },
       onIdlePause: async (sessionId, containerId) => {
+        // Rethrow on failure: pauseSession() only flips status to "paused"
+        // when this callback succeeds. Swallowing the error here left the
+        // session marked paused with a still-running container, and the next
+        // turn's unpause then failed against a container that was never
+        // paused.
         try {
           await containerManager.pauseContainer(containerId);
         } catch (err) {
           server.log.error({ sessionId, containerId, err }, "Failed to pause container");
+          throw err;
         }
       },
       onExpired: async (sessionId) => {
@@ -354,6 +361,13 @@ export async function buildServer(deps: ServerDeps) {
       egressProxySecret: config.EGRESS_PROXY_SECRET ?? config.ENCRYPTION_KEY,
     },
   });
+
+  // Idle-pause exemptions (issue #333): never pause playbook sessions — a
+  // chain sitting in its chain_delay_ms gap has no WS connection and no
+  // active task, so it looks idle by wall-clock — nor any session whose task
+  // is currently dispatching (covers the goal loop's rounds).
+  sessionRegistry.isSessionPausable = (sessionId) =>
+    !sessionId.startsWith("pb-") && !orchestrator.hasActiveSessionTask(sessionId);
 
   // Services
   const taskService = new TaskService(db, queue, orchestrator, profileService);
