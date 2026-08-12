@@ -75,7 +75,7 @@
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
     "@types/bcrypt": "^6.0.0",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/dockerode": "^4.0.1",
     "@types/mailparser": "^3.4.6",
     "@types/nodemailer": "^8.0.1",
