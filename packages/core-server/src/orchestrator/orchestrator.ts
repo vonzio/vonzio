@@ -1048,7 +1048,17 @@ export class Orchestrator extends EventEmitter {
       // overridden provider (e.g. an Anthropic key) → 404. The judge must run
       // on the model the workspace actually uses.
       const judgeWorkspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
-      const judgeModel = resolveTaskModel(task, judgeWorkspace, profile) ?? profile.model ?? "claude-opus-4-8";
+      // The claude-* fallback is only meaningful on Anthropic providers — on a
+      // gateway provider (openai/codex/ollama) with no model configured it
+      // would be forwarded upstream and 400. There the in-container judge
+      // inherits the SDK's default (which the gateway pins to the session
+      // model), so pass no explicit model at all.
+      const anthropicProvider = profile.resolved_provider === "api_key"
+        || profile.resolved_provider === "claude_subscription"
+        || !profile.resolved_provider;
+      const judgeModel = resolveTaskModel(task, judgeWorkspace, profile)
+        ?? profile.model
+        ?? (anthropicProvider ? "claude-opus-4-8" : undefined);
       const judgeEffort = task.effort ?? profile.effort ?? undefined;
       const goal = task.prompt;
       // Per-message acceptance criteria from the composer (optional).
@@ -1148,6 +1158,11 @@ export class Orchestrator extends EventEmitter {
           // autonomous loop deciding instead of dead-stopping.
           if (!judged) {
             try {
+              // The server-side fallback needs a CONCRETE model — there is no
+              // in-container SDK default to lean on here. judgeModel is only
+              // undefined for a gateway provider with no model configured
+              // anywhere; guessing one would just 400 upstream, so skip.
+              if (!judgeModel) throw new Error("no concrete judge model for the server-side fallback");
               // Ollama keys carry no base_url, but Ollama Cloud exposes an
               // OpenAI-compatible API at OLLAMA_BASE_URL/v1 — supply it so the
               // fallback works for ollama (the common "no verdict" case, since
@@ -1488,6 +1503,37 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async runAgent(task: Task, containerId: string, profile: ResolvedProfile, env?: Record<string, string>, isResume?: boolean): Promise<TaskResult> {
+    // Effective model FIRST — the gateway/proxy startup below needs it. Task →
+    // workspace.model_override → profile.model, shared with the dashboard and
+    // bot model pickers so all code paths use the same precedence.
+    const workspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
+    const model = resolveTaskModel(task, workspace, profile);
+    const effort = task.effort ?? profile.effort;
+
+    // Non-Anthropic providers: pin the SDK's model ALIASES to the session
+    // model. A subagent spawned with model:"haiku"/"sonnet"/"opus" otherwise
+    // resolves to a claude-* id that the gateway forwards verbatim and the
+    // upstream rejects (e.g. Codex 400: "claude-haiku… is not supported when
+    // using Codex with a ChatGPT account"). The SDK honors these env remaps
+    // at alias-resolution time; LLM_GATEWAY_DEFAULT_MODEL (env at boot,
+    // /tmp/llm-gateway.model per turn — the daemons outlive this exec's env)
+    // is the gateway-side safety net for any claude-* id that slips through.
+    const gatewayProvider = profile.resolved_provider === "ollama"
+      || profile.resolved_provider === "openai"
+      || profile.resolved_provider === "openai_subscription";
+    if (gatewayProvider && model && env) {
+      env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+      env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+      env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+      env.LLM_GATEWAY_DEFAULT_MODEL = model;
+    }
+    // Per-turn model file for the long-running gateway daemons: their process
+    // env is frozen at daemon start, so a mid-session model switch (workspace
+    // model_override) would leave the claude-*-substitution stale without it.
+    if (gatewayProvider && env) {
+      await this.runSetupCommands(containerId, ['printf %s "$LLM_GATEWAY_DEFAULT_MODEL" > /tmp/llm-gateway.model'], env);
+    }
+
     // Start Ollama auth proxy if needed — only once per container (skip if already running)
     if (env?.OLLAMA_TARGET_URL) {
       // Redirect the daemon's stdout/stderr to a file: a backgrounded process
@@ -1852,29 +1898,9 @@ export class Orchestrator extends EventEmitter {
       this.log.error({ taskId: task.id, sessionId: task.session_id, err }, "knowledge: mount failed");
     }
 
-    // Model: task → workspace.model_override → profile.model. Shared
-    // with the dashboard ModelPicker and the Telegram/Slack /model
-    // pickers so all four code paths use the same precedence.
-    const workspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
-    const model = resolveTaskModel(task, workspace, profile);
-    const effort = task.effort ?? profile.effort;
-
-    // Non-Anthropic providers: pin the SDK's model ALIASES to the session
-    // model. A subagent spawned with model:"haiku"/"sonnet"/"opus" otherwise
-    // resolves to a claude-* id that the gateway forwards verbatim and the
-    // upstream rejects (e.g. Codex 400: "claude-haiku… is not supported when
-    // using Codex with a ChatGPT account"). The SDK honors these env remaps
-    // at alias-resolution time; LLM_GATEWAY_DEFAULT_MODEL is the gateway-side
-    // safety net for any claude-* id that still slips through.
-    const gatewayProvider = profile.resolved_provider === "ollama"
-      || profile.resolved_provider === "openai"
-      || profile.resolved_provider === "openai_subscription";
-    if (gatewayProvider && model && env) {
-      env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
-      env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
-      env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
-      env.LLM_GATEWAY_DEFAULT_MODEL = model;
-    }
+    // Model/effort/alias envs were resolved at the top of runAgent (the
+    // gateway startup needed them); `workspace`, `model`, `effort` are in
+    // scope from there.
 
     // Whether the effective model can accept image input. Claude (api_key /
     // claude_subscription) is vision-capable; OpenAI we can't introspect so we

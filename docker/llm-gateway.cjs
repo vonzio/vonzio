@@ -724,11 +724,21 @@ const PORT = parseInt(process.env.LLM_GATEWAY_PORT || "11434", 10);
 // by every non-Anthropic upstream (e.g. Codex 400 "claude-haiku… is not
 // supported when using Codex with a ChatGPT account"). Substitute the
 // session model instead of failing the whole subagent.
-const DEFAULT_MODEL = process.env.LLM_GATEWAY_DEFAULT_MODEL || "";
+// Read the CURRENT session model per request: this daemon outlives the exec
+// that started it, so its process env is frozen — a mid-session model switch
+// only reaches us through the per-turn file the orchestrator writes.
+function currentDefaultModel() {
+  try {
+    const m = require("fs").readFileSync("/tmp/llm-gateway.model", "utf8").trim();
+    if (m) return m;
+  } catch { /* no file yet — boot env below */ }
+  return process.env.LLM_GATEWAY_DEFAULT_MODEL || "";
+}
 function substituteClaudeModel(body) {
-  if (DEFAULT_MODEL && /^claude-/i.test(body?.model || "")) {
-    console.log(`[llm-gateway] rewrote unsupported model '${body.model}' -> '${DEFAULT_MODEL}'`);
-    body.model = DEFAULT_MODEL;
+  const fallback = currentDefaultModel();
+  if (fallback && fallback !== body?.model && /^claude-/i.test(body?.model || "")) {
+    console.log(`[llm-gateway] rewrote unsupported model '${body.model}' -> '${fallback}'`);
+    body.model = fallback;
   }
   return body;
 }

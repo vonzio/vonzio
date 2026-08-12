@@ -174,8 +174,11 @@ const server = http.createServer((req, res) => {
       // doesn't serve — substitute the session's model (set by the
       // orchestrator) instead of failing the subagent. Mirror of the
       // llm-gateway's substituteClaudeModel; alias env remaps make this rare.
-      const defaultModel = process.env.LLM_GATEWAY_DEFAULT_MODEL || "";
-      if (defaultModel && /^claude-/i.test(json?.model || "")) {
+      // The per-turn file wins over the daemon's frozen boot env.
+      let defaultModel = "";
+      try { defaultModel = require("fs").readFileSync("/tmp/llm-gateway.model", "utf8").trim(); } catch { /* boot env */ }
+      if (!defaultModel) defaultModel = process.env.LLM_GATEWAY_DEFAULT_MODEL || "";
+      if (defaultModel && defaultModel !== json?.model && /^claude-/i.test(json?.model || "")) {
         process.stdout.write(`ollama-proxy: rewrote unsupported model '${json.model}' -> '${defaultModel}'\n`);
         json.model = defaultModel;
         changed = true;
