@@ -7,6 +7,19 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Added
 
+- **Lazy containers: idle chats now pause instead of burning CPU** (#333). A
+  non-persistent chat session's container is `docker pause`d after
+  `SESSION_IDLE_PAUSE_SECS` (default 900s) of inactivity — near-zero CPU while
+  parked, instant resume on the next message (no rebuild, no context replay).
+  Full teardown still happens at `SESSION_IDLE_TTL_SECS`. Playbook sessions,
+  sessions with a dispatching task (incl. goal-loop rounds), pinned workspaces,
+  and connected clients are never paused. Files panel, terminal, previews, and
+  AskUserQuestion answers transparently resume a paused container. Resuming a
+  non-persistent conversation no longer eagerly creates a container — it's
+  created on the first message, so re-opening old chats to read them costs
+  nothing. Logs report the CPU-idle time saved per container
+  ("Paused-container savings"). Set `SESSION_IDLE_PAUSE_SECS=0` to disable.
+
 - **Installer: `--force` flag for non-interactive purge.** `--yes` no longer
   auto-confirms the irreversible `--uninstall --purge` step — it keeps
   auto-confirming the benign prompts (deps, ports), but deleting the database

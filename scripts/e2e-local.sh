@@ -4,6 +4,7 @@
 #
 #   scripts/e2e-local.sh first-run   # lightweight: /setup -> login -> onboarding
 #   scripts/e2e-local.sh chat        # full: real agent container + mock LLM
+#   scripts/e2e-local.sh pause       # chat + idle-pause/resume round-trip (#333)
 #
 # Isolation (via docker/docker-compose.e2e.yml): its own docker network
 # (vonzio-e2e-network), its own volumes (project vonzio-e2e-chat), and alt host
@@ -14,8 +15,8 @@ set -Eeuo pipefail
 
 MODE="${1:-first-run}"
 case "$MODE" in
-  first-run|chat) ;;
-  *) echo "usage: $0 [first-run|chat]" >&2; exit 2 ;;
+  first-run|chat|pause) ;;
+  *) echo "usage: $0 [first-run|chat|pause]" >&2; exit 2 ;;
 esac
 
 cd "$(dirname "$0")/.."
@@ -33,6 +34,9 @@ compose() {
 }
 
 export COMPOSE_PROJECT_NAME="${PROJECT}" DASHBOARD_PORT="${DASH_PORT}" SERVER_PORT="${API_PORT}" REGISTRATION_ENABLED=false
+# pause mode: shrink the idle-pause window so the 30s sweep pauses the chat
+# container fast enough for the spec to observe (#333).
+[ "${MODE:-}" = "pause" ] && export SESSION_IDLE_PAUSE_SECS=10
 
 cleanup() {
   echo ">> tearing down ${PROJECT}"
@@ -47,7 +51,7 @@ cleanup  # clear any leftovers from a previous crashed run
 # Services to start. The chat path needs the mock LLM + a real agent image; the
 # first-run smoke needs neither.
 SERVICES=(postgres docker-proxy server)
-if [ "${MODE}" = "chat" ]; then
+if [ "${MODE}" = "chat" ] || [ "${MODE}" = "pause" ]; then
   SERVICES+=(mock-llm)
   if ! docker image inspect vonzio-agent:latest >/dev/null 2>&1; then
     echo ">> building agent image (first run, ~5-8 min)"
@@ -74,6 +78,9 @@ SPEC="first-run.spec.ts"
 if [ "${MODE}" = "chat" ]; then
   SPEC="chat.spec.ts"
   export VONZIO_E2E_CHAT=1  # un-gates chat.spec.ts (skipped without the mock)
+elif [ "${MODE}" = "pause" ]; then
+  SPEC="lazy-pause.spec.ts"
+  export VONZIO_E2E_CHAT=1 VONZIO_E2E_PAUSE=1
 fi
 echo ">> running ${SPEC}"
 if ! VONZIO_E2E_BASE_URL="http://localhost:${DASH_PORT}" \
