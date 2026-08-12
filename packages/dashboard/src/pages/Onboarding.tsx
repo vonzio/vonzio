@@ -177,7 +177,7 @@ function CredentialStep({
   skipping: boolean;
 }) {
   return (
-    <div className="login-card">
+    <div className="login-card login-card--wide">
       <span className="vz-eyebrow">Step 1 of 2 — credential</span>
       <h1>Pick a <em>provider.</em></h1>
       <p className="lede">
@@ -185,7 +185,7 @@ function CredentialStep({
       </p>
 
       <form className="login-form" onSubmit={onSubmit}>
-        <fieldset style={{ border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+        <fieldset className="cred-options" aria-label="Provider">
           {(Object.keys(CRED_META) as CredentialKind[])
             // OAuth-login providers use a Sign-in flow, not a pasted key.
             .filter((k) => !CRED_META[k].oauthLogin)
@@ -349,7 +349,7 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
   }
 
   return (
-    <div className="login-card">
+    <div className="login-card login-card--wide">
       <span className="vz-eyebrow">Step 2 of 2 — default model</span>
       <h1>Pick a <em>model.</em></h1>
       <p className="lede">

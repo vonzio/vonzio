@@ -94,7 +94,7 @@ export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
     keyPrefix: "sk-ant-oat01-",
     supportsBaseUrl: false,
     warning:
-      "Anthropic's terms no longer permit using a Claude Pro/Max subscription token outside Anthropic's own apps, and since April 2026 such traffic is billed per token rather than drawn from your plan — so this gives no cost saving and risks your Anthropic account. Use an Anthropic API key instead.",
+      "No guarantee Anthropic will keep honoring subscription tokens used outside its own apps.",
   },
   {
     kind: "openai_oauth",
