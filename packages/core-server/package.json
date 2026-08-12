@@ -65,7 +65,7 @@
     "pino": "^10.3.1",
     "resend": "^6.12.3",
     "slackify-markdown": "^5.0.0",
-    "tar-stream": "^2.2.0",
+    "tar-stream": "^3.2.0",
     "tsdav": "^2.3.0",
     "tsx": "^4.19.4",
     "undici": "^8.5.0",
