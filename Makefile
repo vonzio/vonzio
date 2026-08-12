@@ -100,6 +100,9 @@ e2e-fresh: ## Run the first-run smoke against a throwaway isolated stack (no nee
 e2e-chat: ## Run the chat round-trip against an isolated stack + mock LLM (needs the agent image; builds it if missing)
 	@bash scripts/e2e-local.sh chat
 
+e2e-pause: ## Run the idle-pause/resume round-trip (#333) against an isolated stack + mock LLM
+	@bash scripts/e2e-local.sh pause
+
 typecheck: ## Type-check all packages
 	npx tsc --project packages/shared/tsconfig.json --noEmit
 	npx tsc --project packages/core-server/tsconfig.json --noEmit
