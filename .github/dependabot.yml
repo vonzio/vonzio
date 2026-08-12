@@ -1,102 +1,36 @@
 version: 2
 
-# Visibility-only: Dependabot opens PRs when new versions ship; a human
-# reviews, runs them locally against a real workspace, then tags a release.
-# We never auto-merge — the SDK is the runtime that powers every container,
-# so a bad bump kills the product.
+# npm updates come from the WORKSPACE ROOT only. Per-subdirectory npm entries
+# (the previous config) bump a workspace's package.json without regenerating
+# the root package-lock.json, so every such PR permanently failed the
+# lockfile gate — see issue #352 and the 6-week unmergeable backlog it caused.
+# From the root, Dependabot maintains the lockfile coherently across all
+# workspaces, and .github/workflows/dependabot-automerge.yml auto-merges
+# minor/patch PRs once CI is green — majors and the runtime-critical agent
+# SDK always wait for a human.
 updates:
-  # Claude Agent SDK — pinned exact in agent-runner, watched closely.
-  - package-ecosystem: npm
-    directory: /agent-runner
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - agent-sdk
-    commit-message:
-      prefix: "deps(agent-runner)"
-    allow:
-      - dependency-name: "@anthropic-ai/claude-agent-sdk"
-      - dependency-name: "agent-browser"
-
-  # Server, dashboard, widget, web — grouped weekly so the PR queue stays
-  # manageable. Major bumps still open as their own PR.
-  - package-ecosystem: npm
-    directory: /packages/core-server
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-    commit-message:
-      prefix: "deps(server)"
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
-
-  - package-ecosystem: npm
-    directory: /packages/dashboard
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-    commit-message:
-      prefix: "deps(dashboard)"
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
-
-  - package-ecosystem: npm
-    directory: /packages/widget
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-    commit-message:
-      prefix: "deps(widget)"
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
-
-  # Root workspace tooling.
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 6
     labels:
       - dependencies
     commit-message:
-      prefix: "deps(root)"
-    # The Claude Agent SDK is hoisted into the root lockfile via monorepo
-    # workspaces but is pinned exactly in /agent-runner/package.json — it
-    # must only be touched by the dedicated /agent-runner dependabot config.
-    # Without this ignore, the root minor-and-patch group sweeps the SDK
-    # along with everything else and silently breaks the agent image.
-    ignore:
-      - dependency-name: "@anthropic-ai/claude-agent-sdk"
-      - dependency-name: "@anthropic-ai/claude-agent-sdk-*"
+      prefix: "deps"
     groups:
       minor-and-patch:
         update-types:
           - minor
           - patch
+        # Runtime-critical: the SDK powers every agent container. Excluded
+        # from the group so its bumps arrive as their OWN PR — validate with
+        # a rebuilt agent image + `make e2e-chat` before merging (the
+        # auto-merge workflow also skips it explicitly).
         exclude-patterns:
           - "@anthropic-ai/claude-agent-sdk*"
+          - "agent-browser"
 
   # GitHub Actions versions (CI workflows).
   - package-ecosystem: github-actions
@@ -110,6 +44,7 @@ updates:
       prefix: "ci"
 
   # Docker base images (node:22-slim, etc.) — major bumps only, monthly.
+  # Never auto-merged: base-image majors need an image rebuild + e2e pass.
   - package-ecosystem: docker
     directory: /docker
     schedule:
