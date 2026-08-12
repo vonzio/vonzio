@@ -7,7 +7,7 @@
 # up apt security updates. Tagged as ghcr.io/<repo>/agent-base:latest and
 # :<sha>. The deploy-time docker/Dockerfile.agent uses this as its FROM.
 
-FROM node:22-slim
+FROM node:26-slim
 
 # Cache-bust for the apt layers below. `apt-get upgrade` only pulls new
 # debian-security patches when this RUN layer actually executes -- but a
@@ -96,9 +96,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # Claude Agent SDK (CLI + programmatic API).
 RUN npm install -g @anthropic-ai/claude-agent-sdk agent-browser
 
-# Common global tooling. yarn comes via corepack (bundled with Node), pnpm
-# via `corepack enable`.
-RUN corepack enable && \
+# Common global tooling. yarn/pnpm come via corepack — which node >= 25 no
+# longer BUNDLES (it moved out of the runtime distribution), so install it
+# explicitly before enabling.
+RUN npm install -g corepack && corepack enable && \
     npm install -g \
     typescript \
     tsx \
