@@ -1,0 +1,34 @@
+name: dependabot-automerge
+
+# Zero-touch dependency hygiene: arm auto-merge on Dependabot's minor/patch
+# npm + github-actions PRs so they land as soon as required checks are green.
+# Deliberately NOT auto-merged: semver-major updates, anything touching the
+# Claude Agent SDK (runtime-critical — needs `make e2e-chat` on a rebuilt
+# agent image), and docker base-image bumps. Those stay open for a human.
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: ${{ github.actor == 'dependabot[bot]' && github.repository == 'vonzio/vonzio' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch update metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Arm auto-merge for safe updates
+        if: >-
+          steps.meta.outputs.package-ecosystem != 'docker' &&
+          steps.meta.outputs.update-type != 'version-update:semver-major' &&
+          !contains(steps.meta.outputs.dependency-names, 'claude-agent-sdk') &&
+          !contains(steps.meta.outputs.dependency-names, 'agent-browser')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
