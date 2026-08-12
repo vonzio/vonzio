@@ -1,5 +1,5 @@
 .PHONY: install check-lock build test e2e e2e-install e2e-fresh e2e-chat dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
-.PHONY: docker-build docker-dev docker-dev-detached docker-dev-oss-detached docker-dev-oss docker-pull-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat uninstall nuke
+.PHONY: docker-reset-db docker-build docker-dev docker-dev-detached docker-dev-oss-detached docker-dev-oss docker-pull-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat uninstall nuke
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
 # Optional local/downstream extension hook. Any user can drop a `Makefile.saas`
@@ -183,6 +183,17 @@ docker-down: ## Stop the dev stack + clean agent containers
 
 docker-logs: ## Tail the dev stack logs
 	cd docker && $(COMPOSE_DEV) logs -f
+
+# Fresh-database reset for the DEV stack: stops it, drops the DB + app-data
+# volumes (and any spawned agent containers), keeps every image — so the next
+# `make docker-dev-oss` boots in seconds onto an empty DB and the first visit
+# lands on /setup → onboarding again. The heavyweight full wipe is docker-clean.
+docker-reset-db: ## Wipe the dev DB + data volumes (keep images) — rerun docker-dev-oss to retry /setup + onboarding
+	-docker ps -aq --filter "label=managed-by=vonzio" | xargs docker rm -f 2>/dev/null
+	cd docker && $(COMPOSE_DEV) down
+	-docker volume rm vonzio_pgdata vonzio_vonzio-data 2>/dev/null
+	-docker volume ls -q | grep -E '^vonzio-(ws|sdk|dind)-' | xargs docker volume rm 2>/dev/null
+	@echo ">> database wiped — 'make docker-dev-oss' will start fresh on /setup"
 
 docker-clean: ## Remove ALL vonzio containers, images, volumes
 	-docker ps -aq --filter "label=managed-by=vonzio" | xargs docker rm -f 2>/dev/null
