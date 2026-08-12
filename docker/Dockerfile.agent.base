@@ -7,7 +7,7 @@
 # up apt security updates. Tagged as ghcr.io/<repo>/agent-base:latest and
 # :<sha>. The deploy-time docker/Dockerfile.agent uses this as its FROM.
 
-FROM node:22-slim
+FROM node:26-slim
 
 # Cache-bust for the apt layers below. `apt-get upgrade` only pulls new
 # debian-security patches when this RUN layer actually executes -- but a
