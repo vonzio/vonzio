@@ -156,6 +156,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
             error={error}
             onSubmit={onCredentialSubmit}
             onOauthConnected={onOauthConnected}
+            onErrorClear={() => setError(null)}
             onSkip={onSkip}
             skipping={skipping}
           />
@@ -175,7 +176,7 @@ export function Onboarding({ onDone }: { onDone: () => void; ollamaEnabled?: boo
 }
 
 function CredentialStep({
-  kind, setKind, secret, setSecret, baseUrl, setBaseUrl, showAdvanced, setShowAdvanced, submitting, error, onSubmit, onOauthConnected, onSkip, skipping,
+  kind, setKind, secret, setSecret, baseUrl, setBaseUrl, showAdvanced, setShowAdvanced, submitting, error, onSubmit, onOauthConnected, onErrorClear, onSkip, skipping,
 }: {
   kind: CredentialKind;
   setKind: (k: CredentialKind) => void;
@@ -189,6 +190,7 @@ function CredentialStep({
   error: string | null;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
   onOauthConnected: () => void;
+  onErrorClear: () => void;
   onSkip: () => void;
   skipping: boolean;
 }) {
@@ -200,10 +202,12 @@ function CredentialStep({
   const oauthSelected = !!CRED_META[kind].oauthLogin;
   const signingIn = codex.status === "starting" || codex.status === "waiting";
   // Switching provider mid-sign-in abandons the device flow — stop polling.
+  // Keyed on `kind` (not oauthSelected) so a future second OAuth provider
+  // also cancels the previous one's poll.
   useEffect(() => {
-    if (!oauthSelected) codex.cancel();
+    if (!CRED_META[kind].oauthLogin) codex.cancel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [oauthSelected]);
+  }, [kind]);
   return (
     <div className="login-card login-card--wide">
       <span className="vz-eyebrow">Step 1 of 2 — credential</span>
@@ -301,7 +305,7 @@ function CredentialStep({
         {oauthSelected ? (
           <button
             type="button"
-            onClick={codex.start}
+            onClick={() => { onErrorClear(); codex.start(); }}
             className="vz-btn vz-btn--primary vz-btn--mono login-submit"
             disabled={signingIn || skipping}
           >

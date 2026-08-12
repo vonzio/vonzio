@@ -33,54 +33,63 @@ export function useChatGptSignIn(onConnected?: () => void): ChatGptSignInState {
   const [status, setStatus] = useState<ChatGptSignInStatus>("idle");
   const [info, setInfo] = useState<{ user_code: string; verify_url: string } | null>(null);
   const [error, setError] = useState("");
-  const abortRef = useRef(false);
+  // Per-attempt generation token. Every start() claims a new generation and
+  // every cancel/unmount bumps it, so a superseded attempt (sleeping in its
+  // poll timeout) can never resume, touch state, or fire onConnected — a
+  // shared boolean abort flag gets un-aborted by the next start().
+  const genRef = useRef(0);
   // Guard setState-after-unmount: a poll loop can outlive the component.
   const mountedRef = useRef(true);
+  // Always call the LATEST onConnected — the closure captured at start() time
+  // goes stale if the parent re-renders during the (up to 15 min) poll.
+  const onConnectedRef = useRef(onConnected);
+  useEffect(() => { onConnectedRef.current = onConnected; });
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      abortRef.current = true;
+      genRef.current++;
     };
   }, []);
 
   const start = async () => {
     if (status === "starting" || status === "waiting") return;
+    const gen = ++genRef.current;
+    const live = () => mountedRef.current && genRef.current === gen;
     setStatus("starting"); setError(""); setInfo(null);
-    abortRef.current = false;
     try {
       const s = await startCodexLogin();
-      if (abortRef.current) return;
+      if (!live()) return;
       setInfo({ user_code: s.user_code, verify_url: s.verify_url });
       setStatus("waiting");
       window.open(s.verify_url, "_blank", "noopener");
       const intervalMs = Math.max(2000, (s.interval_sec || 5) * 1000);
       const deadline = Date.now() + 15 * 60 * 1000;
       // Poll until the user approves in their browser (or it times out / cancels).
-      while (!abortRef.current && Date.now() < deadline) {
+      while (live() && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, intervalMs));
-        if (abortRef.current) return;
+        if (!live()) return;
         const p = await pollCodexLogin({ device_auth_id: s.device_auth_id, user_code: s.user_code });
+        if (!live()) return;
         if (p.status === "created") {
-          if (!mountedRef.current) return;
           setStatus("created");
-          onConnected?.();
+          onConnectedRef.current?.();
           return;
         }
         // pending / slow_down → keep waiting
       }
-      if (!abortRef.current && mountedRef.current) {
+      if (live()) {
         setStatus("error"); setError("Sign-in timed out. Try again.");
       }
     } catch (e) {
-      if (!mountedRef.current) return;
+      if (!live()) return;
       setStatus("error");
       setError(e instanceof Error ? e.message : "Sign-in failed.");
     }
   };
 
   const cancel = () => {
-    abortRef.current = true;
+    genRef.current++;
     if (mountedRef.current) { setStatus("idle"); setInfo(null); setError(""); }
   };
 

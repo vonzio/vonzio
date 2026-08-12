@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Trash2, KeyRound, CheckCircle, Plus, ExternalLink, AlertTriangle } from "lucide-react";
 import { useApi } from "../../../hooks/useApi.js";
 import {
