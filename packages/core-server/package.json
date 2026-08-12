@@ -82,7 +82,7 @@
     "@types/pg": "^8.15.4",
     "@types/tar-stream": "^2.2.3",
     "@types/ws": "^8.18.1",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.0.3",
     "drizzle-kit": "^0.31.10"
   }
 }
