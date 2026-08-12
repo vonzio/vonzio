@@ -185,7 +185,7 @@ function CredentialStep({
       </p>
 
       <form className="login-form" onSubmit={onSubmit}>
-        <fieldset className="cred-options">
+        <fieldset className="cred-options" aria-label="Provider">
           {(Object.keys(CRED_META) as CredentialKind[])
             // OAuth-login providers use a Sign-in flow, not a pasted key.
             .filter((k) => !CRED_META[k].oauthLogin)

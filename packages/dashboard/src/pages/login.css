@@ -327,6 +327,10 @@
   border: none;
   padding: 0;
   margin: 0;
+  /* UA stylesheets give <fieldset> min-inline-size: min-content — without
+     this reset, long unbroken hint strings (platform.openai.com) stop the
+     grid columns shrinking near the 680px breakpoint. */
+  min-width: 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.65rem;
