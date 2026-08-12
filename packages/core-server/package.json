@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "vonzio data-plane Fastify server — agent orchestration, container lifecycle, MCP runtime, integrations, dashboard API. Open-source (AGPL-3.0-or-later) as part of the vonzio open-core stack.",
+  "description": "vonzio data-plane Fastify server \u2014 agent orchestration, container lifecycle, MCP runtime, integrations, dashboard API. Open-source (AGPL-3.0-or-later) as part of the vonzio open-core stack.",
   "license": "AGPL-3.0-or-later",
   "homepage": "https://vonzio.com",
   "repository": {
@@ -57,7 +57,7 @@
     "ical.js": "^2.2.1",
     "imapflow": "^1.4.6",
     "mailparser": "^3.9.14",
-    "marked": "^16.4.2",
+    "marked": "^18.0.9",
     "nanoid": "^5.1.11",
     "nodemailer": "^9.0.3",
     "p-limit": "^7.3.0",
@@ -65,7 +65,7 @@
     "pino": "^10.3.1",
     "resend": "^6.12.3",
     "slackify-markdown": "^5.0.0",
-    "tar-stream": "^2.2.0",
+    "tar-stream": "^3.2.0",
     "tsdav": "^2.3.0",
     "tsx": "^4.19.4",
     "undici": "^8.5.0",
@@ -75,14 +75,14 @@
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
     "@types/bcrypt": "^6.0.0",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/dockerode": "^4.0.1",
     "@types/mailparser": "^3.4.6",
     "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.15.4",
-    "@types/tar-stream": "^2.2.3",
+    "@types/tar-stream": "^3.1.4",
     "@types/ws": "^8.18.1",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.0.3",
     "drizzle-kit": "^0.31.10"
   }
 }
