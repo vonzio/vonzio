@@ -30,14 +30,20 @@ import { encrypt, decrypt } from "../auth/crypto.js";
 
 export const ANTHROPIC_OAUTH_CLIENT_ID =
   process.env.ANTHROPIC_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+// Endpoints verified against the CURRENT Claude Code binary (2.1.220): the
+// consent flow lives on platform.claude.com now. NB the console.anthropic.com
+// code callback from older references is RETIRED — the consent page still
+// RENDERS with it (render doesn't validate redirect_uri) but the grant step
+// rejects it as unregistered, which presents as "Authorization failed —
+// Invalid request format" only AFTER clicking Authorize.
 export const ANTHROPIC_AUTHORIZE_URL =
-  process.env.ANTHROPIC_OAUTH_AUTHORIZE_URL ?? "https://claude.ai/oauth/authorize";
+  process.env.ANTHROPIC_OAUTH_AUTHORIZE_URL ?? "https://platform.claude.com/oauth/authorize";
 export const ANTHROPIC_TOKEN_URL =
   process.env.ANTHROPIC_OAUTH_TOKEN_URL ?? "https://platform.claude.com/v1/oauth/token";
 /** Out-of-band display redirect: after consent this page SHOWS the
  *  `code#state` string for the user to copy back — no server callback. */
 export const ANTHROPIC_CODE_REDIRECT_URI =
-  process.env.ANTHROPIC_OAUTH_REDIRECT_URI ?? "https://console.anthropic.com/oauth/code/callback";
+  process.env.ANTHROPIC_OAUTH_REDIRECT_URI ?? "https://platform.claude.com/oauth/code/callback";
 /** Scope set the Claude Code client requests; inference is the one we need,
  *  the rest keep the token fully usable by the in-container SDK. */
 export const ANTHROPIC_OAUTH_SCOPE =
