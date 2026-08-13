@@ -15,6 +15,9 @@ export interface CreateApiKeyInput {
   auth_token?: string | null;
   /** OpenAI-compatible endpoint override (openai provider only). */
   base_url?: string | null;
+  /** OAuth access-token expiry (ISO) — Anthropic OAuth keys only; their
+   *  tokens are opaque, so expiry must be persisted (migration 37). */
+  token_expires_at?: string | null;
   allowed_user_ids?: string[];
 }
 
@@ -59,6 +62,7 @@ export class ApiKeyService {
       encrypted_api_key: input.api_key ? encrypt(input.api_key, this.encryptionKey) : null,
       encrypted_auth_token: input.auth_token ? encrypt(input.auth_token, this.encryptionKey) : null,
       base_url: input.base_url || null,
+      token_expires_at: input.token_expires_at ?? null,
       created_at: now,
       last_used_at: null,
     };
@@ -94,10 +98,13 @@ export class ApiKeyService {
    *  token). Used by the resolve-time refresh: OpenAI refresh tokens are
    *  single-use, so the rotated refresh token MUST be stored or the next
    *  refresh fails. Writes secrets directly without touching name/sharing. */
-  async rotateSubscriptionTokens(id: string, accessToken: string, refreshToken: string): Promise<void> {
+  async rotateSubscriptionTokens(id: string, accessToken: string, refreshToken: string, tokenExpiresAt?: string): Promise<void> {
     await this.db.update(schema.anthropicKeys).set({
       encrypted_api_key: encrypt(accessToken, this.encryptionKey),
       encrypted_auth_token: encrypt(refreshToken, this.encryptionKey),
+      // Only OAuth flows that KNOW the expiry pass it (Anthropic); Codex
+      // reads expiry from its JWT and leaves the column untouched.
+      ...(tokenExpiresAt !== undefined ? { token_expires_at: tokenExpiresAt } : {}),
     }).where(eq(schema.anthropicKeys.id, id));
     this.onKeyChanged?.(id);
   }
@@ -269,6 +276,7 @@ export class ApiKeyService {
       auth_token: redact
         ? undefined
         : (row.encrypted_auth_token ? decrypt(row.encrypted_auth_token, this.encryptionKey) : undefined),
+      token_expires_at: row.token_expires_at,
       // base_url is non-secret config — returned in both redacted and
       // with-secrets reads so the editor can show it and the orchestrator
       // can resolve it.

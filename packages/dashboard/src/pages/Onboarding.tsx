@@ -4,6 +4,7 @@ import { PROVIDER_CATALOG, type ProviderInfo } from "@vonzio/shared";
 import { createProfile } from "../api/client.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 import { useChatGptSignIn, ChatGptSignInPanel } from "../components/ChatGptSignIn.js";
+import { useClaudeSignIn, ClaudeSignInPanel } from "../components/ClaudeSignIn.js";
 import { useEntitlements } from "../registry/index.js";
 import "./login.css";
 
@@ -199,13 +200,20 @@ function CredentialStep({
   // route creates the credential + default profile server-side, so success
   // just advances the wizard.
   const codex = useChatGptSignIn(onOauthConnected);
+  // Claude subscription: browser sign-in is the primary path; the legacy
+  // paste-a-setup-token field stays available behind a toggle.
+  const claude = useClaudeSignIn(onOauthConnected);
+  const [usePasteToken, setUsePasteToken] = useState(false);
+  const claudeSelected = kind === "anthropic_oauth" && !usePasteToken;
   const oauthSelected = !!CRED_META[kind].oauthLogin;
   const signingIn = codex.status === "starting" || codex.status === "waiting";
-  // Switching provider mid-sign-in abandons the device flow — stop polling.
-  // Keyed on `kind` (not oauthSelected) so a future second OAuth provider
-  // also cancels the previous one's poll.
+  const claudeBusy = claude.status === "starting" || claude.status === "completing";
+  // Switching provider mid-sign-in abandons the flows — stop poll/paste.
+  // Keyed on `kind` (not the derived booleans) so any provider change
+  // cancels whichever flow was running.
   useEffect(() => {
     if (!CRED_META[kind].oauthLogin) codex.cancel();
+    if (kind !== "anthropic_oauth") { claude.cancel(); setUsePasteToken(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
   return (
@@ -259,7 +267,7 @@ function CredentialStep({
 
         {/* OAuth providers replace the paste-a-token field with the shared
             device-login flow (button below + inline status panel here). */}
-        {!oauthSelected && <label className="vz-field">
+        {!oauthSelected && !claudeSelected && <label className="vz-field">
           <span className="vz-field__label">{CRED_META[kind].fieldLabel}</span>
           <input
             type="password"
@@ -274,6 +282,18 @@ function CredentialStep({
         </label>}
 
         {oauthSelected && codex.status !== "idle" && <ChatGptSignInPanel state={codex} />}
+
+        {claudeSelected && claude.status !== "idle" && <ClaudeSignInPanel state={claude} />}
+
+        {kind === "anthropic_oauth" && (
+          <button
+            type="button"
+            onClick={() => { setUsePasteToken(!usePasteToken); claude.cancel(); }}
+            style={{ alignSelf: "flex-start", background: "none", border: 0, color: "var(--vz-muted)", fontSize: "0.8rem", cursor: "pointer", padding: 0, fontFamily: "inherit" }}
+          >
+            {usePasteToken ? "← Sign in with your browser instead" : "Paste a setup-token instead (claude setup-token)"}
+          </button>
+        )}
 
         {kind === "openai" && (showAdvanced ? (
           <label className="vz-field">
@@ -302,7 +322,16 @@ function CredentialStep({
 
         {error && <p className="login-error" role="alert">{error}</p>}
 
-        {oauthSelected ? (
+        {claudeSelected ? (
+          <button
+            type="button"
+            onClick={() => { onErrorClear(); claude.start(); }}
+            className="vz-btn vz-btn--primary vz-btn--mono login-submit"
+            disabled={claudeBusy || claude.status === "waiting" || skipping}
+          >
+            {claude.status === "waiting" || claudeBusy ? "Waiting for the pasted code…" : "Sign in with Claude →"}
+          </button>
+        ) : oauthSelected ? (
           <button
             type="button"
             onClick={() => { onErrorClear(); codex.start(); }}

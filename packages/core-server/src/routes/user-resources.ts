@@ -71,6 +71,9 @@ export interface UserResourceRoutesOptions {
   gitProviderService: GitProviderService;
   secretVaultService: SecretVaultService;
   documentService: DocumentService;
+  /** Seals/unseals the stateless Anthropic-OAuth auth tokens (and matches the
+   *  key used for credential encryption everywhere else). */
+  encryptionKey: string;
   /**
    * Optional SaaS hook — given userId + the ALS-pinned active org,
    * returns the set of user_secret ids to hide from the response.
@@ -546,6 +549,53 @@ export const userResourceRoutes = fp(
         request.user!.id,
       );
       await attachKeyToProfile(request.user!.id, request.user!.role, "openai_subscription", key.id);
+      return reply.code(201).send({ status: "created", key });
+    });
+
+    // ── Claude Pro/Max subscription OAuth sign-in ────────────────────────
+    // Two-step, no polling: `start` mints PKCE state and returns Anthropic's
+    // consent URL; the user approves in the browser, which then DISPLAYS a
+    // `code#state` string (out-of-band mode — Anthropic has no third-party
+    // device grant). The client posts the pasted code to `complete`, which
+    // exchanges it, stores the access + rotating refresh token (+ expiry —
+    // Anthropic tokens are opaque, migration 37) as a `claude_subscription`
+    // key, and wires it to a default agent. Replaces the manual
+    // "run `claude setup-token` and paste it" flow; pasted setup-tokens keep
+    // working (they simply have no refresh token / expiry).
+    server.post("/v1/anthropic-keys/claude/start", async (request, reply) => {
+      const { startOAuth } = await import("../services/anthropic-oauth-service.js");
+      try {
+        return startOAuth(request.user!.id, opts.encryptionKey);
+      } catch (e) {
+        return reply.code(502).send(errorResponse(ErrorCodes.BAD_REQUEST, e instanceof Error ? e.message : "sign-in failed to start"));
+      }
+    });
+
+    server.post<{
+      Body: { auth_id: string; code: string; name?: string };
+    }>("/v1/anthropic-keys/claude/complete", async (request, reply) => {
+      const { auth_id, code, name } = request.body;
+      if (!auth_id || !code?.trim()) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "auth_id and code are required"));
+      }
+      const { completeOAuth } = await import("../services/anthropic-oauth-service.js");
+      let tokens;
+      try {
+        tokens = await completeOAuth(auth_id, request.user!.id, code, opts.encryptionKey);
+      } catch (e) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, e instanceof Error ? e.message : "sign-in failed"));
+      }
+      const key = await apiKeyService.create(
+        {
+          name: name?.trim() || "My Claude subscription",
+          provider: "claude_subscription",
+          api_key: tokens.accessToken,
+          auth_token: tokens.refreshToken,
+          token_expires_at: tokens.expiresAt,
+        },
+        request.user!.id,
+      );
+      await attachKeyToProfile(request.user!.id, request.user!.role, "claude_subscription", key.id);
       return reply.code(201).send({ status: "created", key });
     });
 

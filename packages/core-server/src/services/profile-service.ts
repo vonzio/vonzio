@@ -79,6 +79,59 @@ export class ProfileService {
     return inflight;
   }
 
+  /** Anthropic-OAuth twin of refreshCodexKeyIfNeeded. Shares the in-flight
+   *  map (key ids are globally unique) and the same failure philosophy:
+   *  network/racing refresh failures fall back to the still-valid-within-skew
+   *  access token; a successful rotation MUST persist (single-use refresh). */
+  private async refreshClaudeKeyIfNeeded(keyId: string, accessToken: string, refreshToken: string, tokenExpiresAt?: string | null): Promise<string> {
+    if (!this.apiKeyService) return accessToken;
+    const { needsRefresh } = await import("./anthropic-oauth-service.js");
+    if (!needsRefresh(tokenExpiresAt)) return accessToken;
+
+    let inflight = this.codexRefreshInFlight.get(keyId);
+    if (!inflight) {
+      inflight = this.doRefreshClaudeKey(keyId, refreshToken, accessToken);
+      this.codexRefreshInFlight.set(keyId, inflight);
+      void inflight.finally(() => {
+        if (this.codexRefreshInFlight.get(keyId) === inflight) this.codexRefreshInFlight.delete(keyId);
+      });
+    }
+    return inflight;
+  }
+
+  private async doRefreshClaudeKey(keyId: string, refreshToken: string, oldAccess: string): Promise<string> {
+    const { refreshAnthropicTokens } = await import("./anthropic-oauth-service.js");
+    let rotated;
+    try {
+      rotated = await refreshAnthropicTokens(refreshToken);
+    } catch {
+      // The refresh failed. Two possibilities: a network blip (stored refresh
+      // token untouched upstream — old access is still valid within the
+      // skew), or ANOTHER REPLICA already consumed this single-use refresh
+      // token and persisted the rotated pair. Reload before falling back so
+      // the multi-instance race resolves to the fresh credential.
+      try {
+        const reloaded = await this.apiKeyService!.getWithSecrets(keyId);
+        if (reloaded?.api_key && reloaded.api_key !== oldAccess) return reloaded.api_key;
+      } catch { /* reload is best-effort */ }
+      return oldAccess;
+    }
+    // Rotation SUCCEEDED — the single-use refresh token is consumed upstream,
+    // so persistence is mandatory. Retry once before the loud log: returning
+    // the fresh access token keeps THIS turn working either way, but an
+    // unpersisted rotation strands the credential on a dead refresh token.
+    try {
+      await this.apiKeyService!.rotateSubscriptionTokens(keyId, rotated.accessToken, rotated.refreshToken, rotated.expiresAt);
+    } catch {
+      try {
+        await this.apiKeyService!.rotateSubscriptionTokens(keyId, rotated.accessToken, rotated.refreshToken, rotated.expiresAt);
+      } catch (e) {
+        console.error(`[claude-oauth] rotated token but failed to persist for key ${keyId} — credential may need re-linking:`, e instanceof Error ? e.message : e);
+      }
+    }
+    return rotated.accessToken;
+  }
+
   private async doRefreshCodexKey(keyId: string, refreshToken: string, oldAccess: string): Promise<string> {
     const { refreshTokens } = await import("./codex-oauth-service.js");
     let rotated;
@@ -318,6 +371,12 @@ export class ProfileService {
         // token before the turn (single-flight; see refreshCodexKeyIfNeeded).
         if (apiKey.provider === "openai_subscription" && apiKey.api_key && apiKey.auth_token) {
           resolvedApiKey = await this.refreshCodexKeyIfNeeded(resolvedKeyId, apiKey.api_key, apiKey.auth_token);
+        }
+        // Anthropic OAuth sign-in keys: same rotation, but expiry comes from
+        // the persisted column (the tokens are opaque, unlike Codex JWTs).
+        // Legacy pasted setup-tokens have no auth_token/expiry → untouched.
+        if (apiKey.provider === "claude_subscription" && apiKey.api_key && apiKey.auth_token) {
+          resolvedApiKey = await this.refreshClaudeKeyIfNeeded(resolvedKeyId, apiKey.api_key, apiKey.auth_token, apiKey.token_expires_at);
         }
       }
     }

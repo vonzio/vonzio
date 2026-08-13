@@ -675,6 +675,18 @@ export function pollCodexLogin(body: { device_auth_id: string; user_code: string
   return request("/anthropic-keys/codex/poll", { method: "POST", body: JSON.stringify(body) });
 }
 
+// --- Claude Pro/Max subscription OAuth sign-in ---
+
+export function startClaudeLogin(): Promise<{ auth_id: string; authorize_url: string }> {
+  return request("/anthropic-keys/claude/start", { method: "POST" });
+}
+
+/** Exchange the code the Anthropic consent page displayed. On success the
+ *  credential is saved server-side and wired to a default agent. */
+export function completeClaudeLogin(body: { auth_id: string; code: string; name?: string }): Promise<{ status: string; key?: UserAnthropicKey }> {
+  return request("/anthropic-keys/claude/complete", { method: "POST", body: JSON.stringify(body) });
+}
+
 export function fetchOllamaModels(apiKeyId: string): Promise<{ models: Array<{ id: string; name: string }> }> {
   return request(`/ollama/models?api_key_id=${encodeURIComponent(apiKeyId)}`);
 }

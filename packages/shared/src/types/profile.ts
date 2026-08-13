@@ -86,7 +86,7 @@ export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
     kind: "anthropic_oauth",
     provider: "claude_subscription",
     label: "Claude subscription (Pro/Max)",
-    hint: "Run `claude setup-token` locally and paste the sk-ant-oat01- token. Uses your own subscription.",
+    hint: "Sign in with your Claude account — uses your own subscription. (Or paste a setup-token.)",
     fieldLabel: "Claude OAuth token",
     placeholder: "sk-ant-oat01-…",
     defaultKeyName: "My Claude subscription",
@@ -169,6 +169,10 @@ export interface AnthropicKey {
    * never in redacted listings. Undefined for key-based providers.
    */
   auth_token?: string;
+  /** OAuth access-token expiry (ISO) — Anthropic OAuth sign-in keys only.
+   *  Null/undefined for API keys, Codex keys (JWT-borne expiry), and legacy
+   *  pasted setup-tokens. */
+  token_expires_at?: string | null;
   /**
    * OpenAI-compatible endpoint override (non-secret). Only meaningful for
    * `provider: "openai"` — lets a single instance mix OpenAI proper with
