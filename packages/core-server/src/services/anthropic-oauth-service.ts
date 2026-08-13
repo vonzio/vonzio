@@ -76,16 +76,22 @@ export function codeChallengeS256(verifier: string): string {
  *  mode. `state` is a RANDOM CSRF value — never the PKCE verifier, which must
  *  not appear in a URL (browser history, referrers, consent-page logs). */
 export function buildAuthorizeUrl(opts: { state: string; codeChallenge: string }): string {
-  const u = new URL(ANTHROPIC_AUTHORIZE_URL);
-  u.searchParams.set("code", "true");
-  u.searchParams.set("client_id", ANTHROPIC_OAUTH_CLIENT_ID);
-  u.searchParams.set("response_type", "code");
-  u.searchParams.set("redirect_uri", ANTHROPIC_CODE_REDIRECT_URI);
-  u.searchParams.set("scope", ANTHROPIC_OAUTH_SCOPE);
-  u.searchParams.set("code_challenge", opts.codeChallenge);
-  u.searchParams.set("code_challenge_method", "S256");
-  u.searchParams.set("state", opts.state);
-  return u.toString();
+  // Percent-encoded by hand: URLSearchParams serializes spaces as '+'
+  // (form-encoding), and Anthropic's authorize endpoint rejects that with
+  // "Authorization failed — Invalid request format". The scope list needs
+  // literal %20 separators (verified against the live consent page).
+  const params: Array<[string, string]> = [
+    ["code", "true"],
+    ["client_id", ANTHROPIC_OAUTH_CLIENT_ID],
+    ["response_type", "code"],
+    ["redirect_uri", ANTHROPIC_CODE_REDIRECT_URI],
+    ["scope", ANTHROPIC_OAUTH_SCOPE],
+    ["code_challenge", opts.codeChallenge],
+    ["code_challenge_method", "S256"],
+    ["state", opts.state],
+  ];
+  const query = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  return `${ANTHROPIC_AUTHORIZE_URL}?${query}`;
 }
 
 /** Parse whatever the user pastes back — the raw `code#state` string the
