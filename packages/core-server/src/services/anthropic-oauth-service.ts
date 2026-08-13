@@ -158,7 +158,9 @@ export interface OAuthStart {
 /** Begin a sign-in: mint PKCE + state, seal them into a user-bound auth_id. */
 export function startOAuth(userId: string, encryptionKey: string, now = Date.now()): OAuthStart {
   const verifier = generateCodeVerifier();
-  const state = base64url(randomBytes(16));
+  // 32 bytes → 43-char state, matching the reference client exactly (some
+  // validation surfaces are picky about parameter shapes).
+  const state = base64url(randomBytes(32));
   const sealed: AuthState = { v: verifier, s: state, u: userId, t: now };
   const auth_id = Buffer.from(encrypt(JSON.stringify(sealed), encryptionKey)).toString("base64url");
   return {
