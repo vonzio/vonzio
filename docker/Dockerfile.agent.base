@@ -106,6 +106,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # Claude Agent SDK (CLI + programmatic API).
 RUN npm install -g @anthropic-ai/claude-agent-sdk agent-browser
 
+# NOTE on version pinning: the pip/npm installs below are deliberately
+# UNPINNED, matching every other install in this image — agent-base floats
+# and rebuilds weekly (APT_SNAPSHOT machinery above) so security patches
+# land; exact pins would freeze CVEs between manual bumps. The skills
+# tarball IS pinned — by commit SHA, which pins content; GitHub tarballs
+# aren't byte-stable enough for a meaningful checksum on top.
+#
 # Python libraries the office skills import (Debian's python3 is PEP 668
 # "externally managed", hence --break-system-packages; these are container-
 # global on purpose — the agent user has no runtime pip under egress
