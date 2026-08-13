@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { Globe, FolderOpen, Terminal, SquareTerminal, Info, X, Container, Bot, Copy, Check, Clock, HardDrive, Timer, BookOpen, Cpu, Wrench, ExternalLink } from "lucide-react";
+import { Globe, FolderOpen, Terminal, SquareTerminal, Info, X, Container, Bot, Copy, Check, Clock, HardDrive, Timer, BookOpen, Cpu, Wrench, ExternalLink, FileText } from "lucide-react";
 import { PreviewTab } from "./PreviewTab.js";
+import { DocumentTab } from "./DocumentTab.js";
 import { FilesTab } from "./FilesTab.js";
 import { LogsTab } from "./LogsTab.js";
 import { TerminalTab } from "./TerminalTab.js";
@@ -9,7 +10,7 @@ import { FILE_SERVER_PORT } from "@vonzio/shared";
 import { useApi } from "../hooks/useApi.js";
 import { fetchProfiles, fetchUserAnthropicKeys, type ProfileSummary, type UserAnthropicKey, type WorkspacePort, type PreviewPortMode } from "../api/client.js";
 
-type TabId = "preview" | "files" | "console" | "logs" | "knowledge" | "info";
+type TabId = "preview" | "document" | "files" | "console" | "logs" | "knowledge" | "info";
 
 interface Props {
   workspaceId: string;
@@ -24,6 +25,10 @@ interface Props {
   expiresAt: string;
   previewUrl: string | null;
   previewRefresh?: number;
+  /** /workspace path of the office document shown in the Document tab (#368).
+   *  The tab itself is hidden until a document exists. */
+  documentFile?: string | null;
+  documentRefresh?: number;
   /** Detected listening services + per-port public state. */
   ports?: WorkspacePort[];
   /** Port currently shown in the preview iframe. */
@@ -219,6 +224,7 @@ function InfoTab({ containerId, containerName, profileName, profileId, workspace
 
 const tabDefs: Array<{ value: TabId; label: string; icon: typeof Globe }> = [
   { value: "preview", label: "Preview", icon: Globe },
+  { value: "document", label: "Document", icon: FileText },
   { value: "files", label: "Files", icon: FolderOpen },
   { value: "console", label: "Console", icon: SquareTerminal },
   { value: "knowledge", label: "Knowledge", icon: BookOpen },
@@ -228,7 +234,7 @@ const tabDefs: Array<{ value: TabId; label: string; icon: typeof Globe }> = [
 
 export function RightPanel({
   workspaceId, containerId, containerName, profileName, profileId, workspaceStatus, persistent, createdAt, expiresAt,
-  previewUrl, previewRefresh, ports, currentPort, publicPreview, onSelectPort, onSetPortAccess, buildPortUrl, onRescanPorts,
+  previewUrl, previewRefresh, documentFile, documentRefresh, ports, currentPort, publicPreview, onSelectPort, onSetPortAccess, buildPortUrl, onRescanPorts,
   logs, activeTab, onTabChange, onClose,
 }: Props) {
   // The Console mounts lazily on first open, then stays mounted (hidden when
@@ -258,6 +264,9 @@ export function RightPanel({
         }}
       >
         {tabDefs.map((t) => {
+          // The Document tab only exists once a document does — an empty tab
+          // in every workspace would be noise.
+          if (t.value === "document" && !documentFile) return null;
           const active = activeTab === t.value;
           return (
             <button
@@ -301,6 +310,9 @@ export function RightPanel({
             buildPortUrl={buildPortUrl}
             onRescanPorts={onRescanPorts}
           />
+        )}
+        {activeTab === "document" && (
+          <DocumentTab containerId={containerId} filePath={documentFile ?? null} refreshTrigger={documentRefresh} />
         )}
         {activeTab === "files" && (
           // flex column (not overflow-auto) so FilesTab's `flex-1` fills the full

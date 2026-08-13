@@ -25,6 +25,48 @@ const http = require("http");
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const MODEL = process.env.MOCK_MODEL || "mock-model";
 const REPLY = process.env.MOCK_REPLY || "E2E pong";
+// MOCK_SCENARIO=docx turns the mock into a two-turn scripted agent for the
+// document-preview e2e (#368): turn 1 emits a Bash tool_use that creates a
+// real docx in the workspace (python3-docx is baked into the agent image);
+// turn 2 (recognized by a tool_result in the conversation) announces the
+// path so the dashboard's auto-open fires. Default: single canned text turn.
+const SCENARIO = process.env.MOCK_SCENARIO || "text";
+const DOCX_PATH = "/workspace/E2E_Report.docx";
+const DOCX_CMD =
+  "python3 -c \"from docx import Document; d=Document(); d.add_heading('E2E Report',0); " +
+  `d.add_paragraph('Generated during e2e.'); d.save('${DOCX_PATH}'); print('saved ${DOCX_PATH}')"`;
+
+/** Decide this turn's content blocks + stop_reason from the conversation. */
+function planReply(parsed) {
+  if (SCENARIO === "docx") {
+    // Only the agent loop sends tool definitions; auxiliary calls that share
+    // this mock (e.g. server-side title generation) must get plain text —
+    // a tool_use block would break their content[0].text parsing.
+    if (!Array.isArray(parsed.tools) || parsed.tools.length === 0) {
+      return { blocks: [{ type: "text", text: REPLY }], stop_reason: "end_turn" };
+    }
+    const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+    const sawToolResult = messages.some(
+      (m) => Array.isArray(m.content) && m.content.some((b) => b && b.type === "tool_result")
+    );
+    if (!sawToolResult) {
+      return {
+        blocks: [{
+          type: "tool_use",
+          id: "toolu_e2e_docx_1",
+          name: "Bash",
+          input: { command: DOCX_CMD },
+        }],
+        stop_reason: "tool_use",
+      };
+    }
+    return {
+      blocks: [{ type: "text", text: `Your report is ready: ${DOCX_PATH}` }],
+      stop_reason: "end_turn",
+    };
+  }
+  return { blocks: [{ type: "text", text: REPLY }], stop_reason: "end_turn" };
+}
 
 function log(...a) {
   process.stdout.write(`[mock-llm] ${a.join(" ")}\n`);
@@ -53,7 +95,7 @@ function messageObject(extra) {
   };
 }
 
-function streamAnthropic(res) {
+function streamAnthropic(res, plan) {
   res.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -63,20 +105,35 @@ function streamAnthropic(res) {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
   ev("message_start", { type: "message_start", message: messageObject({}) });
-  ev("content_block_start", {
-    type: "content_block_start",
-    index: 0,
-    content_block: { type: "text", text: "" },
+  plan.blocks.forEach((block, index) => {
+    if (block.type === "tool_use") {
+      ev("content_block_start", {
+        type: "content_block_start",
+        index,
+        content_block: { type: "tool_use", id: block.id, name: block.name, input: {} },
+      });
+      ev("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) },
+      });
+    } else {
+      ev("content_block_start", {
+        type: "content_block_start",
+        index,
+        content_block: { type: "text", text: "" },
+      });
+      ev("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "text_delta", text: block.text },
+      });
+    }
+    ev("content_block_stop", { type: "content_block_stop", index });
   });
-  ev("content_block_delta", {
-    type: "content_block_delta",
-    index: 0,
-    delta: { type: "text_delta", text: REPLY },
-  });
-  ev("content_block_stop", { type: "content_block_stop", index: 0 });
   ev("message_delta", {
     type: "message_delta",
-    delta: { stop_reason: "end_turn", stop_sequence: null },
+    delta: { stop_reason: plan.stop_reason, stop_sequence: null },
     usage: { output_tokens: 4 },
   });
   ev("message_stop", { type: "message_stop" });
@@ -110,13 +167,14 @@ const server = http.createServer((req, res) => {
       } catch (_) {
         /* canned reply regardless */
       }
-      if (parsed.stream) return streamAnthropic(res);
+      const plan = planReply(parsed);
+      if (parsed.stream) return streamAnthropic(res, plan);
       return sendJson(
         res,
         200,
         messageObject({
-          content: [{ type: "text", text: REPLY }],
-          stop_reason: "end_turn",
+          content: plan.blocks,
+          stop_reason: plan.stop_reason,
           usage: { input_tokens: 1, output_tokens: 4 },
         })
       );

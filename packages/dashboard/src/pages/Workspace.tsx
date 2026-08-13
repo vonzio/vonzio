@@ -14,6 +14,7 @@ import { getComposerSlots } from "../registry/index.js";
 import { useEntitlements } from "@vonzio/dashboard-registry";
 import { useVoiceDictation, VOICE_LANGUAGES } from "@vonzio/dictation";
 import { RightPanel, type TabId } from "../components/RightPanel.js";
+import { extractOfficeDocPath, OPEN_DOCUMENT_EVENT } from "../components/document-utils.js";
 import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet.js";
 import { UserMenu } from "../components/UserMenu.js";
 import { MessageList } from "../components/MessageList.js";
@@ -216,6 +217,17 @@ export function Workspace() {
   });
   const [logs, setLogs] = useState<string[]>([]);
   const [previewRefresh, setPreviewRefresh] = useState(0);
+  // Office document shown in the Document deck tab (#368). Persisted with the
+  // rest of the panel state so reopening a workspace restores its document.
+  const [documentFile, setDocumentFile] = useState<string | null>(() => {
+    if (!routeId) return null;
+    try {
+      const saved = localStorage.getItem(`vonzio_panel_${routeId}`);
+      if (saved) return JSON.parse(saved).documentFile ?? null;
+    } catch {}
+    return null;
+  });
+  const [documentRefresh, setDocumentRefresh] = useState(0);
 
   // Panel resize state
   const PANEL_MIN = 300;
@@ -345,9 +357,9 @@ export function Workspace() {
     const wid = activeWorkspaceId;
     if (!wid) return;
     try {
-      localStorage.setItem(`vonzio_panel_${wid}`, JSON.stringify({ open: panelOpen, tab: panelTab, previewUrl }));
+      localStorage.setItem(`vonzio_panel_${wid}`, JSON.stringify({ open: panelOpen, tab: panelTab, previewUrl, documentFile }));
     } catch {}
-  }, [activeWorkspaceId, panelOpen, panelTab, previewUrl]);
+  }, [activeWorkspaceId, panelOpen, panelTab, previewUrl, documentFile]);
 
   // Restore panel state on workspace change
   useEffect(() => {
@@ -360,11 +372,14 @@ export function Workspace() {
         if (parsed.tab) setPanelTab(parsed.tab);
         if (typeof parsed.width === "number") setPanelWidth(parsed.width);
         setPreviewUrl(parsed.previewUrl ?? null);
+        setDocumentFile(parsed.documentFile ?? null);
       } else {
         setPreviewUrl(null);
+        setDocumentFile(null);
       }
     } catch {
       setPreviewUrl(null);
+      setDocumentFile(null);
     }
   }, [activeWorkspaceId]);
 
@@ -498,6 +513,26 @@ export function Workspace() {
   }, [previewUrlTemplate]);
 
 
+  // Open (or refresh) an office document in the Document deck tab (#368).
+  // Also the handler for OPEN_DOCUMENT_EVENT, so chat links and file rows
+  // deep in the tree can open the tab without prop-drilling.
+  const openDocument = useCallback((path: string) => {
+    setDocumentFile(path);
+    setPanelTab("document");
+    setPanelOpen(true);
+    // Same file re-announced after an edit → bump so the tab reconverts.
+    setDocumentRefresh((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const path = (e as CustomEvent<{ path?: string }>).detail?.path;
+      if (path) openDocument(path);
+    };
+    window.addEventListener(OPEN_DOCUMENT_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_DOCUMENT_EVENT, onOpen);
+  }, [openDocument]);
+
   // Scan text for a vonzio preview URL and open the Preview panel
   const openPreviewFromText = useCallback((text: string) => {
     const match = text.match(PREVIEW_URL_REGEX);
@@ -528,18 +563,41 @@ export function Workspace() {
         return;
       }
     }
+    // An office document created/edited by any tool → open it in the deck
+    // (#368). Checked before the generic Write/Edit branch so a docx lands on
+    // the Document tab, not just the file list.
+    const docPath = extractOfficeDocPath(output);
+    if (docPath) {
+      openDocument(docPath);
+      return;
+    }
     if ((tool === "Write" || tool === "Edit") && output.includes("/workspace/")) {
       setPanelTab("files");
       setPanelOpen(true);
       // Auto-refresh preview when files in www are modified
       setPreviewRefresh((n) => n + 1);
+      // The document being shown may have been edited through a path the
+      // regex can't see (e.g. a relative path in tool output) — reconvert.
+      if (documentFileRef.current && output.includes(documentFileRef.current.split("/").pop() ?? "")) {
+        setDocumentRefresh((n) => n + 1);
+      }
     }
-  }, [activeWorkspace?.container_id]);
+  }, [activeWorkspace?.container_id, openDocument]);
 
-  // Scan assistant text messages for preview URLs
+  // The tool-result handler needs the current document without re-subscribing
+  // the chat hook on every document change.
+  const documentFileRef = useRef<string | null>(null);
+  documentFileRef.current = documentFile;
+
+  // Scan assistant text messages for preview URLs and announced documents
   const handleAssistantMessage = useCallback((text: string) => {
+    const docPath = extractOfficeDocPath(text);
+    if (docPath) {
+      openDocument(docPath);
+      return;
+    }
     openPreviewFromText(text);
-  }, [openPreviewFromText]);
+  }, [openPreviewFromText, openDocument]);
 
   // Chat hook
   const chat = useWorkspaceChat({
@@ -1824,6 +1882,8 @@ export function Workspace() {
                   expiresAt={activeWorkspace?.expires_at ?? new Date().toISOString()}
                   previewUrl={previewUrl}
                   previewRefresh={previewRefresh}
+                  documentFile={documentFile}
+                  documentRefresh={documentRefresh}
                   ports={previewPorts}
                   currentPort={currentPreviewPort}
                   publicPreview={activeWorkspace?.public_preview ?? false}
@@ -1863,6 +1923,8 @@ export function Workspace() {
                   expiresAt={activeWorkspace?.expires_at ?? new Date().toISOString()}
                   previewUrl={previewUrl}
                   previewRefresh={previewRefresh}
+                  documentFile={documentFile}
+                  documentRefresh={documentRefresh}
                   ports={previewPorts}
                   currentPort={currentPreviewPort}
                   publicPreview={activeWorkspace?.public_preview ?? false}

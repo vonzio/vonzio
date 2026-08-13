@@ -15,8 +15,8 @@ set -Eeuo pipefail
 
 MODE="${1:-first-run}"
 case "$MODE" in
-  first-run|chat|pause) ;;
-  *) echo "usage: $0 [first-run|chat|pause]" >&2; exit 2 ;;
+  first-run|chat|pause|docs) ;;
+  *) echo "usage: $0 [first-run|chat|pause|docs]" >&2; exit 2 ;;
 esac
 
 cd "$(dirname "$0")/.."
@@ -37,6 +37,8 @@ export COMPOSE_PROJECT_NAME="${PROJECT}" DASHBOARD_PORT="${DASH_PORT}" SERVER_PO
 # pause mode: shrink the idle-pause window so the 30s sweep pauses the chat
 # container fast enough for the spec to observe (#333).
 [ "${MODE:-}" = "pause" ] && export SESSION_IDLE_PAUSE_SECS=10
+# docs mode: the mock scripts a Bash tool_use that writes a docx (#368).
+[ "${MODE:-}" = "docs" ] && export MOCK_SCENARIO=docx
 
 cleanup() {
   echo ">> tearing down ${PROJECT}"
@@ -51,7 +53,7 @@ cleanup  # clear any leftovers from a previous crashed run
 # Services to start. The chat path needs the mock LLM + a real agent image; the
 # first-run smoke needs neither.
 SERVICES=(postgres docker-proxy server)
-if [ "${MODE}" = "chat" ] || [ "${MODE}" = "pause" ]; then
+if [ "${MODE}" = "chat" ] || [ "${MODE}" = "pause" ] || [ "${MODE}" = "docs" ]; then
   SERVICES+=(mock-llm)
   if ! docker image inspect vonzio-agent:latest >/dev/null 2>&1; then
     echo ">> building agent image (first run, ~5-8 min)"
@@ -81,6 +83,9 @@ if [ "${MODE}" = "chat" ]; then
 elif [ "${MODE}" = "pause" ]; then
   SPEC="lazy-pause.spec.ts"
   export VONZIO_E2E_CHAT=1 VONZIO_E2E_PAUSE=1
+elif [ "${MODE}" = "docs" ]; then
+  SPEC="docpreview.spec.ts"
+  export VONZIO_E2E_DOCS=1
 fi
 echo ">> running ${SPEC}"
 if ! VONZIO_E2E_BASE_URL="http://localhost:${DASH_PORT}" \

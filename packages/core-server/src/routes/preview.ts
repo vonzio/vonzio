@@ -109,6 +109,20 @@ export function confineToWorkspace(filePath: string): string | null {
   return resolved;
 }
 
+/**
+ * Pick the converted artifact's path out of docpreview.sh's combined
+ * stdout+stderr. Only a line that is EXACTLY a /tmp/docpreview/... .pdf/.html
+ * path counts — soffice's own chatter mentions paths mid-sentence and must
+ * not match. Returns null when conversion failed or the type is unsupported.
+ */
+export function parseDocpreviewOutput(output: string): string | null {
+  const lines = output.split("\n").map((l) => l.trim());
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\/tmp\/docpreview\/[^\s]+\.(pdf|html)$/.test(lines[i])) return lines[i];
+  }
+  return null;
+}
+
 export interface PreviewRoutesOptions {
   containerManager: ContainerManager;
   previewMode: "path" | "hostname";
@@ -351,6 +365,67 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
         .header("Content-Length", content.length);
       return reply.send(content);
     } catch {
+      return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "File not found"));
+    }
+  });
+
+  // --- Rendered office-document preview: /preview/:containerId/docpreview/* ---
+  //
+  // Converts a workspace office file into something the deck's Document tab
+  // can display (#368): docx/pptx/doc/ppt/odt/odp/rtf → PDF, xlsx/xls/ods →
+  // an HTML table. Conversion happens INSIDE the agent container
+  // (/app/docpreview.sh, baked into the base image) and is mtime-cached there,
+  // so repeated views of an unchanged file don't re-run LibreOffice.
+  server.get("/preview/:containerId/docpreview/*", async (request, reply) => {
+    const { containerId } = request.params as { containerId: string };
+    const prefix = `/preview/${containerId}/docpreview`;
+    const filePath = decodeURIComponent(request.url.split("?")[0].slice(prefix.length));
+    if (!filePath || filePath === "/") {
+      return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "File path required"));
+    }
+
+    const fullId = await containerManager.resolveContainerId(containerId);
+    if (!fullId) {
+      return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "Container not found"));
+    }
+
+    if (!(await checkAuth(request, reply, fullId))) return;
+
+    // Same confinement as /files — this endpoint is reachable by
+    // public_preview visitors too, so it must never touch non-workspace paths.
+    const safePath = confineToWorkspace(filePath);
+    if (!safePath) {
+      return reply.code(403).send(errorResponse(ErrorCodes.FORBIDDEN, "File path outside workspace"));
+    }
+
+    try {
+      await ensureContainerRunning(containerManager, fullId, sessionRegistry);
+      // stdout and stderr arrive interleaved through the exec demux, so the
+      // converted path is recognized by shape, not stream position.
+      let output = "";
+      for await (const chunk of containerManager.execInContainer(fullId, ["/app/docpreview.sh", safePath])) {
+        output += chunk;
+      }
+      const converted = parseDocpreviewOutput(output);
+      if (!converted) {
+        server.log.warn({ safePath, output: output.slice(0, 500) }, "docpreview conversion failed");
+        return reply.code(422).send(errorResponse(ErrorCodes.BAD_REQUEST, "Document could not be rendered"));
+      }
+
+      const content = await containerManager.readFile(fullId, converted);
+      const isPdf = converted.endsWith(".pdf");
+      reply
+        .header("Content-Type", isPdf ? "application/pdf" : "text/html; charset=utf-8")
+        .header("Content-Disposition", "inline")
+        // The HTML variant is our own escaped markup, but sandbox it anyway so
+        // a direct navigation to this URL can't run scripts on the API origin.
+        .header("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'")
+        // Same rationale as /files: the agent edits files in place.
+        .header("Cache-Control", "no-store")
+        .header("Content-Length", content.length);
+      return reply.send(content);
+    } catch (err) {
+      server.log.warn({ err, safePath }, "docpreview error");
       return reply.code(404).send(errorResponse(ErrorCodes.NOT_FOUND, "File not found"));
     }
   });

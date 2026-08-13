@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import mermaid from "mermaid";
 import { CodeBlock } from "./CodeBlock.js";
+import { extractOfficeDocPath, openDocumentInDeck } from "./document-utils.js";
 
 mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "strict", suppressErrorRendering: true });
 
@@ -284,21 +285,27 @@ export function MarkdownContent({ content, isStreaming }: { content: string; isS
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeRaw]}
       components={{
-        a: ({ href, children, ...props }) => (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              color: "var(--vz-sodium)",
-              textDecoration: "underline",
-              wordBreak: "break-all",
-            }}
-            {...props}
-          >
-            {children}
-          </a>
-        ),
+        a: ({ href, children, ...props }) => {
+          // A link to an office document opens the deck's Document tab (#368)
+          // instead of navigating (which would just trigger a download).
+          const docPath = href ? extractOfficeDocPath(href) : null;
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={docPath ? (e) => { e.preventDefault(); openDocumentInDeck(docPath); } : undefined}
+              style={{
+                color: "var(--vz-sodium)",
+                textDecoration: "underline",
+                wordBreak: "break-all",
+              }}
+              {...props}
+            >
+              {children}
+            </a>
+          );
+        },
         pre: ({ children }) => {
           // Intercept code blocks: extract the inner <code> child, then route
           // by language — mermaid renders as a diagram, everything else goes
