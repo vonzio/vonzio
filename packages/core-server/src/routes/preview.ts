@@ -410,11 +410,14 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
     try {
       await ensureContainerRunning(containerManager, fullId, sessionRegistry);
       // stdout and stderr arrive interleaved through the exec demux, so the
-      // converted path is recognized by shape, not stream position.
-      let output = "";
-      for await (const chunk of containerManager.execInContainer(fullId, ["/app/docpreview.sh", safePath])) {
-        output += chunk;
+      // converted path is recognized by shape, not stream position. The
+      // generator yields newline-STRIPPED lines — rejoin with \n or every
+      // line fuses into one and the line-anchored parse can never match.
+      const lines: string[] = [];
+      for await (const line of containerManager.execInContainer(fullId, ["/app/docpreview.sh", safePath])) {
+        lines.push(line);
       }
+      const output = lines.join("\n");
       const converted = parseDocpreviewOutput(output);
       if (!converted) {
         server.log.warn({ safePath, output: output.slice(0, 500) }, "docpreview conversion failed");
