@@ -34,7 +34,9 @@ STEM="${BASE%.*}"
 case "$EXT" in
   docx|doc|pptx|ppt|odt|odp|rtf)
     OUT="$OUT_DIR/$STEM.pdf"
-    if [ -f "$OUT" ] && [ ! "$SRC" -nt "$OUT" ]; then
+    # -s not -f: a 0-byte artifact from a failed conversion must never be
+    # treated as a cache hit.
+    if [ -s "$OUT" ] && [ ! "$SRC" -nt "$OUT" ]; then
       printf '%s\n' "$OUT"; exit 0
     fi
     # LibreOffice is not safe to run concurrently against one profile, and a
@@ -49,19 +51,24 @@ case "$EXT" in
       soffice "$PROFILE" --headless --norestore \
         --convert-to pdf --outdir "$OUT_DIR" "$SRC" >&2
     fi
-    # soffice exits 0 even on some failures — trust the artifact, not the code.
-    [ -f "$OUT" ] || { echo "docpreview: conversion produced no output" >&2; exit 4; }
-    # Stamp freshness relative to the source so the [ -nt ] check above stays
-    # valid even if conversion finished within the same clock second.
-    touch "$OUT"
+    # soffice exits 0 even on some failures — trust the artifact, not the
+    # code, and never cache an empty one.
+    [ -s "$OUT" ] || { rm -f "$OUT"; echo "docpreview: conversion produced no output" >&2; exit 4; }
+    # Pin the artifact's mtime to the source's: the cache check above is
+    # "source not newer than output", so equal stamps mean cached, and ANY
+    # later write to the source (even in the same second as the conversion)
+    # moves it strictly ahead and forces a reconvert.
+    touch -r "$SRC" "$OUT"
     printf '%s\n' "$OUT"
     ;;
   xlsx|xls|ods)
     OUT="$OUT_DIR/$STEM.html"
-    if [ -f "$OUT" ] && [ ! "$SRC" -nt "$OUT" ]; then
+    if [ -s "$OUT" ] && [ ! "$SRC" -nt "$OUT" ]; then
       printf '%s\n' "$OUT"; exit 0
     fi
-    python3 /app/xlsx2html.py "$SRC" "$OUT" || { echo "docpreview: xlsx render failed" >&2; exit 4; }
+    python3 /app/xlsx2html.py "$SRC" "$OUT" || { rm -f "$OUT"; echo "docpreview: xlsx render failed" >&2; exit 4; }
+    [ -s "$OUT" ] || { rm -f "$OUT"; echo "docpreview: conversion produced no output" >&2; exit 4; }
+    touch -r "$SRC" "$OUT"
     printf '%s\n' "$OUT"
     ;;
   *)

@@ -118,7 +118,10 @@ export function confineToWorkspace(filePath: string): string | null {
 export function parseDocpreviewOutput(output: string): string | null {
   const lines = output.split("\n").map((l) => l.trim());
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (/^\/tmp\/docpreview\/[^\s]+\.(pdf|html)$/.test(lines[i])) return lines[i];
+    // Spaces are allowed mid-path ("Account Closure.pdf") — the guard against
+    // soffice chatter is the line ANCHORING (its convert lines never start
+    // with /tmp/docpreview), not a no-whitespace rule.
+    if (/^\/tmp\/docpreview\/.+\.(pdf|html)$/.test(lines[i])) return lines[i];
   }
   return null;
 }
@@ -379,7 +382,13 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
   server.get("/preview/:containerId/docpreview/*", async (request, reply) => {
     const { containerId } = request.params as { containerId: string };
     const prefix = `/preview/${containerId}/docpreview`;
-    const filePath = decodeURIComponent(request.url.split("?")[0].slice(prefix.length));
+    let filePath: string;
+    try {
+      filePath = decodeURIComponent(request.url.split("?")[0].slice(prefix.length));
+    } catch {
+      // Malformed percent-encoding must be a 400, not an unhandled URIError.
+      return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Invalid file path encoding"));
+    }
     if (!filePath || filePath === "/") {
       return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "File path required"));
     }

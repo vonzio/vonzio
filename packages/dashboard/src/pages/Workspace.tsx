@@ -533,6 +533,13 @@ export function Workspace() {
     return () => window.removeEventListener(OPEN_DOCUMENT_EVENT, onOpen);
   }, [openDocument]);
 
+  // The Document tab only exists while a document does — if restored state
+  // (or a workspace switch) lands on "document" with none, the active tab
+  // would be hidden and the panel blank. Fall back to Preview.
+  useEffect(() => {
+    if (panelTab === "document" && !documentFile) setPanelTab("preview");
+  }, [panelTab, documentFile]);
+
   // Scan text for a vonzio preview URL and open the Preview panel
   const openPreviewFromText = useCallback((text: string) => {
     const match = text.match(PREVIEW_URL_REGEX);

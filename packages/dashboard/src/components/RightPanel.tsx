@@ -235,8 +235,13 @@ const tabDefs: Array<{ value: TabId; label: string; icon: typeof Globe }> = [
 export function RightPanel({
   workspaceId, containerId, containerName, profileName, profileId, workspaceStatus, persistent, createdAt, expiresAt,
   previewUrl, previewRefresh, documentFile, documentRefresh, ports, currentPort, publicPreview, onSelectPort, onSetPortAccess, buildPortUrl, onRescanPorts,
-  logs, activeTab, onTabChange, onClose,
+  logs, activeTab: rawActiveTab, onTabChange, onClose,
 }: Props) {
+  // "document" with no document would highlight nothing (the tab is hidden)
+  // and render an empty view — snap to Preview instead. The owning page also
+  // normalizes its state, but that's an effect (a frame late); this keeps the
+  // render itself consistent.
+  const activeTab = rawActiveTab === "document" && !documentFile ? "preview" : rawActiveTab;
   // The Console mounts lazily on first open, then stays mounted (hidden when
   // another tab is active) so its shells survive tab switches.
   const [consoleMounted, setConsoleMounted] = useState(false);

@@ -46,21 +46,31 @@ def main() -> int:
         return 2
     src, out_path = sys.argv[1], sys.argv[2]
 
-    if src.lower().endswith(".ods"):
-        # openpyxl doesn't read ODS; LibreOffice converts it to xlsx first.
-        import subprocess, tempfile, os, glob
-        tmp = tempfile.mkdtemp(prefix="ods2xlsx-")
-        subprocess.run(
-            ["soffice", f"-env:UserInstallation=file://{tmp}/lo", "--headless",
-             "--norestore", "--convert-to", "xlsx", "--outdir", tmp, src],
-            check=True, capture_output=True,
-        )
-        converted = glob.glob(os.path.join(tmp, "*.xlsx"))
-        if not converted:
-            print("ods→xlsx conversion produced no output", file=sys.stderr)
-            return 4
-        src = converted[0]
+    tmp = None
+    try:
+        if src.lower().endswith((".ods", ".xls")):
+            # openpyxl reads only OOXML (.xlsx) — legacy BIFF .xls and ODS
+            # both need a LibreOffice pass to xlsx first.
+            import subprocess, tempfile, os, glob
+            tmp = tempfile.mkdtemp(prefix="to-xlsx-")
+            subprocess.run(
+                ["soffice", f"-env:UserInstallation=file://{tmp}/lo", "--headless",
+                 "--norestore", "--convert-to", "xlsx", "--outdir", tmp, src],
+                check=True, capture_output=True,
+            )
+            converted = glob.glob(os.path.join(tmp, "*.xlsx"))
+            if not converted:
+                print("to-xlsx conversion produced no output", file=sys.stderr)
+                return 4
+            src = converted[0]
+        return render(src, out_path)
+    finally:
+        if tmp:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
 
+
+def render(src: str, out_path: str) -> int:
     from openpyxl import load_workbook
 
     wb = load_workbook(src, read_only=True, data_only=True)
