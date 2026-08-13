@@ -18,10 +18,34 @@ export function documentKind(path: string): DocumentKind | null {
   return null;
 }
 
-/** Matches a displayable document as a /workspace path OR as an already
- *  rewritten /preview/<id>/files link (assistant prose is often rewritten
- *  server-side before it reaches the client). */
-const DOC_PATH_RE = /(?:\/preview\/[\w.-]+\/files)?(\/workspace\/[^\s"'`)\]>*,;]+\.(?:docx|doc|pptx|ppt|odt|odp|rtf|xlsx|xls|ods))\b/i;
+const OFFICE_EXTS = "docx|doc|pptx|ppt|odt|odp|rtf|xlsx|xls|ods";
+
+/** A document as a /workspace path, or as a rewritten /preview/<id>/files
+ *  link (assistant prose is often rewritten server-side). */
+const DOC_PATH_RE = new RegExp(
+  `(?:\\/preview\\/[\\w.-]+\\/files)?(\\/workspace\\/[^\\s"'\`)\\]>*,;]+\\.(?:${OFFICE_EXTS}))\\b`, "i");
+
+/** The same document announced through the in-container FILE SERVER —
+ *  /preview/<container>/<port>/<relpath> — which agents commonly hand out as
+ *  the download link. The fileserver is rooted at /workspace, so <relpath>
+ *  maps straight back onto a workspace path. Restricted to the file-server
+ *  port: an office path on an app's own port is that app's business. */
+const FILESERVER_DOC_RE = new RegExp(
+  `\\/preview\\/[\\w.-]+\\/(\\d{2,5})\\/([^\\s"'\`)\\]>*,;?#]+\\.(?:${OFFICE_EXTS}))\\b`, "i");
+
+function fileServerPort(): number {
+  return (typeof window !== "undefined"
+    && (window as unknown as { __VONZIO_FILE_SERVER_PORT?: number }).__VONZIO_FILE_SERVER_PORT) || 8765;
+}
+
+function decodeMaybe(path: string): string {
+  // Href sources arrive percent-encoded ("Account%20Closure.docx") — store
+  // the decoded workspace path; the tab re-encodes when building URLs.
+  if (path.includes("%")) {
+    try { return decodeURIComponent(path); } catch { /* malformed — use as-is */ }
+  }
+  return path;
+}
 
 /** Extract the first displayable office-document path mentioned in text,
  *  normalized to its /workspace/... form. Deliberately excludes bare .pdf —
@@ -29,13 +53,12 @@ const DOC_PATH_RE = /(?:\/preview\/[\w.-]+\/files)?(\/workspace\/[^\s"'`)\]>*,;]
  *  the deck. (Raw pdfs still open via explicit clicks in Files/chat.) */
 export function extractOfficeDocPath(text: string): string | null {
   const m = text.match(DOC_PATH_RE);
-  if (!m) return null;
-  // Href sources arrive percent-encoded ("Account%20Closure.docx") — store
-  // the decoded workspace path; the tab re-encodes when building URLs.
-  if (m[1].includes("%")) {
-    try { return decodeURIComponent(m[1]); } catch { /* malformed — use as-is */ }
+  if (m) return decodeMaybe(m[1]);
+  const fs = text.match(FILESERVER_DOC_RE);
+  if (fs && parseInt(fs[1], 10) === fileServerPort()) {
+    return decodeMaybe(`/workspace/${fs[2]}`);
   }
-  return m[1];
+  return null;
 }
 
 export const OPEN_DOCUMENT_EVENT = "vonzio:open-document";

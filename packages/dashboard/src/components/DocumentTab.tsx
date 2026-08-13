@@ -62,9 +62,67 @@ export function DocumentTab({ containerId, filePath, refreshTrigger = 0 }: Props
       </div>
       {kind === "html-converted"
         ? <HtmlDocView url={url} />
-        : <div className="flex-1 min-h-0 overflow-auto"><PdfViewer url={url} /></div>}
+        : <PdfDocView url={url} downloadUrl={downloadUrl} name={name} />}
     </div>
   );
+}
+
+/** Fetch the (converted) PDF ourselves so a failure shows a human message +
+ *  download fallback instead of pdf.js's raw "Unexpected server response"
+ *  string; the blob then feeds the viewer. */
+function PdfDocView({ url, downloadUrl, name }: { url: string; downloadUrl: string | null; name: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setBlobUrl(null);
+    setError(null);
+    fetch(url, { credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(res.status === 422
+            ? "This document couldn't be rendered — it may not exist yet, or its format isn't convertible."
+            : res.status === 404
+              ? "File not found in the workspace."
+              : `Preview failed (${res.status}).`);
+        }
+        return res.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+      })
+      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : "Preview failed"); });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url]);
+
+  if (error) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center" style={{ color: "var(--vz-muted)" }}>
+        <FileText className="w-6 h-6" style={{ color: "var(--vz-muted-2)" }} />
+        <p className="text-sm" style={{ maxWidth: 340 }}>{error}</p>
+        {downloadUrl && (
+          <a href={downloadUrl} download={name} className="text-sm" style={{ color: "var(--vz-sodium)" }}>
+            Download the file instead
+          </a>
+        )}
+      </div>
+    );
+  }
+  if (!blobUrl) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--vz-muted-2)" }} />
+      </div>
+    );
+  }
+  return <div className="flex-1 min-h-0 overflow-auto"><PdfViewer url={blobUrl} /></div>;
 }
 
 /** Spreadsheet render: fetch the server-generated (fully escaped) HTML and

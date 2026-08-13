@@ -63,6 +63,9 @@ const NON_SERVABLE_PREVIEW_EXT = new Set([
   "lua", "swift", "scala", "clj", "ex", "exs", "r",
   "md", "txt", "log", "yml", "yaml", "toml", "ini", "cfg", "conf",
   "csv", "tsv", "sql", "env", "lock", "dockerfile", "makefile",
+  // Office documents render in the deck's Document tab (#368), never in the
+  // preview iframe (which would just trigger a download).
+  "docx", "doc", "pptx", "ppt", "odt", "odp", "ods", "rtf", "xlsx", "xls",
 ]);
 
 // Only auto-open the preview pane for URLs that actually render as a page —
@@ -560,6 +563,16 @@ export function Workspace() {
       setPanelOpen(true);
       return;
     }
+    // An office document created/edited/announced by any tool → open it in
+    // the deck (#368). Checked BEFORE the port sniffing below — a fileserver
+    // download link ("http://localhost:3000/preview/<id>/8765/report.docx")
+    // contains a localhost:port match and would otherwise hijack the Preview
+    // tab instead of opening the document.
+    const docPath = extractOfficeDocPath(output);
+    if (docPath) {
+      openDocument(docPath);
+      return;
+    }
     if (tool === "Bash" && (output.includes("localhost:") || output.includes("0.0.0.0:"))) {
       const portMatch = output.match(/(?:localhost|0\.0\.0\.0):(\d{4,5})/);
       if (portMatch && activeWorkspace?.container_id) {
@@ -569,14 +582,6 @@ export function Workspace() {
         setPanelOpen(true);
         return;
       }
-    }
-    // An office document created/edited by any tool → open it in the deck
-    // (#368). Checked before the generic Write/Edit branch so a docx lands on
-    // the Document tab, not just the file list.
-    const docPath = extractOfficeDocPath(output);
-    if (docPath) {
-      openDocument(docPath);
-      return;
     }
     if ((tool === "Write" || tool === "Edit") && output.includes("/workspace/")) {
       setPanelTab("files");
