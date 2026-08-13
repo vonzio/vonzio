@@ -98,6 +98,9 @@ export const anthropicKeys = pgTable(
     provider: text("provider", { enum: [...PROFILE_PROVIDERS] }).notNull(),
     encrypted_api_key: text("encrypted_api_key"),
     encrypted_auth_token: text("encrypted_auth_token"),
+    /** OAuth access-token expiry (ISO). Null for plain API keys, legacy pasted
+     *  setup-tokens, and Codex keys (their JWTs carry their own exp). */
+    token_expires_at: text("token_expires_at"),
     // OpenAI-compatible endpoint override (non-secret); null = server default.
     base_url: text("base_url"),
     created_at: text("created_at").notNull(),

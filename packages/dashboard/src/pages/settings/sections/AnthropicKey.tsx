@@ -24,6 +24,7 @@ import { authClient } from "../../../lib/auth-client.js";
 import { useUser } from "../../../contexts/UserContext.js";
 import { ErrorBanner, SubLabel } from "./_shared.js";
 import { useChatGptSignIn, ChatGptSignInPanel } from "../../../components/ChatGptSignIn.js";
+import { useClaudeSignIn, ClaudeSignInPanel } from "../../../components/ClaudeSignIn.js";
 
 // ───────────────────────────────────────────────────────────────────
 // Anthropic API Keys (BYOK)
@@ -66,6 +67,13 @@ export function AnthropicKeySection() {
 
   const startCodexSignIn = () => { setCodexOpen(true); codex.start(); };
   const closeCodex = () => { codex.cancel(); setCodexOpen(false); };
+
+  // Claude Pro/Max subscription OAuth sign-in — shared flow, see
+  // components/ClaudeSignIn.tsx (also used by the onboarding wizard).
+  const [claudeOpen, setClaudeOpen] = useState(false);
+  const claude = useClaudeSignIn(() => refetch());
+  const startClaudeSignIn = () => { setClaudeOpen(true); claude.start(); };
+  const closeClaude = () => { claude.cancel(); setClaudeOpen(false); };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -251,6 +259,8 @@ export function AnthropicKeySection() {
   // provider is entitled (always on self-host; admin-allowlisted on SaaS).
   const codexProviderInfo = PROVIDER_CATALOG.find((p) => p.provider === "openai_subscription");
   const canConnectChatGPT = !!codexProviderInfo && isEntitled(codexProviderInfo);
+  const claudeProviderInfo = PROVIDER_CATALOG.find((p) => p.provider === "claude_subscription");
+  const canConnectClaude = !!claudeProviderInfo && isEntitled(claudeProviderInfo);
   const createMeta = providerInfoByProvider(provider);
   // How-to-get-a-key hint, catalog-driven: the provider's one-line instruction
   // (e.g. "Run `claude setup-token` …" for a subscription token) plus a docs
@@ -307,6 +317,9 @@ export function AnthropicKeySection() {
         loading={loading}
         actions={
           <div style={{ display: "inline-flex", gap: 8 }}>
+            {canConnectClaude && (
+              <Button size="sm" variant="ghost" onClick={startClaudeSignIn}>Sign in with Claude</Button>
+            )}
             {canConnectChatGPT && (
               <Button size="sm" variant="ghost" onClick={startCodexSignIn}>Sign in with ChatGPT</Button>
             )}
@@ -540,6 +553,15 @@ export function AnthropicKeySection() {
         footer={<Button size="sm" variant={codex.status === "created" ? "primary" : "ghost"} onClick={closeCodex}>{codex.status === "created" ? "Done" : "Cancel"}</Button>}
       >
         <ChatGptSignInPanel state={codex} />
+      </Modal>
+
+      <Modal
+        open={claudeOpen}
+        onClose={closeClaude}
+        title="Sign in with Claude"
+        footer={<Button size="sm" variant={claude.status === "created" ? "primary" : "ghost"} onClick={closeClaude}>{claude.status === "created" ? "Done" : "Cancel"}</Button>}
+      >
+        <ClaudeSignInPanel state={claude} />
       </Modal>
     </>
   );

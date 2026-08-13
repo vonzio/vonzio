@@ -7,6 +7,16 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Added
 
+- **Sign in with Claude.** The Claude Pro/Max subscription no longer requires
+  running `claude setup-token` locally: Settings → Keys and the onboarding
+  wizard now offer a browser sign-in — approve on Anthropic's consent page,
+  paste the short code it displays, done. Tokens are exchanged and refreshed
+  SERVER-side (rotating refresh token + persisted expiry, migration 37), so
+  the credential no longer silently expires the way pasted setup-tokens do.
+  Pasted setup-tokens keep working unchanged. Same terms caveat as before:
+  no guarantee Anthropic keeps honoring subscription tokens outside its own
+  apps.
+
 - **Lazy containers: idle chats now pause instead of burning CPU** (#333). A
   non-persistent chat session's container is `docker pause`d after
   `SESSION_IDLE_PAUSE_SECS` (default 900s) of inactivity — near-zero CPU while

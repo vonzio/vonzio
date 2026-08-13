@@ -786,6 +786,13 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS memory_limit TEXT`);
     },
   },
+  {
+    version: 37,
+    description: "Anthropic OAuth sign-in: api_keys.token_expires_at (ISO; null for non-OAuth keys and legacy pasted setup-tokens). Codex keys keep reading expiry from the JWT; Anthropic access tokens are opaque so expiry must be persisted at exchange/refresh time.",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS token_expires_at TEXT`);
+    },
+  },
 ];
 
 /**
