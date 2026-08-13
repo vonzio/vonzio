@@ -114,7 +114,9 @@ export function parseAuthorizationInput(input: string): { code?: string; state?:
     };
   } catch { /* not a URL */ }
   if (value.includes("#")) {
-    const [code, state] = value.split("#", 2);
+    // Tolerate stray whitespace around the '#' — copy-paste from the consent
+    // page sometimes picks it up, and state comparison is exact.
+    const [code, state] = value.split("#", 2).map((p) => p.trim());
     return { code, state };
   }
   if (value.includes("code=")) {
@@ -185,7 +187,10 @@ function unseal(authId: string, encryptionKey: string, now: number): AuthState {
 export interface AnthropicTokens {
   accessToken: string;
   refreshToken: string;
-  /** ISO expiry with the 5-min pre-expiry skew already applied. */
+  /** ISO refresh threshold, NOT the raw upstream expiry: the 5-min skew is
+   *  already subtracted here, so api_keys.token_expires_at stores
+   *  "refresh at/after this time" and needsRefresh() compares against it
+   *  directly with no further margin. */
   expiresAt: string;
 }
 

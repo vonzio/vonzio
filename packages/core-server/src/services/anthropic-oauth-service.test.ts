@@ -34,6 +34,7 @@ describe("anthropic-oauth-service", () => {
     expect(parseAuthorizationInput("abc123#st456")).toEqual({ code: "abc123", state: "st456" });
     expect(parseAuthorizationInput("https://console.anthropic.com/oauth/code/callback?code=xyz&state=st")).toEqual({ code: "xyz", state: "st" });
     expect(parseAuthorizationInput("  rawcode  ")).toEqual({ code: "rawcode" });
+    expect(parseAuthorizationInput("abc123 # st456 ")).toEqual({ code: "abc123", state: "st456" });
     expect(parseAuthorizationInput("")).toEqual({});
   });
 
