@@ -92,6 +92,11 @@ export function useClaudeSignIn(onConnected?: () => void): ClaudeSignInState {
 export function ClaudeSignInPanel({ state }: { state: ClaudeSignInState }) {
   const { status, authorizeUrl, error } = state;
   const [code, setCode] = useState("");
+  // A cancel/restart mints a fresh auth token — stale pasted input from the
+  // previous attempt would just fail its state check. Clear it.
+  useEffect(() => {
+    if (status === "idle" || status === "starting") setCode("");
+  }, [status]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, fontSize: 13.5, lineHeight: 1.5, color: "var(--vz-ink)" }}>
       {status === "starting" && <div style={{ color: "var(--vz-muted)" }}>Starting sign-in…</div>}

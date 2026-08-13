@@ -71,6 +71,9 @@ export interface UserResourceRoutesOptions {
   gitProviderService: GitProviderService;
   secretVaultService: SecretVaultService;
   documentService: DocumentService;
+  /** Seals/unseals the stateless Anthropic-OAuth auth tokens (and matches the
+   *  key used for credential encryption everywhere else). */
+  encryptionKey: string;
   /**
    * Optional SaaS hook — given userId + the ALS-pinned active org,
    * returns the set of user_secret ids to hide from the response.
@@ -559,10 +562,10 @@ export const userResourceRoutes = fp(
     // key, and wires it to a default agent. Replaces the manual
     // "run `claude setup-token` and paste it" flow; pasted setup-tokens keep
     // working (they simply have no refresh token / expiry).
-    server.post("/v1/anthropic-keys/claude/start", async (_request, reply) => {
+    server.post("/v1/anthropic-keys/claude/start", async (request, reply) => {
       const { startOAuth } = await import("../services/anthropic-oauth-service.js");
       try {
-        return startOAuth();
+        return startOAuth(request.user!.id, opts.encryptionKey);
       } catch (e) {
         return reply.code(502).send(errorResponse(ErrorCodes.BAD_REQUEST, e instanceof Error ? e.message : "sign-in failed to start"));
       }
@@ -578,7 +581,7 @@ export const userResourceRoutes = fp(
       const { completeOAuth } = await import("../services/anthropic-oauth-service.js");
       let tokens;
       try {
-        tokens = await completeOAuth(auth_id, code);
+        tokens = await completeOAuth(auth_id, request.user!.id, code, opts.encryptionKey);
       } catch (e) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, e instanceof Error ? e.message : "sign-in failed"));
       }

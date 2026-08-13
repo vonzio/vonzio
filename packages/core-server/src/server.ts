@@ -729,6 +729,7 @@ export async function buildServer(deps: ServerDeps) {
     });
     v1.register(userResourceRoutes, {
       db,
+      encryptionKey: config.ENCRYPTION_KEY,
       apiKeyService,
       profileService,
       toolFileService,

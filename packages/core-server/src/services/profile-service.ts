@@ -105,15 +105,29 @@ export class ProfileService {
     try {
       rotated = await refreshAnthropicTokens(refreshToken);
     } catch {
-      // Same reasoning as the Codex path: network failure leaves the stored
-      // refresh token unconsumed; a racing turn's rotation is already
-      // persisted. Either way the old access token is the safest fallback.
+      // The refresh failed. Two possibilities: a network blip (stored refresh
+      // token untouched upstream — old access is still valid within the
+      // skew), or ANOTHER REPLICA already consumed this single-use refresh
+      // token and persisted the rotated pair. Reload before falling back so
+      // the multi-instance race resolves to the fresh credential.
+      try {
+        const reloaded = await this.apiKeyService!.getWithSecrets(keyId);
+        if (reloaded?.api_key && reloaded.api_key !== oldAccess) return reloaded.api_key;
+      } catch { /* reload is best-effort */ }
       return oldAccess;
     }
+    // Rotation SUCCEEDED — the single-use refresh token is consumed upstream,
+    // so persistence is mandatory. Retry once before the loud log: returning
+    // the fresh access token keeps THIS turn working either way, but an
+    // unpersisted rotation strands the credential on a dead refresh token.
     try {
       await this.apiKeyService!.rotateSubscriptionTokens(keyId, rotated.accessToken, rotated.refreshToken, rotated.expiresAt);
-    } catch (e) {
-      console.error(`[claude-oauth] rotated token but failed to persist for key ${keyId} — credential may need re-linking:`, e instanceof Error ? e.message : e);
+    } catch {
+      try {
+        await this.apiKeyService!.rotateSubscriptionTokens(keyId, rotated.accessToken, rotated.refreshToken, rotated.expiresAt);
+      } catch (e) {
+        console.error(`[claude-oauth] rotated token but failed to persist for key ${keyId} — credential may need re-linking:`, e instanceof Error ? e.message : e);
+      }
     }
     return rotated.accessToken;
   }

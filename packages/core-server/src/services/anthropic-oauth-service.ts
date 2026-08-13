@@ -26,6 +26,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import { encrypt, decrypt } from "../auth/crypto.js";
 
 export const ANTHROPIC_OAUTH_CLIENT_ID =
   process.env.ANTHROPIC_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -72,9 +73,9 @@ export function codeChallengeS256(verifier: string): string {
 }
 
 /** Build the consent-page URL. Pure. `code=true` selects the display-the-code
- *  mode; `state` carries the PKCE verifier (the reference clients do the same,
- *  and the exchange leg echoes it back). */
-export function buildAuthorizeUrl(opts: { verifier: string; codeChallenge: string }): string {
+ *  mode. `state` is a RANDOM CSRF value — never the PKCE verifier, which must
+ *  not appear in a URL (browser history, referrers, consent-page logs). */
+export function buildAuthorizeUrl(opts: { state: string; codeChallenge: string }): string {
   const u = new URL(ANTHROPIC_AUTHORIZE_URL);
   u.searchParams.set("code", "true");
   u.searchParams.set("client_id", ANTHROPIC_OAUTH_CLIENT_ID);
@@ -83,7 +84,7 @@ export function buildAuthorizeUrl(opts: { verifier: string; codeChallenge: strin
   u.searchParams.set("scope", ANTHROPIC_OAUTH_SCOPE);
   u.searchParams.set("code_challenge", opts.codeChallenge);
   u.searchParams.set("code_challenge_method", "S256");
-  u.searchParams.set("state", opts.verifier);
+  u.searchParams.set("state", opts.state);
   return u.toString();
 }
 
@@ -113,19 +114,27 @@ export function parseAuthorizationInput(input: string): { code?: string; state?:
   return { code: value };
 }
 
-// ─── Pending sign-ins (in-memory, single-process) ─────────────────────
+// ─── Pending sign-ins (stateless, encrypted) ──────────────────────────
+//
+// The PKCE verifier + CSRF state are NOT held in server memory: auth_id is an
+// AES-GCM-encrypted, USER-BOUND token minted with the server's ENCRYPTION_KEY
+// and handed back on complete. That makes the flow replica-safe (any instance
+// can complete a sign-in another instance started), restart-safe, and
+// un-DoS-able (nothing accumulates server-side). Replay of an auth_id within
+// its TTL is harmless: the authorization code itself is single-use upstream,
+// so a second exchange fails at Anthropic — and the token is bound to the
+// initiating user, so nobody else's session can consume it.
 
-interface PendingAuth {
-  verifier: string;
-  createdAt: number;
-}
-
-const pending = new Map<string, PendingAuth>();
-
-function prunePending(now: number): void {
-  for (const [id, p] of pending) {
-    if (now - p.createdAt > ANTHROPIC_OAUTH_TIMEOUT_MS) pending.delete(id);
-  }
+interface AuthState {
+  /** PKCE verifier (secret — never leaves the encrypted token). */
+  v: string;
+  /** Random CSRF state echoed through the consent redirect. Distinct from
+   *  the verifier: state travels in the authorize URL, the verifier must not. */
+  s: string;
+  /** Initiating user id — complete() rejects any other caller. */
+  u: string;
+  /** Mint time (ms). */
+  t: number;
 }
 
 export interface OAuthStart {
@@ -133,17 +142,29 @@ export interface OAuthStart {
   authorize_url: string;
 }
 
-/** Begin a sign-in: mint PKCE state, remember the verifier server-side, hand
- *  the browser the consent URL. */
-export function startOAuth(now = Date.now()): OAuthStart {
-  prunePending(now);
+/** Begin a sign-in: mint PKCE + state, seal them into a user-bound auth_id. */
+export function startOAuth(userId: string, encryptionKey: string, now = Date.now()): OAuthStart {
   const verifier = generateCodeVerifier();
-  const auth_id = base64url(randomBytes(16));
-  pending.set(auth_id, { verifier, createdAt: now });
+  const state = base64url(randomBytes(16));
+  const sealed: AuthState = { v: verifier, s: state, u: userId, t: now };
+  const auth_id = Buffer.from(encrypt(JSON.stringify(sealed), encryptionKey)).toString("base64url");
   return {
     auth_id,
-    authorize_url: buildAuthorizeUrl({ verifier, codeChallenge: codeChallengeS256(verifier) }),
+    authorize_url: buildAuthorizeUrl({ state, codeChallenge: codeChallengeS256(verifier) }),
   };
+}
+
+function unseal(authId: string, encryptionKey: string, now: number): AuthState {
+  let parsed: AuthState;
+  try {
+    parsed = JSON.parse(decrypt(Buffer.from(authId, "base64url").toString("utf8"), encryptionKey)) as AuthState;
+  } catch {
+    throw new Error("sign-in token invalid — start again");
+  }
+  if (!parsed.v || !parsed.s || !parsed.u || !parsed.t || now - parsed.t > ANTHROPIC_OAUTH_TIMEOUT_MS) {
+    throw new Error("sign-in expired — start again");
+  }
+  return parsed;
 }
 
 export interface AnthropicTokens {
@@ -165,21 +186,25 @@ function tokensFromResponse(data: { access_token?: string; refresh_token?: strin
   };
 }
 
-/** Complete a sign-in: parse the pasted code, exchange it (PKCE) for tokens.
- *  Consumes the pending auth on success. */
+/** Complete a sign-in: unseal the auth token, verify the caller and the
+ *  pasted state, exchange the code (PKCE) for tokens. */
 export async function completeOAuth(
   authId: string,
+  userId: string,
   pastedInput: string,
+  encryptionKey: string,
   fetchImpl: FetchLike = defaultFetch,
   now = Date.now(),
 ): Promise<AnthropicTokens> {
-  prunePending(now);
-  const p = pending.get(authId);
-  if (!p) throw new Error("sign-in expired or unknown — start again");
+  const sealed = unseal(authId, encryptionKey, now);
+  if (sealed.u !== userId) throw new Error("sign-in token belongs to a different user — start again");
 
   const { code, state } = parseAuthorizationInput(pastedInput);
   if (!code) throw new Error("paste the code shown after approving in the browser");
-  if (state && state !== p.verifier) throw new Error("OAuth state mismatch — start again");
+  // State is REQUIRED: the consent page displays code#state — a paste without
+  // it is truncated, and accepting it would waive the CSRF check entirely.
+  if (!state) throw new Error("paste the FULL code, including the part after '#'");
+  if (state !== sealed.s) throw new Error("OAuth state mismatch — start again");
 
   const res = await fetchImpl(ANTHROPIC_TOKEN_URL, {
     method: "POST",
@@ -188,16 +213,16 @@ export async function completeOAuth(
       grant_type: "authorization_code",
       client_id: ANTHROPIC_OAUTH_CLIENT_ID,
       code,
-      state: state ?? p.verifier,
+      state,
       redirect_uri: ANTHROPIC_CODE_REDIRECT_URI,
-      code_verifier: p.verifier,
+      code_verifier: sealed.v,
     }),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`token exchange failed (${res.status}): ${body.slice(0, 300)}`);
+    // Detail stays server-side; upstream bodies can echo request params.
+    console.error(`[claude-oauth] token exchange failed (${res.status}): ${(await res.text().catch(() => "")).slice(0, 300)}`);
+    throw new Error(`token exchange failed (${res.status}) — check the pasted code and try again`);
   }
-  pending.delete(authId);
   return tokensFromResponse((await res.json()) as Record<string, never>, now);
 }
 
@@ -218,8 +243,8 @@ export async function refreshAnthropicTokens(
     }),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`token refresh failed (${res.status}): ${body.slice(0, 300)}`);
+    console.error(`[claude-oauth] token refresh failed (${res.status}): ${(await res.text().catch(() => "")).slice(0, 300)}`);
+    throw new Error(`token refresh failed (${res.status})`);
   }
   return tokensFromResponse((await res.json()) as Record<string, never>, now);
 }
