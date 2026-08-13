@@ -12,20 +12,39 @@ import { Download, FileText, Presentation, Table } from "lucide-react";
  * download route is same-origin in both.
  */
 
-const OFFICE_FILE_REGEX = /\/workspace\/[^\s"'`(){}\[\]<>|]+\.(docx|xlsx|pptx|pdf|xlsm|pptm|dotx|potx|xltx)\b/gi;
+const OFFICE_EXT = "docx|xlsx|pptx|pdf|xlsm|pptm|dotx|potx|xltx";
+// Two shapes the agent states a deliverable in: a /workspace path, or a link
+// to its own preview/fileserver URL (models often prefer a clickable link —
+// that's the markdown target, so match URLs too).
+const OFFICE_PATH_REGEX = new RegExp(`\\/workspace\\/[^\\s"'\`(){}\\[\\]<>|]+\\.(?:${OFFICE_EXT})\\b`, "gi");
+const OFFICE_URL_REGEX = new RegExp(`https?:\\/\\/[^\\s"'\`(){}\\[\\]<>|]+\\.(?:${OFFICE_EXT})\\b(?:\\?[^\\s"'\`(){}\\[\\]<>|]*)?`, "gi");
 
-/** Distinct /workspace document paths mentioned in `text`, in order. */
-export function extractOfficeFiles(text: string): string[] {
-  if (!text || !text.includes("/workspace/")) return [];
+export interface OfficeFileRef {
+  /** Display name (basename). */
+  name: string;
+  /** Either a /workspace/... path (needs the container download route) or a
+   *  ready-to-use URL the agent linked itself. */
+  target: string;
+  kind: "path" | "url";
+}
+
+/** Distinct office documents mentioned in `text`, in order. */
+export function extractOfficeFiles(text: string): OfficeFileRef[] {
+  if (!text) return [];
+  const out: OfficeFileRef[] = [];
   const seen = new Set<string>();
-  for (const match of text.matchAll(OFFICE_FILE_REGEX)) {
-    // Strip trailing punctuation a sentence can pin onto the path.
-    const path = match[0].replace(/[.,;:!?]+$/, "");
+  const push = (target: string, kind: "path" | "url") => {
+    const pathname = kind === "url" ? target.split("?")[0] : target;
     // The fileserver refuses dot-segments; don't render cards that 404.
-    if (path.split("/").some((seg) => seg.startsWith(".") && seg !== "")) continue;
-    seen.add(path);
-  }
-  return [...seen];
+    if (pathname.split("/").some((seg) => seg.startsWith(".") && seg !== "")) return;
+    const name = pathname.slice(pathname.lastIndexOf("/") + 1);
+    if (seen.has(name)) return; // path + URL for the same file → one card
+    seen.add(name);
+    out.push({ name, target, kind });
+  };
+  for (const m of text.matchAll(OFFICE_PATH_REGEX)) push(m[0].replace(/[.,;:!?]+$/, ""), "path");
+  for (const m of text.matchAll(OFFICE_URL_REGEX)) push(m[0], "url");
+  return out;
 }
 
 function iconFor(path: string) {
@@ -36,19 +55,21 @@ function iconFor(path: string) {
 }
 
 export function OfficeFileCards({ text, containerId }: { text: string; containerId: string | null }) {
-  if (!containerId) return null;
   const files = extractOfficeFiles(text);
   if (files.length === 0) return null;
-  const shortId = containerId.slice(0, 12);
+  const shortId = containerId?.slice(0, 12);
   return (
     <div className="flex flex-wrap gap-2 mt-3">
-      {files.map((path) => {
-        const name = path.slice(path.lastIndexOf("/") + 1);
-        const Icon = iconFor(path);
+      {files.map(({ name, target, kind }) => {
+        // Workspace paths need the container download route; agent-linked
+        // URLs are usable as-is (and don't need a containerId at all).
+        const href = kind === "url" ? target : shortId ? `/preview/${shortId}/files${target}` : null;
+        if (!href) return null;
+        const Icon = iconFor(name);
         return (
           <a
-            key={path}
-            href={`/preview/${shortId}/files${path}`}
+            key={name}
+            href={href}
             download={name}
             className="inline-flex items-center gap-2 no-underline"
             style={{
