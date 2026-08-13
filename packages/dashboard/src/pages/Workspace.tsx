@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot, Gamepad2, BarChart3, Search, Rocket, Globe, Plus, PanelLeftOpen, Mic, MicOff } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
+import { extractOfficeFiles } from "../components/OfficeFileCards.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
 import { useWorkspaceChat } from "../hooks/useWorkspaceChat.js";
 import { useApi } from "../hooks/useApi.js";
@@ -536,9 +537,15 @@ export function Workspace() {
     }
   }, [activeWorkspace?.container_id]);
 
-  // Scan assistant text messages for preview URLs
+  // Scan assistant text messages for preview URLs, and pop the files tab when
+  // the agent reports an office document it produced (those are created via
+  // Bash by the baked skills, so Write/Edit detection never sees them).
   const handleAssistantMessage = useCallback((text: string) => {
     openPreviewFromText(text);
+    if (extractOfficeFiles(text).length > 0) {
+      setPanelTab("files");
+      setPanelOpen(true);
+    }
   }, [openPreviewFromText]);
 
   // Chat hook
@@ -1016,6 +1023,7 @@ export function Workspace() {
       case "search": return <Search className="w-4 h-4" />;
       case "rocket": return <Rocket className="w-4 h-4" />;
       case "globe": return <Globe className="w-4 h-4" />;
+      case "doc": return <FileText className="w-4 h-4" />;
       default: return <Sparkles className="w-4 h-4" />;
     }
   };

@@ -52,5 +52,23 @@
     "label": "Make a portfolio site",
     "icon": "globe",
     "prompt": "Build me a striking single-page personal/portfolio website as one self-contained HTML file, and serve it for preview.\n\n- Sections: hero with a strong tagline, about, selected work (cards with hover detail), skills, and a contact CTA.\n- Modern, distinctive design — confident typography, smooth scroll, subtle motion/scroll-reveal, dark mode.\n- Fully responsive; fast (no heavy frameworks — vanilla + maybe one CDN lib).\n- Tasteful placeholder content I can swap later.\n\nAsk me for my name/role/highlights, or scaffold it with realistic placeholders. Serve it and give me the preview URL."
+  },
+  {
+    "id": "word-report",
+    "label": "Write a Word report",
+    "icon": "doc",
+    "prompt": "Produce a polished Word document (.docx) on a topic I'll give you — a report, memo, or proposal.\n\nMake it look professionally typeset, not like exported markdown:\n- Title page (title, subtitle, date), then a table of contents.\n- Real heading hierarchy, page numbers, consistent fonts and spacing.\n- At least one well-formatted table and one call-out/summary box.\n- Tight, executive-grade writing — no filler.\n\nSave it in the workspace and give me the file's path so I can download it. If I share an existing .docx instead, edit it with tracked changes so I can review your edits in Word. Ask me for the topic if I haven't given one."
+  },
+  {
+    "id": "budget-spreadsheet",
+    "label": "Build a working spreadsheet",
+    "icon": "chart",
+    "prompt": "Build me a real Excel workbook (.xlsx) — pick a genuinely useful template (personal budget, project cost tracker, invoice, or cap table) or ask what I need.\n\nRequirements:\n- Live formulas everywhere a value derives from inputs (SUM/IF/VLOOKUP...), never hardcoded results — it must recalculate when I change inputs.\n- A clean input area, a calculations section, and a summary with a few key figures.\n- Number/currency/date formatting, column widths, header styling, and a frozen header row.\n- A second sheet documenting how to use it.\n\nRecalculate before delivering so every cell shows a computed value, then save it in the workspace and give me the file's path so I can download it."
+  },
+  {
+    "id": "slide-deck",
+    "label": "Create a slide deck",
+    "icon": "doc",
+    "prompt": "Create a PowerPoint deck (.pptx) on a topic I'll give you — a pitch, project update, or explainer.\n\nQuality bar:\n- 6-10 slides with a real narrative arc: hook, problem, substance, close.\n- A consistent visual theme (colors, fonts, layouts) — not the default template look.\n- Slides that show rather than tell: one idea per slide, big statements, a chart or diagram where numbers appear, minimal bullet text.\n- Speaker notes on every slide with what I'd actually say.\n\nDo a visual QA pass (render slides and fix overflow/alignment) before delivering. Save it in the workspace and give me the file's path so I can download it. Ask me for the topic if I haven't given one."
   }
 ]

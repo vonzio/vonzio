@@ -1774,6 +1774,13 @@ export class Orchestrator extends EventEmitter {
     if (nonSdkServers.some((s) => s.name === "vonzio")) {
       systemPrompt += PLATFORM_MCP_PRIMER;
     }
+    // Office deliverables: the chat UI renders a download card for any
+    // /workspace document path stated in the reply (OfficeFileCards) — the
+    // only creation signal, since skill scripts write files via Bash.
+    systemPrompt +=
+      `\n\n## Document deliverables\n` +
+      `Office-file skills (docx, xlsx, pptx, pdf) are preinstalled — use them whenever a document, spreadsheet, or presentation is the deliverable. ` +
+      `Create such files under /workspace and always state each file's absolute path in your reply (e.g. \`/workspace/report.docx\`); the chat renders a download card for every path you mention.`;
     // Local-exec surface note: the agent's file/shell tools act on the user's
     // machine, outside this container's sandbox. Steer it to the local_* tools
     // and to confirm-before-destroy, since the user can reject any call.
@@ -1800,8 +1807,22 @@ export class Orchestrator extends EventEmitter {
     // (SKILL.md + scripts/assets) ship as a zip and are unpacked in-container;
     // single-file skills just write SKILL.md. agent-runner loads the "user"
     // setting scope so the SDK discovers them.
+    // Seed the image-baked office skills (docx/xlsx/pptx/pdf, see
+    // docker/Dockerfile.agent.base) into the personal scope. They live at
+    // /opt/vonzio/skills in the image because ~/.claude is frequently a
+    // mounted volume that shadows image contents; re-seeding every session
+    // also picks up skill updates shipped in a new agent image. rm+cp (not
+    // cp -n) so a stale baked copy never survives an image upgrade. Runs
+    // BEFORE profile skills so a user skill of the same name wins. Older
+    // agent images without /opt/vonzio/skills make this a harmless no-op.
+    await this.drainExec(containerId, ["sh", "-c",
+      `[ -d /opt/vonzio/skills ] || exit 0; mkdir -p "$HOME/.claude/skills"; ` +
+      `for s in /opt/vonzio/skills/*/; do n=$(basename "$s"); rm -rf "$HOME/.claude/skills/$n"; cp -r "$s" "$HOME/.claude/skills/$n"; done`,
+    ]);
+
     const skillIds = profile.skill_ids ?? [];
-    let hasSkills = false;
+    // Baked skills mean every session has skills — keep the Skill tool on.
+    const hasSkills = true;
     if (skillIds.length > 0) {
       const resolvedSkills = await this.deps.skillService.resolveSkills(skillIds);
       for (const skill of resolvedSkills) {
@@ -1823,7 +1844,6 @@ export class Orchestrator extends EventEmitter {
           );
         }
       }
-      hasSkills = resolvedSkills.length > 0;
     }
 
     // Resolve and mount per-agent knowledge documents at /knowledge (read-only).
