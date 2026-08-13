@@ -32,14 +32,20 @@ export interface OfficeFileRef {
 export function extractOfficeFiles(text: string): OfficeFileRef[] {
   if (!text) return [];
   const out: OfficeFileRef[] = [];
-  const seen = new Set<string>();
+  const seenTargets = new Set<string>();
+  const pathBasenames = new Set<string>();
   const push = (target: string, kind: "path" | "url") => {
     const pathname = kind === "url" ? target.split("?")[0] : target;
     // The fileserver refuses dot-segments; don't render cards that 404.
     if (pathname.split("/").some((seg) => seg.startsWith(".") && seg !== "")) return;
+    if (seenTargets.has(pathname)) return;
     const name = pathname.slice(pathname.lastIndexOf("/") + 1);
-    if (seen.has(name)) return; // path + URL for the same file → one card
-    seen.add(name);
+    // Agents often state a file BOTH ways — "/workspace/deck.pptx ([download](…/deck.pptx))".
+    // Suppress the URL alias of an already-carded path; distinct files that
+    // merely share a basename (different dirs/targets) each keep their card.
+    if (kind === "url" && pathBasenames.has(name)) return;
+    if (kind === "path") pathBasenames.add(name);
+    seenTargets.add(pathname);
     out.push({ name, target, kind });
   };
   for (const m of text.matchAll(OFFICE_PATH_REGEX)) push(m[0].replace(/[.,;:!?]+$/, ""), "path");
@@ -68,7 +74,7 @@ export function OfficeFileCards({ text, containerId }: { text: string; container
         const Icon = iconFor(name);
         return (
           <a
-            key={name}
+            key={target}
             href={href}
             download={name}
             className="inline-flex items-center gap-2 no-underline"

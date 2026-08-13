@@ -32,6 +32,14 @@ describe("extractOfficeFiles", () => {
     ]);
   });
 
+  it("keeps distinct files that merely share a basename", () => {
+    const text = "Wrote /workspace/reports/final.pdf and /workspace/appendix/final.pdf";
+    expect(extractOfficeFiles(text)).toEqual([
+      { name: "final.pdf", target: "/workspace/reports/final.pdf", kind: "path" },
+      { name: "final.pdf", target: "/workspace/appendix/final.pdf", kind: "path" },
+    ]);
+  });
+
   it("strips trailing sentence punctuation but keeps dots inside names", () => {
     expect(extractOfficeFiles("Saved to /workspace/v1.2/final.report.pdf.")).toEqual([
       { name: "final.report.pdf", target: "/workspace/v1.2/final.report.pdf", kind: "path" },
