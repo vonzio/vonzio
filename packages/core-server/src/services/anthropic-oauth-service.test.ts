@@ -40,7 +40,7 @@ describe("anthropic-oauth-service", () => {
   it("consent URL never uses '+' for scope spaces (authorize endpoint rejects form-encoding)", () => {
     const { authorize_url } = startOAuth("user_1", KEY);
     expect(authorize_url).not.toContain("+");
-    expect(authorize_url).toContain("scope=org%3Acreate_api_key%20user%3Aprofile");
+    expect(authorize_url).toContain("scope=user%3Ainference");
   });
 
   it("consent URL: PKCE + display mode, and state is NOT the verifier", () => {

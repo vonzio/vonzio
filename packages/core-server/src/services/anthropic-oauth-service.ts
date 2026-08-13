@@ -30,24 +30,25 @@ import { encrypt, decrypt } from "../auth/crypto.js";
 
 export const ANTHROPIC_OAUTH_CLIENT_ID =
   process.env.ANTHROPIC_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-// Endpoints verified against the CURRENT Claude Code binary (2.1.220): the
-// consent flow lives on platform.claude.com now. NB the console.anthropic.com
-// code callback from older references is RETIRED — the consent page still
-// RENDERS with it (render doesn't validate redirect_uri) but the grant step
-// rejects it as unregistered, which presents as "Authorization failed —
-// Invalid request format" only AFTER clicking Authorize.
+// Endpoints + params verified against the LIVE `claude setup-token` (Claude
+// Code 2.1.220) — captured from its actual authorize URL, not from older
+// reference implementations, several of which predate Anthropic's endpoint
+// migrations. Two failure modes those stale constants produced, for the
+// record (each only surfaces AFTER the user clicks Authorize, because the
+// consent page renders without validating them):
+//   - a retired redirect_uri (console.anthropic.com) → grant rejected;
+//   - the old six-scope list → grant rejected (only user:inference is
+//     grantable to this client now).
 export const ANTHROPIC_AUTHORIZE_URL =
-  process.env.ANTHROPIC_OAUTH_AUTHORIZE_URL ?? "https://platform.claude.com/oauth/authorize";
+  process.env.ANTHROPIC_OAUTH_AUTHORIZE_URL ?? "https://claude.com/cai/oauth/authorize";
 export const ANTHROPIC_TOKEN_URL =
   process.env.ANTHROPIC_OAUTH_TOKEN_URL ?? "https://platform.claude.com/v1/oauth/token";
 /** Out-of-band display redirect: after consent this page SHOWS the
  *  `code#state` string for the user to copy back — no server callback. */
 export const ANTHROPIC_CODE_REDIRECT_URI =
   process.env.ANTHROPIC_OAUTH_REDIRECT_URI ?? "https://platform.claude.com/oauth/code/callback";
-/** Scope set the Claude Code client requests; inference is the one we need,
- *  the rest keep the token fully usable by the in-container SDK. */
-export const ANTHROPIC_OAUTH_SCOPE =
-  "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+/** Exactly what the live setup-token requests — inference only. */
+export const ANTHROPIC_OAUTH_SCOPE = "user:inference";
 
 /** A pending sign-in is abandoned after 15 minutes. */
 export const ANTHROPIC_OAUTH_TIMEOUT_MS = 15 * 60 * 1000;
