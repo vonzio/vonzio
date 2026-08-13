@@ -96,6 +96,15 @@ export function useChatGptSignIn(onConnected?: () => void): ChatGptSignInState {
   return { status, info, error, start, cancel };
 }
 
+/** ChatGPT ships with device sign-in disabled, so the flow dead-ends for
+ *  most first-timers unless we point at the toggle. Shown while waiting and
+ *  on failure (a rejected code / timeout is usually this, not a typo). */
+const DEVICE_AUTH_HINT = (
+  <div style={{ fontSize: 12.5, color: "var(--vz-muted)", borderTop: "1px solid var(--vz-border)", paddingTop: 10 }}>
+    If ChatGPT rejects the code, enable device sign-in first: <strong>Settings → Security and login → Enable device code authorization for Codex</strong>. ChatGPT keeps it off by default and only recommends it for headless or remote environments where the normal browser flow isn't available.
+  </div>
+);
+
 /** Chrome-free rendering of the flow's current state — embed anywhere. */
 export function ChatGptSignInPanel({ state }: { state: ChatGptSignInState }) {
   const { status, info, error } = state;
@@ -113,6 +122,7 @@ export function ChatGptSignInPanel({ state }: { state: ChatGptSignInState }) {
             <a href={info.verify_url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--vz-sodium)" }}>{info.verify_url}</a>
           </div>
           <div style={{ fontSize: 12.5, color: "var(--vz-muted)" }}>Waiting for approval…</div>
+          {DEVICE_AUTH_HINT}
         </>
       )}
       {status === "created" && (
@@ -120,7 +130,12 @@ export function ChatGptSignInPanel({ state }: { state: ChatGptSignInState }) {
           <CheckCircle size={16} /> Connected. Your ChatGPT subscription is ready to use.
         </div>
       )}
-      {status === "error" && <div style={{ color: "var(--vz-fail)" }} role="alert">{error}</div>}
+      {status === "error" && (
+        <>
+          <div style={{ color: "var(--vz-fail)" }} role="alert">{error}</div>
+          {DEVICE_AUTH_HINT}
+        </>
+      )}
     </div>
   );
 }
