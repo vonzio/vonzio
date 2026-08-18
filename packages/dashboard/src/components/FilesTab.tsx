@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw, File as FileIcon, Folder, Download, Trash2, Upload, ChevronRight, Check } from "lucide-react";
 import { fetchWorkspaceFiles, uploadFiles, deleteFile, workspaceArchiveUrl, type FileEntry } from "../api/client.js";
 import { FilePreviewModal } from "./FilePreviewModal.js";
+import { documentKind, openDocumentInDeck } from "./document-utils.js";
 
 function humanSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -421,6 +422,11 @@ export function FilesTab({ workspaceId, containerId }: Props) {
                   onClick={() => {
                     if (f.type === "directory") {
                       setCurrentPath(currentPath + f.name + "/");
+                    } else if (documentKind(f.name)) {
+                      // Office docs (and pdfs) render in the deck's Document
+                      // tab (#368) — the generic modal can only offer a
+                      // download for them.
+                      openDocumentInDeck(`${currentPath}${f.name}`);
                     } else {
                       setPreviewFile(f);
                     }

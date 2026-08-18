@@ -1,4 +1,4 @@
-.PHONY: install check-lock build test e2e e2e-install e2e-fresh e2e-chat dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
+.PHONY: install check-lock build test e2e e2e-install e2e-fresh e2e-chat e2e-docs dev dev-oss better-auth-migrate plugin publish-sdk-dryrun setup bootstrap agent-image agent-base-local dashboard clean clean-all help
 .PHONY: docker-reset-db docker-build docker-dev docker-dev-detached docker-dev-oss-detached docker-dev-oss docker-pull-oss docker-prod docker-up docker-down docker-logs docker-clean docker-flavors chat uninstall nuke
 .PHONY: add-credential update-credential list-credentials create-key test-watch typecheck migrate-to-pg api api-once
 
@@ -102,6 +102,9 @@ e2e-chat: ## Run the chat round-trip against an isolated stack + mock LLM (needs
 
 e2e-pause: ## Run the idle-pause/resume round-trip (#333) against an isolated stack + mock LLM
 	@bash scripts/e2e-local.sh pause
+
+e2e-docs: ## Run the office-document deck preview round-trip (#368) against an isolated stack + mock LLM
+	@bash scripts/e2e-local.sh docs
 
 typecheck: ## Type-check all packages
 	npx tsc --project packages/shared/tsconfig.json --noEmit

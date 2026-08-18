@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import mermaid from "mermaid";
 import { CodeBlock } from "./CodeBlock.js";
+import { extractOfficeDocPath, openDocumentInDeck } from "./document-utils.js";
 
 mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "strict", suppressErrorRendering: true });
 
@@ -284,21 +285,30 @@ export function MarkdownContent({ content, isStreaming }: { content: string; isS
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeRaw]}
       components={{
-        a: ({ href, children, ...props }) => (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              color: "var(--vz-sodium)",
-              textDecoration: "underline",
-              wordBreak: "break-all",
-            }}
-            {...props}
-          >
-            {children}
-          </a>
-        ),
+        // NOTE (a/code below): `ref` is destructured away before spreading —
+        // react-markdown's component props carry a legacy ref type that the
+        // current @types/react rejects on DOM elements.
+        a: ({ href, children, ref: _ref, ...props }) => {
+          // A link to an office document opens the deck's Document tab (#368)
+          // instead of navigating (which would just trigger a download).
+          const docPath = href ? extractOfficeDocPath(href) : null;
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={docPath ? (e) => { e.preventDefault(); openDocumentInDeck(docPath); } : undefined}
+              style={{
+                color: "var(--vz-sodium)",
+                textDecoration: "underline",
+                wordBreak: "break-all",
+              }}
+              {...props}
+            >
+              {children}
+            </a>
+          );
+        },
         pre: ({ children }) => {
           // Intercept code blocks: extract the inner <code> child, then route
           // by language — mermaid renders as a diagram, everything else goes
@@ -315,7 +325,7 @@ export function MarkdownContent({ content, isStreaming }: { content: string; isS
           }
           return <CodeBlock code={String(children ?? "")} />;
         },
-        code: ({ className, children, ...props }) => {
+        code: ({ className, children, ref: _ref, ...props }) => {
           const isBlock = className?.startsWith("language-");
           if (isBlock) {
             return <code className={className} {...props}>{children}</code>;

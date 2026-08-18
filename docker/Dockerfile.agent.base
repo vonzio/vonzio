@@ -65,6 +65,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # with no apt at runtime) so the template works with zero setup and needs
     # no pypi egress under egress enforcement.
     imagemagick ffmpeg python3-pil fonts-dejavu-core \
+    # Office documents (#367/#368): creation libs baked in (no pypi egress
+    # under egress enforcement; python-pptx comes via pip below — trixie has
+    # no python3-pptx package) and LibreOffice headless for the deck's
+    # docx/pptx→PDF preview rendering (docpreview.sh). Writer/Calc/Impress
+    # only, no-install-recommends: ~400 MB instead of the ~700 MB full suite —
+    # the size cost is accepted for out-of-the-box office support (see #368).
+    # fonts-liberation supplies metric-compatible Arial/Times/Courier so
+    # converted PDFs keep layout.
+    python3-docx python3-openpyxl \
+    libreoffice-writer libreoffice-calc libreoffice-impress \
+    fonts-liberation \
     chromium \
     # Common database clients — avoids the per-session install dance for
     # agents that read/write user databases (Supabase/Postgres, MySQL,
@@ -86,6 +97,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     # Symlink fd (Debian names it fdfind).
     && ln -sf /usr/bin/fdfind /usr/bin/fd
+
+# python-pptx (pptx creation, #367) — no Debian package in trixie, so pip
+# into the system tree at build time (the agent has no pypi egress at runtime).
+RUN pip3 install --break-system-packages --no-cache-dir python-pptx
 
 # GitHub CLI (gh).
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -116,7 +131,9 @@ COPY docker/llm-gateway.cjs /app/llm-gateway.cjs
 COPY docker/git-credential-helper.sh /app/git-credential-helper.sh
 COPY docker/entrypoint.sh /app/entrypoint.sh
 COPY docker/fileserver.py /app/fileserver.py
-RUN chmod +x /app/cleanup.sh /app/git-credential-helper.sh /app/entrypoint.sh
+COPY docker/docpreview.sh /app/docpreview.sh
+COPY docker/xlsx2html.py /app/xlsx2html.py
+RUN chmod +x /app/cleanup.sh /app/git-credential-helper.sh /app/entrypoint.sh /app/docpreview.sh
 RUN git config --system credential.helper /app/git-credential-helper.sh
 
 # Unprivileged agent user (claude-agent-sdk's bypassPermissions refuses to

@@ -20,6 +20,9 @@ services:
       - PORT=8080
       - MOCK_MODEL=mock-model
       - MOCK_REPLY=E2E pong
+      # docs mode (scripts/e2e-local.sh docs) sets this to "docx" to script a
+      # tool_use turn that creates a real docx in the workspace (#368).
+      - MOCK_SCENARIO=${MOCK_SCENARIO:-text}
 
   # Point both the model list (core-server) and the agent's LLM calls (via
   # OLLAMA_TARGET_URL) at the mock. DOCKER_NETWORK pins spawned agent
