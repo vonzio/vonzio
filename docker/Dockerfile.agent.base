@@ -71,6 +71,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Redis, SQLite). Each is small (~5-15 MB).
     postgresql-client default-mysql-client redis-tools sqlite3 \
     procps file \
+    # Office-document toolchain (default-on, issue #367): the baked docx/xlsx/
+    # pptx skills shell out to LibreOffice for xlsx formula recalculation,
+    # docx tracked-changes acceptance, legacy .doc/.xls/.ppt conversion, and
+    # PDF rendering for visual QA — the writer/calc/impress trio without
+    # recommends keeps it to a fraction of full libreoffice. pandoc reads
+    # docx as markdown; fonts-liberation gives metric-compatible substitutes
+    # for Arial/Times/Courier so LibreOffice previews match Office layout;
+    # tesseract powers the pdf skill's OCR path.
+    libreoffice-writer libreoffice-calc libreoffice-impress \
+    pandoc fonts-liberation tesseract-ocr \
     # Programmable tab-completion (git/apt/etc.) for the in-app Console. The
     # baked-in ~/.bashrc already sources it when present; without the package
     # only basic readline filename/command completion works.
@@ -95,6 +105,41 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 
 # Claude Agent SDK (CLI + programmatic API).
 RUN npm install -g @anthropic-ai/claude-agent-sdk agent-browser
+
+# NOTE on version pinning: the pip/npm installs below are deliberately
+# UNPINNED, matching every other install in this image — agent-base floats
+# and rebuilds weekly (APT_SNAPSHOT machinery above) so security patches
+# land; exact pins would freeze CVEs between manual bumps. The skills
+# tarball IS pinned — by commit SHA, which pins content; GitHub tarballs
+# aren't byte-stable enough for a meaningful checksum on top.
+#
+# Python libraries the office skills import (Debian's python3 is PEP 668
+# "externally managed", hence --break-system-packages; these are container-
+# global on purpose — the agent user has no runtime pip under egress
+# enforcement). pandas/openpyxl/markitdown per the xlsx skill; python-docx /
+# python-pptx / defusedxml for OOXML work; pypdf + pdf2image + pytesseract
+# for the pdf skill.
+RUN pip3 install --no-cache-dir --break-system-packages \
+    python-docx python-pptx openpyxl pandas markitdown defusedxml \
+    pypdf pdf2image pytesseract
+
+# Node libraries the docx/pptx skills `require()` from generated scripts:
+# docx + pptxgenjs generators, react/react-dom/react-icons + sharp for the
+# icon-rasterization path. Installed to the root prefix (/usr/local) and
+# exposed via NODE_PATH so `require("docx")` resolves from /workspace.
+RUN npm install -g --prefix /usr/local docx pptxgenjs react react-dom react-icons sharp
+
+# Anthropic's Apache-2.0 agent skills for office files (docx/xlsx/pptx/pdf),
+# vendored at a pinned commit. Baked to a neutral path — /home/agent/.claude
+# is often a mounted volume, so the orchestrator seeds these into
+# ~/.claude/skills at session setup rather than relying on image contents.
+ARG SKILLS_COMMIT=f17010c9bb483898c1d9c9f42dde2b3a98889434
+RUN mkdir -p /opt/vonzio/skills && cd /tmp \
+    && curl -fsSL "https://github.com/anthropics/skills/archive/${SKILLS_COMMIT}.tar.gz" -o skills.tar.gz \
+    && tar -xzf skills.tar.gz \
+    && for s in docx xlsx pptx pdf; do cp -r "skills-${SKILLS_COMMIT}/skills/$s" /opt/vonzio/skills/; done \
+    && cp "skills-${SKILLS_COMMIT}/THIRD_PARTY_NOTICES.md" /opt/vonzio/skills/ \
+    && rm -rf skills.tar.gz "skills-${SKILLS_COMMIT}"
 
 # Common global tooling. yarn/pnpm come via corepack — which node >= 25 no
 # longer BUNDLES (it moved out of the runtime distribution), so install it
@@ -144,6 +189,9 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
 ENV PATH=/home/agent/.npm-global/bin:$PATH
+# Resolve the baked office-skill node libs (and any agent-installed globals)
+# from scripts run anywhere in /workspace.
+ENV NODE_PATH=/home/agent/.npm-global/lib/node_modules:/usr/local/lib/node_modules
 
 # Chromium where Chrome DevTools MCP expects to find it.
 RUN mkdir -p /opt/google/chrome && ln -sf /usr/bin/chromium /opt/google/chrome/chrome
