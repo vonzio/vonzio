@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { gunzipSync, inflateSync, brotliDecompressSync } from "node:zlib";
 import { basename, extname, posix as posixPath } from "node:path";
 import type { ContainerManager } from "@vonzio/shared";
 import type { SessionRegistry } from "../container/session-registry.js";
@@ -7,6 +8,7 @@ import type { Auth } from "../auth/better-auth.js";
 import { createPreviewAuthChecker, unauthorizedHtml, brandedErrorHtml, previewCodeGateHtml, CODE_COOKIE_NAME, type PreviewAuthChecker } from "../auth/preview-auth.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 import { ensureContainerRunning } from "../container/ensure-running.js";
+import { rewriterFor, rewriteLocation } from "./preview-rewrite.js";
 
 // Read the `vonzio_preview` cookie value. Same-origin cookie set on the
 // preview subdomain after a successful _pvt exchange.
@@ -291,7 +293,7 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
     const prefix = `/preview/${containerId}/${port}`;
     let targetPath = request.url.slice(prefix.length) || "/";
 
-    return proxyRequest(request, reply, target.ip, target.port, targetPath);
+    return proxyRequest(request, reply, target.ip, target.port, targetPath, prefix);
   });
 
   // Also handle the exact prefix without trailing path
@@ -305,7 +307,7 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
 
     if (!(await checkAuth(request, reply, target.fullId, portNum))) return;
 
-    return proxyRequest(request, reply, target.ip, target.port, "/");
+    return proxyRequest(request, reply, target.ip, target.port, "/", `/preview/${containerId}/${port}`);
   });
 
   // --- File download: /preview/:containerId/files/* ---
@@ -363,8 +365,10 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
     targetIp: string,
     targetPort: number,
     targetPath: string,
+    prefix: string,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
+      const upstreamHost = `${targetIp}:${targetPort}`;
       const proxyReq = httpRequest(
         {
           hostname: targetIp,
@@ -373,11 +377,25 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
           method: request.method as string,
           headers: {
             ...request.headers,
-            host: `${targetIp}:${targetPort}`,
+            host: upstreamHost,
+            // Only offer encodings bufferAndRewrite can decode (no zstd).
+            ...(request.headers["accept-encoding"] ? { "accept-encoding": "gzip, deflate, br" } : {}),
           },
         },
         (proxyRes) => {
-          reply.raw.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+          // The app thinks it lives at "/": put the preview prefix back on
+          // root-relative redirects and on URLs in HTML/CSS bodies.
+          const headers = { ...proxyRes.headers };
+          if (typeof headers.location === "string") {
+            headers.location = rewriteLocation(headers.location, prefix, upstreamHost);
+          }
+          const bodyless = request.method === "HEAD" || proxyRes.statusCode === 204 || proxyRes.statusCode === 304;
+          const rewrite = bodyless ? null : rewriterFor(headers["content-type"]);
+          if (rewrite) {
+            bufferAndRewrite(proxyRes, reply, headers, rewrite, prefix, resolve);
+            return;
+          }
+          reply.raw.writeHead(proxyRes.statusCode ?? 502, headers);
           proxyRes.pipe(reply.raw);
           proxyRes.on("end", resolve);
         },
@@ -402,6 +420,79 @@ export const previewRoutes: FastifyPluginAsync<PreviewRoutesOptions> = async (se
     });
   }
 };
+
+// Rewritten bodies are buffered; past this size the response streams through
+// untouched rather than holding a large page in memory.
+const MAX_REWRITE_BYTES = 8 * 1024 * 1024;
+
+function decodeBody(body: Buffer, encoding: string | undefined): Buffer | null {
+  const enc = (encoding ?? "").trim().toLowerCase();
+  if (!enc || enc === "identity") return body;
+  try {
+    if (enc === "gzip" || enc === "x-gzip") return gunzipSync(body);
+    if (enc === "deflate") return inflateSync(body);
+    if (enc === "br") return brotliDecompressSync(body);
+  } catch { /* corrupt or mislabeled — pass the original through */ }
+  return null;
+}
+
+/**
+ * Buffer an HTML/CSS upstream response, decompress it, rewrite root-relative
+ * URLs, and send it uncompressed with a correct Content-Length. Falls back to
+ * passing the original bytes through when the body is too large or uses an
+ * encoding we can't decode.
+ */
+export function bufferAndRewrite(
+  proxyRes: IncomingMessage,
+  reply: FastifyReply,
+  headers: IncomingMessage["headers"],
+  rewrite: (body: string, prefix: string) => string,
+  prefix: string,
+  done: () => void,
+): void {
+  const status = proxyRes.statusCode ?? 502;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  let passthrough = false;
+  proxyRes.on("data", (chunk: Buffer) => {
+    if (passthrough) return;
+    chunks.push(chunk);
+    size += chunk.length;
+    if (size > MAX_REWRITE_BYTES) {
+      passthrough = true;
+      proxyRes.removeAllListeners("data");
+      proxyRes.removeAllListeners("end");
+      reply.raw.writeHead(status, headers);
+      for (const c of chunks) reply.raw.write(c);
+      proxyRes.pipe(reply.raw);
+      proxyRes.on("end", done);
+    }
+  });
+  proxyRes.on("end", () => {
+    const raw = Buffer.concat(chunks);
+    const decoded = decodeBody(raw, headers["content-encoding"] as string | undefined);
+    if (!decoded) {
+      reply.raw.writeHead(status, headers);
+      reply.raw.end(raw);
+      return done();
+    }
+    // latin1 round-trips every byte, so non-ASCII text (UTF-8 or a legacy
+    // charset) passes through unchanged; the rewriter only touches ASCII.
+    const out = Buffer.from(rewrite(decoded.toString("latin1"), prefix), "latin1");
+    const outHeaders = { ...headers };
+    delete outHeaders["content-encoding"];
+    delete outHeaders["transfer-encoding"];
+    outHeaders["content-length"] = String(out.length);
+    reply.raw.writeHead(status, outHeaders);
+    reply.raw.end(out);
+    done();
+  });
+  proxyRes.on("error", () => {
+    if (!reply.raw.headersSent) reply.raw.writeHead(502);
+    reply.raw.end();
+    done();
+  });
+}
 
 /**
  * Register hostname-based preview proxy as a global Fastify hook.

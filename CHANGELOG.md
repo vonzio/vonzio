@@ -71,6 +71,17 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **Path-mode previews load their own assets.** An app served under
+  `/preview/<slug>/<port>/` that links `/static/style.css` used to fetch it
+  from the dashboard and render unstyled. The proxy now prefixes root-relative
+  URLs in HTML attributes (`src`, `href`, `action`, `srcset`, …), inline and
+  linked CSS (`url()`, `@import`) and redirect `Location` headers, decoding
+  gzip/deflate/br bodies first. Root-relative GETs built in JS fall back to a
+  307 back under the preview when their Referer is a preview page.
+- **Preview links no longer print their access token in chat.** Signed
+  preview URLs keep `_pvt` in the link target but show a clean URL as the
+  link text in the dashboard.
+
 - **First run goes setup → onboarding.** Creating the admin account now
   signs it in and lands on `/onboarding` instead of bouncing through
   `/login` (falls back to `/login` only if the sign-in step fails).
