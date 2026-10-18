@@ -2,7 +2,7 @@
 # the stack's OLLAMA_BASE_URL at it, so the chat path runs against canned,
 # free responses instead of a real provider. Layer on top of the base + dev
 # files; driven by `make e2e-chat`. The chat agent then uses the `ollama`
-# provider, whose in-container proxy forwards to OLLAMA_TARGET_URL (= the
+# provider, whose in-container proxy forwards to LLM_GATEWAY_TARGET_URL (= the
 # server's OLLAMA_BASE_URL) — i.e. to mock-llm below.
 services:
   mock-llm:
@@ -22,7 +22,7 @@ services:
       - MOCK_REPLY=E2E pong
 
   # Point both the model list (core-server) and the agent's LLM calls (via
-  # OLLAMA_TARGET_URL) at the mock. DOCKER_NETWORK pins spawned agent
+  # LLM_GATEWAY_TARGET_URL) at the mock. DOCKER_NETWORK pins spawned agent
   # containers to the isolated network below so this stack never collides with
   # a running dev stack on the shared `vonzio-network`.
   server:

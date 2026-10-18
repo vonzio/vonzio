@@ -1,7 +1,8 @@
 /**
  * OpenAI (and OpenAI-compatible) endpoint settings. Listing and validation go
- * through byok (see byok-connection.ts); the in-container `llm-gateway.cjs`
- * translates the agent runner's Anthropic Messages calls to Chat Completions.
+ * through byok (see byok-connection.ts); the in-container gateway
+ * (packages/llm-gateway) runs the agent runner's Anthropic Messages calls as
+ * byok turns against the same root.
  *
  * Defaults to api.openai.com. Override OPENAI_BASE_URL to point at any
  * OpenAI-compatible endpoint (Azure OpenAI gateway, OpenRouter, a local

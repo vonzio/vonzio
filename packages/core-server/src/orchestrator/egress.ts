@@ -25,7 +25,6 @@ export function signToken(domains: string[], secret: string, ttlSeconds?: number
 const MODEL_URL_ENV_KEYS = [
   "ANTHROPIC_BASE_URL",
   "LLM_GATEWAY_TARGET_URL",
-  "OLLAMA_TARGET_URL",
 ] as const;
 
 /** Hosts that live inside the container (the in-container gateway) — never an
@@ -36,8 +35,8 @@ function isLocalHost(host: string): boolean {
 
 /**
  * Extract the external model hostnames implied by an agent's env. Localhost
- * gateway endpoints are skipped (their upstream — LLM_GATEWAY_TARGET_URL /
- * OLLAMA_TARGET_URL — is the real external host and is itself in the list).
+ * gateway endpoints are skipped (their upstream — LLM_GATEWAY_TARGET_URL — is
+ * the real external host and is itself in the list).
  */
 export function modelHostsFromEnv(env: Record<string, string>): string[] {
   const hosts = new Set<string>();
@@ -69,13 +68,13 @@ function safeHost(url: string): string | null {
  * through the in-container llm-gateway (raw passthrough, preserving x-api-key) so
  * the single proxy-aware component carries the model traffic. Mutates `env`.
  *
- * No-op when the model already goes through an in-container, proxy-aware gateway:
- *  - OpenAI(-compatible): sets LLM_GATEWAY_MODE.
- *  - Ollama: sets OLLAMA_TARGET_URL (ollama-proxy.cjs is itself proxy-aware).
- * Forcing those would race a second gateway on :11434 and pollute the allowlist.
+ * No-op when the model already goes through the in-container, proxy-aware
+ * gateway (every non-native provider sets LLM_GATEWAY_MODE: openai, codex,
+ * ollama). Forcing those would restart the gateway in the wrong mode and
+ * pollute the allowlist.
  */
 export function routeModelThroughGateway(env: Record<string, string>): void {
-  if (env.LLM_GATEWAY_MODE || env.OLLAMA_TARGET_URL) return;
+  if (env.LLM_GATEWAY_MODE) return;
   const base = env.ANTHROPIC_BASE_URL;
   // Already pointed at a localhost gateway — leave it.
   if (base && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(base)) return;

@@ -7,6 +7,19 @@
 # up apt security updates. Tagged as ghcr.io/<repo>/agent-base:latest and
 # :<sha>. The deploy-time docker/Dockerfile.agent uses this as its FROM.
 
+# The in-container LLM gateway (packages/llm-gateway) is bundled here, in its
+# own stage, from its own lockfile: the package is not a workspace member, so
+# this stage needs nothing but the package directory.
+FROM node:26-slim AS gateway-build
+WORKDIR /gateway
+COPY packages/llm-gateway/package.json packages/llm-gateway/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+# Only the sources: the context's node_modules/dist (host-built, wrong
+# platform) must not shadow what `npm ci` installed above.
+COPY packages/llm-gateway/tsconfig.json ./
+COPY packages/llm-gateway/src ./src
+RUN npm run build
+
 FROM node:26-slim
 
 # Cache-bust for the apt layers below. `apt-get upgrade` only pulls new
@@ -111,8 +124,7 @@ RUN npm install -g corepack && corepack enable && \
 # Helper scripts that ride along with every agent container. These rarely
 # change; landing them in base means agent rebuilds don't need to re-copy.
 COPY docker/cleanup.sh /app/cleanup.sh
-COPY docker/ollama-proxy.cjs /app/ollama-proxy.cjs
-COPY docker/llm-gateway.cjs /app/llm-gateway.cjs
+COPY --from=gateway-build /gateway/dist/llm-gateway.cjs /app/llm-gateway.cjs
 COPY docker/git-credential-helper.sh /app/git-credential-helper.sh
 COPY docker/entrypoint.sh /app/entrypoint.sh
 COPY docker/fileserver.py /app/fileserver.py
