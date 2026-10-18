@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "vonzio data-plane Fastify server \u2014 agent orchestration, container lifecycle, MCP runtime, integrations, dashboard API. Open-source (AGPL-3.0-or-later) as part of the vonzio open-core stack.",
+  "description": "vonzio data-plane Fastify server — agent orchestration, container lifecycle, MCP runtime, integrations, dashboard API. Open-source (AGPL-3.0-or-later) as part of the vonzio open-core stack.",
   "license": "AGPL-3.0-or-later",
   "homepage": "https://vonzio.com",
   "repository": {
@@ -33,6 +33,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@amenophis1er/byok": "^0.1.5",
     "@fastify/cors": "^11.3.0",
     "@fastify/multipart": "^10.1.0",
     "@fastify/static": "^10.1.3",

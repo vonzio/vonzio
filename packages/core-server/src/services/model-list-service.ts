@@ -19,10 +19,7 @@
 
 import type { ProfileService } from "./profile-service.js";
 import type { ApiKeyService } from "./api-key-service.js";
-import { fetchOllamaModels } from "./ollama-service.js";
-import { fetchOpenAIModels } from "./openai-service.js";
-import { anthropicAuthHeaders, CLAUDE_SUBSCRIPTION_PROVIDER } from "@vonzio/shared";
-import { SUBSCRIPTION_TOKEN_INVALID, SUBSCRIPTION_LIMIT_REACHED } from "./key-validator.js";
+import { connectionFor, describeFailure, listModelsFor } from "./byok-connection.js";
 
 export interface ProfileModel {
   id: string;
@@ -51,7 +48,6 @@ interface CacheEntry {
 }
 
 const MODELS_CACHE_TTL = 5 * 60_000;
-const ANTHROPIC_FETCH_TIMEOUT_MS = 10_000;
 
 export class ModelListService {
   private cache = new Map<string, CacheEntry>();
@@ -120,63 +116,42 @@ export class ModelListService {
     const apiKey = await this.apiKeyService.getWithSecrets(apiKeyId);
     if (!apiKey) return { ok: true, models: [], profileDefault: null };
 
-    let models: ProfileModel[] = [];
+    const target = connectionFor(apiKey);
+    if (!target) return { ok: true, models: [], profileDefault: null };
+
+    let models: ProfileModel[];
     try {
-      if (apiKey.provider === "ollama") {
-        if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
-        const ollama = await fetchOllamaModels(apiKey.api_key);
-        models = ollama.map((m) => ({
-          id: m.id,
-          display_name: m.name ?? null,
-          provider: "ollama" as const,
-        }));
-      } else if (apiKey.provider === "openai") {
-        if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
-        const openai = await fetchOpenAIModels(apiKey.api_key, apiKey.base_url);
-        models = openai.map((m) => ({
-          id: m.id,
-          display_name: m.name ?? null,
-          provider: "openai" as const,
-        }));
-      } else if (apiKey.provider === "openai_subscription") {
-        // The Codex backend has no cheap /models endpoint — use the curated list
-        // (overridable via the CODEX_MODELS env, see codexModels()).
-        const { codexModels } = await import("./codex-oauth-service.js");
-        models = codexModels().map((id) => ({ id, display_name: null, provider: "openai" as const }));
-      } else {
-        if (!apiKey.api_key) return { ok: true, models: [], profileDefault: null };
-        // api_key → x-api-key; claude_subscription → Bearer (oat token).
-        const res = await fetch("https://api.anthropic.com/v1/models", {
-          method: "GET",
-          headers: anthropicAuthHeaders(apiKey.provider, apiKey.api_key),
-          signal: AbortSignal.timeout(ANTHROPIC_FETCH_TIMEOUT_MS),
-        });
-        if (!res.ok) {
-          await res.body?.cancel(); // release the connection back to the pool
-          // Keep the HTTP status 502 (a 401 here would read as a *session*
-          // logout to the SPA); only sharpen the message. Subscription tokens
-          // expire / hit Pro-Max caps, so give those provider-specific copy.
-          const isSubscription = apiKey.provider === CLAUDE_SUBSCRIPTION_PROVIDER;
-          let error = `Anthropic API returned ${res.status}`;
-          if (res.status === 401 && isSubscription) {
-            error = SUBSCRIPTION_TOKEN_INVALID;
-          } else if (res.status === 429) {
-            error = isSubscription ? SUBSCRIPTION_LIMIT_REACHED : "Anthropic rate limit reached (429)";
-          }
-          return { ok: false, status: 502, error };
-        }
-        const data = (await res.json()) as { data?: Array<{ id: string; display_name?: string }> };
-        models = (data.data ?? []).map((m) => ({
-          id: m.id,
-          display_name: m.display_name ?? null,
-          provider: "anthropic" as const,
-        }));
-      }
+      models = (await this.fetchModels(apiKey)).map((m) => ({
+        id: m.id,
+        display_name: m.name && m.name !== m.id ? m.name : null,
+        provider: target.family,
+      }));
     } catch (err) {
-      return { ok: false, status: 502, error: err instanceof Error ? err.message : "Failed to fetch models" };
+      // Keep HTTP 502 (a 401 here would read as a *session* logout to the
+      // SPA); only sharpen the message.
+      return { ok: false, status: 502, error: describeFailure(apiKey.provider, err) };
     }
 
     this.cache.set(apiKeyId, { models, ts: Date.now() });
     return { ok: true, models, profileDefault: null };
+  }
+
+  /**
+   * byok lists every provider live (Anthropic, OpenAI-compatible, the Codex
+   * catalog). The one override: a ChatGPT key with CODEX_MODELS set uses that
+   * static list, and a Codex catalog failure falls back to the baked list so
+   * a transient backend error doesn't empty the picker.
+   */
+  private async fetchModels(apiKey: { provider: string; api_key?: string | null; base_url?: string | null }) {
+    if (apiKey.provider === "openai_subscription") {
+      const { codexModels } = await import("./codex-oauth-service.js");
+      if ((process.env.CODEX_MODELS ?? "").trim()) return codexModels().map((id) => ({ id, name: id }));
+      try {
+        return await listModelsFor(apiKey);
+      } catch {
+        return codexModels().map((id) => ({ id, name: id }));
+      }
+    }
+    return listModelsFor(apiKey);
   }
 }

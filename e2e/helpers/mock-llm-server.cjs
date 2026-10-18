@@ -7,9 +7,9 @@
  * ANTHROPIC Messages API. The ollama-proxy is a dumb pass-through (it only
  * swaps x-api-key→Bearer), so requests arrive here unchanged. We implement:
  *
- *   GET  /v1/models               OpenAI-shaped list — core-server's
- *                                 fetchOllamaModels() hits this to populate the
- *                                 model picker and to validate the credential.
+ *   GET  /v1/models               OpenAI-shaped list — core-server lists and
+ *                                 validates the credential through byok's
+ *                                 listModels(), which hits this.
  *   POST /v1/messages             Anthropic Messages API — streaming (SSE) and
  *                                 non-streaming. Returns a single canned text
  *                                 turn with stop_reason end_turn so the agent
@@ -89,7 +89,7 @@ const server = http.createServer((req, res) => {
   req.on("end", () => {
     log(req.method, req.url, `(${body.length}b)`);
 
-    // OpenAI-shaped model list (core-server fetchOllamaModels).
+    // OpenAI-shaped model list (core-server, via byok listModels).
     if (req.method === "GET" && req.url.startsWith("/v1/models")) {
       return sendJson(res, 200, {
         object: "list",

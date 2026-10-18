@@ -7,6 +7,18 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Added
 
+- **Provider connections run on byok.** Key validation, model listing, the
+  goal-loop's server-side judge and auto-titles now go through
+  [`@amenophis1er/byok/core`](https://github.com/amenophis1er/byok) instead of
+  four hand-written provider clients. One adapter
+  (`services/byok-connection.ts`) maps a stored key to a byok connection, so
+  every surface routes the same way. Visible changes: ChatGPT keys list the
+  live Codex catalog with display names (falling back to the baked list, or
+  to `CODEX_MODELS` when set) instead of a static guess; OpenAI-compatible
+  keys resolve `/v1` the way byok does (OpenRouter, Gemini's OpenAI root,
+  Groq and friends work as pasted); a hung provider times out instead of
+  stalling the picker. The in-container gateway is unchanged for now.
+
 - **Sign in with Claude.** The Claude Pro/Max subscription no longer requires
   running `claude setup-token` locally: Settings → Keys and the onboarding
   wizard now offer a browser sign-in — approve on Anthropic's consent page,
