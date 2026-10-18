@@ -3,8 +3,9 @@
  *
  * Lists every model the user can reach, grouped by API key/provider (not just
  * the agent's attached key), so a workspace can switch provider mid-chat. A
- * selection reports both the model and the key it came from; picking a model
- * from a key other than the profile's sets a per-conversation key override.
+ * selection always reports both the model and the key it came from, and that
+ * pair is persisted as the conversation's override — so a picked model runs on
+ * its own key even if the profile's key is (or later becomes) a different one.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchAllUserModels, type ProfileModel, type KeyModelGroup } from "../api/client.js";
@@ -12,14 +13,15 @@ import { Icon } from "../brand/components.js";
 import { MODEL_DISPLAY_FALLBACK } from "../lib/model-display.js";
 
 interface Props {
-  /** The profile's attached key — selecting a model from it clears the override. */
+  /** The profile's attached key — used to mark the profile default in the list. */
   profileApiKeyId: string | null;
   profileDefaultModel: string | null;
   /** Current per-conversation model override (null = profile default). */
   value: string | null;
   /** Current per-conversation key override (null = profile's key). */
   apiKeyIdOverride: string | null;
-  /** (model, apiKeyId) — apiKeyId is null when the model belongs to the profile's key. */
+  /** (model, apiKeyId) — apiKeyId is the key the model was listed under (null
+   *  only on reset, or for the keyless fallback list). */
   onChange: (model: string | null, apiKeyId: string | null) => void;
   disabled?: boolean;
 }
@@ -116,10 +118,13 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
   const totalFiltered = filteredGroups.reduce((n, g) => n + g.models.length, 0);
   const firstMatch = filteredGroups.find((g) => g.models.length > 0)?.models[0];
   const firstMatchGroup = filteredGroups.find((g) => g.models.length > 0);
-  // The override to persist for a group: null when it's the profile's own key
-  // (no override) OR an empty fallback id, so we never store a junk "" override.
-  const overrideKeyFor = (keyId: string): string | null =>
-    keyId && keyId !== profileApiKeyId ? keyId : null;
+  // The key to persist with a picked model: always the key it was listed under,
+  // even when that's the profile's own key. Leaving it null for "same as the
+  // profile" made the server pair the model with whatever key the profile has
+  // at dispatch time — wrong when the profile was rebound (or the dashboard's
+  // copy of it was stale), e.g. an Ollama model sent to a ChatGPT key. Only an
+  // empty fallback id maps to null, so we never store a junk "" override.
+  const overrideKeyFor = (keyId: string): string | null => keyId || null;
 
   if (loading && groups.length === 0) {
     return (

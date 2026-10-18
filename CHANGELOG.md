@@ -82,6 +82,18 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
   preview URLs keep `_pvt` in the link target but show a clean URL as the
   link text in the dashboard.
 
+- **Start on Home sends the task.** Typing a task on Home and clicking
+  Start now opens the workspace and sends it once the chat is ready, instead
+  of leaving it in the composer for a second click. The text travels as
+  navigation state and is cleared once consumed, so a reload or
+  back-navigation never sends it twice.
+- **A model picked in the composer runs on the key it came from.** The
+  picker now always stores the chosen model together with its key, even when
+  that key is the agent's own, so rebinding the agent to another key (or a
+  stale copy of the agent in the dashboard) can no longer pair, say, an Ollama
+  Cloud model with a ChatGPT key and hang the turn. If the stored key is
+  deleted or can't be loaded, the conversation drops that model and uses the
+  agent's default instead of sending it to the wrong provider.
 - **First run goes setup → onboarding.** Creating the admin account now
   signs it in and lands on `/onboarding` instead of bouncing through
   `/login` (falls back to `/login` only if the sign-in step fails).
