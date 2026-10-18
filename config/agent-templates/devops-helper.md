@@ -6,7 +6,7 @@ category: Engineering
 icon: ServerCog
 about: Authors Dockerfiles, CI pipelines, and IaC, and reviews changes for safety. Read/advise by default; grant specific egress/credentials for anything that touches real infra.
 requirements:
-  - An API key
+  - A model provider
   - "For live infra: scoped credentials (as secrets) + egress to the relevant endpoints"
 examples:
   - Write a multi-stage Dockerfile for this Node service

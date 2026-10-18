@@ -6,7 +6,7 @@ category: Data
 icon: BarChart3
 about: Loads CSV/JSON/Parquet you upload to the workspace, runs analysis (pandas/SQL), and explains results in plain language with charts where useful.
 requirements:
-  - An API key
+  - A model provider
   - Data files uploaded to the workspace
 examples:
   - What are the top drivers of churn in this dataset?

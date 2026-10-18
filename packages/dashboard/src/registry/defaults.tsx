@@ -129,7 +129,7 @@ export function registerDefaults(): void {
   registerRoute({ id: "admin", path: "/admin", element: <Admin />, layout: "shell", entitlement: "admin_multitenant", order: 70 });
 
   registerSettingsSection({ id: "account", label: "Account", lede: "Profile, password, and connected social accounts.", component: AccountSection, order: 10 });
-  registerSettingsSection({ id: "apikeys", label: "Keys", lede: "Anthropic API credentials used by your agents. Bring your own.", component: AnthropicKeySection, order: 20 });
+  registerSettingsSection({ id: "apikeys", label: "Keys", lede: "Model provider credentials your agents use: API keys, subscriptions, and local models.", component: AnthropicKeySection, order: 20 });
   registerSettingsSection({ id: "secrets", label: "Secrets", lede: "Encrypted environment variables injected into agent containers at runtime.", component: SecretSection, order: 30 });
   registerSettingsSection({
     id: "integrations",
@@ -139,7 +139,7 @@ export function registerDefaults(): void {
     order: 40,
   });
   registerSettingsSection({ id: "apitokens", label: "API tokens", lede: "API tokens for programmatic access — CLI or external integrations.", component: ApiTokenSection, order: 60 });
-  registerSettingsSection({ id: "embed", label: "Embed", lede: "Embed your agent on any page — the chat widget and a direct chat link.", component: EmbedSection, order: 65 });
+  registerSettingsSection({ id: "embed", label: "Embed", lede: "Embed your agent on any page — the chat widget and a direct chat link.", component: EmbedSection, entitlement: "embed", order: 65 });
 
   registerOnboardingStep({
     id: "first-api-key",

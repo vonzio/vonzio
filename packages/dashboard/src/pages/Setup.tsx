@@ -134,7 +134,7 @@ export function Setup() {
         </div>
 
         <div className="login-footer">
-          <span className="status">tls 1.3 · zero-data-retention</span>
+          <span className="status">self-hosted · your keys stay here</span>
         </div>
       </div>
     </div>

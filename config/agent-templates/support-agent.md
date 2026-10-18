@@ -6,7 +6,7 @@ category: Support
 icon: LifeBuoy
 about: Answers customer questions from documents you provide, in your tone. Best deployed on a channel (widget / Slack / Telegram). Stays grounded — won't invent policy.
 requirements:
-  - An API key
+  - A model provider
   - Knowledge base documents added to the workspace
   - A channel to receive messages (widget / Slack / Telegram) — optional
 examples:

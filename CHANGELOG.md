@@ -138,6 +138,14 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Changed
 
+- **Self-hosted copy no longer assumes Anthropic or the hosted service.** The
+  Settings › Keys header and the agent template "Needs" lists are
+  provider-neutral; the login and register pages show Terms, Privacy and
+  "Back to home" only when `MARKETING_URL` is set; and `EMAIL_FROM` defaults to
+  `vonzio <noreply@example.com>` instead of a vonz.io address. The Settings ›
+  Embed tab is hidden unless the new `EMBED_ENABLED=true` is set; the widget
+  and its routes are unchanged.
+
 - **Teller is no longer a built-in integration.** Bank data via the
   [Teller](https://teller.io) API has been extracted from core into the external
   `@vonzio/plugin-teller` plugin (published on npm, AGPL-3.0-or-later). Core no

@@ -6,7 +6,7 @@ category: Knowledge
 icon: Telescope
 about: Investigates a question across sources you allow, then writes a structured, cited summary. Pair it with web/browser access for live research.
 requirements:
-  - An API key
+  - A model provider
   - Egress to the sites it should read (add domains under Network), or a web-search tool
 examples:
   - Compare the top 3 open-source vector databases and recommend one

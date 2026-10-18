@@ -309,6 +309,7 @@ export async function buildServer(deps: ServerDeps) {
     secretVaultService,
     integrationService,
     registrationEnabled: config.REGISTRATION_ENABLED,
+    embedEnabled: config.EMBED_ENABLED,
   });
 
   // Chat-surface presence registry: orchestrator + ask-user fallback +

@@ -63,7 +63,7 @@ services:
       # parameter expansion so we can't derive it from DOMAIN here.
       - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
       - RESEND_API_KEY=${RESEND_API_KEY:-}
-      - EMAIL_FROM=${EMAIL_FROM:-Vonzio <noreply@vonz.io>}
+      - EMAIL_FROM=${EMAIL_FROM:-vonzio <noreply@example.com>}
       - PLATFORM_TELEGRAM_BOT_TOKEN=${PLATFORM_TELEGRAM_BOT_TOKEN:-}
       - PLATFORM_TELEGRAM_WEBHOOK_SECRET=${PLATFORM_TELEGRAM_WEBHOOK_SECRET:-}
       - "DATABASE_URL=postgres://vonzio:${POSTGRES_PASSWORD:?required — set in .env}@postgres:5432/vonzio"

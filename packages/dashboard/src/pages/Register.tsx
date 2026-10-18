@@ -35,8 +35,8 @@ export function Register({ onRegister, showLogin, authProviders, turnstileSiteKe
   })();
 
   const hasOAuth = authProviders?.google || authProviders?.github;
-  const privacyHref = marketingUrl ? `${marketingUrl}/privacy` : "/privacy.html";
-  const termsHref = marketingUrl ? `${marketingUrl}/terms` : "/terms.html";
+  const privacyHref = `${marketingUrl}/privacy`;
+  const termsHref = `${marketingUrl}/terms`;
   const homeHref = marketingUrl ?? "/";
 
   async function handleSubmit(e: React.FormEvent) {
@@ -173,10 +173,12 @@ export function Register({ onRegister, showLogin, authProviders, turnstileSiteKe
               {loading ? "Creating account…" : "Create account →"}
             </button>
 
-            <p className="login-tos">
-              By continuing, you agree to our{" "}
-              <a href={termsHref}>Terms</a> and <a href={privacyHref}>Privacy</a>.
-            </p>
+            {marketingUrl && (
+              <p className="login-tos">
+                By continuing, you agree to our{" "}
+                <a href={termsHref}>Terms</a> and <a href={privacyHref}>Privacy</a>.
+              </p>
+            )}
           </form>
 
           <p className="register-prompt">
@@ -186,14 +188,16 @@ export function Register({ onRegister, showLogin, authProviders, turnstileSiteKe
         </div>
 
         <div className="login-footer">
-          <span className="status">tls 1.3 · zero-data-retention</span>
-          <span className="links">
-            <a href={homeHref} className="back-link">← Back to home</a>
-            <span aria-hidden="true">·</span>
-            <a href={privacyHref}>Privacy</a>
-            <span aria-hidden="true">·</span>
-            <a href={termsHref}>Terms</a>
-          </span>
+          <span className="status">self-hosted · your keys stay here</span>
+          {marketingUrl && (
+            <span className="links">
+              <a href={homeHref} className="back-link">← Back to home</a>
+              <span aria-hidden="true">·</span>
+              <a href={privacyHref}>Privacy</a>
+              <span aria-hidden="true">·</span>
+              <a href={termsHref}>Terms</a>
+            </span>
+          )}
         </div>
       </div>
     </div>

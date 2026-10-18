@@ -30,7 +30,7 @@ category: Engineering     # required — cards are grouped by this
 icon: Code2               # required — a lucide-react icon name (or an emoji)
 about: A longer blurb shown on the card.        # optional
 requirements:             # optional — a "Needs" checklist on the card
-  - An API key
+  - A model provider
   - A connected git provider (optional)
 examples:                 # optional — example prompts
   - Do the thing
