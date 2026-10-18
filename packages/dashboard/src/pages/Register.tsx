@@ -188,7 +188,7 @@ export function Register({ onRegister, showLogin, authProviders, turnstileSiteKe
         </div>
 
         <div className="login-footer">
-          <span className="status">tls 1.3 · zero-data-retention</span>
+          <span className="status">self-hosted · your keys stay here</span>
           {marketingUrl && (
             <span className="links">
               <a href={homeHref} className="back-link">← Back to home</a>

@@ -5,9 +5,8 @@
 <h1 align="center">vonzio</h1>
 
 <p align="center">
-  <b>Self-hosted AI agents. Bring your own model. Embed them anywhere.</b><br/>
-  One isolated container per conversation — chat UI, a real file workspace, MCP tools,
-  and a drop-in chat widget you can ship inside your own product.
+  <b>Self-hosted AI agents. Bring your own model.</b><br/>
+  One isolated container per conversation, with a chat UI, a real file workspace and MCP tools.
 </p>
 
 <p align="center">
@@ -18,41 +17,26 @@
 
 ---
 
-## Run an agent in 5 minutes — and drop it into any page
+## Run an agent in 5 minutes
 
-vonzio gives you a real, tool-using AI agent that runs **on your own machine**, talks to
-**any model you bring**, and can be embedded into your app, your docs, or your customer
-support flow with a single `<script>` tag. Your keys and your data never leave your box.
+vonzio gives you a real, tool-using AI agent that runs **on your own machine** and talks to
+**any model you bring**. Your keys and your data never leave your box.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vonzio/vonzio/main/install.sh | bash
 ```
 
-Then create a scoped API token (Settings → API tokens), pick the agent profile to expose,
-and drop it into any page — Settings → **Embed** generates the exact snippet:
-
-```html
-<script
-  src="https://YOUR_VONZIO_HOST/widget/vonzio.js"
-  data-key="rc_YOUR_API_TOKEN"
-  data-profile="support">
-</script>
-```
-
-That's it — a self-hosted agent, your model, embedded in your product. The token is scoped
-to one profile, rate-limited, and revocable; the embed only loads on origins you allow.
+Open http://localhost:3000, connect a model provider, and send your first task.
 
 ---
 
 ## Why vonzio
 
-- **Bring your own model.** Anthropic (Claude Sonnet / Opus / Haiku), Anthropic
-  subscription tokens, Ollama Cloud, or any OpenAI-compatible endpoint. Switch per
-  profile or per workspace — no lock-in to one provider.
+- **Bring your own model.** An Anthropic API key, a Claude or ChatGPT subscription,
+  Ollama (local or Cloud), or any OpenAI-compatible endpoint. Switch per profile or per
+  workspace — no lock-in to one provider.
 - **One container per conversation.** Each chat runs in its own fresh Docker container
   with a bind-mounted workspace. Sessions remember; cleanup is automatic.
-- **Embeddable, not just a dashboard.** Ship the `/chat` widget inside *your* product —
-  the differentiator most agent runtimes don't have. Full dashboard included for direct use.
 - **MCP-native.** Bring your own MCP servers, or use the built-ins: `memory`, `notify`,
   `platform`.
 - **Playbooks.** Scheduled or webhook-triggered agent chains with budget caps and success
@@ -162,8 +146,9 @@ flowchart TB
 - **Container pool** — warm containers are reused across conversations of the same profile;
   cold ones are torn down after a configurable idle window.
 - **MCP runtime** — first-class stdio + HTTP MCP servers, scoped per profile.
-- **Embeddable chat** — the `/chat` page + drop-in `widget/vonzio.js`, authenticated by a
-  scoped, rate-limited, revocable API token and gated to allowed origins.
+- **Embeddable chat (opt-in)** — the `/chat` page + drop-in `widget/vonzio.js`, authenticated
+  by a scoped, rate-limited, revocable API token and gated to allowed origins. Off by
+  default; set `EMBED_ENABLED=true` to show Settings → Embed.
 - **Playbooks** — scheduled or webhook-triggered agent chains with budget caps and success
   criteria; runs are first-class observable workspaces.
 
