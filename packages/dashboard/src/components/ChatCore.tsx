@@ -109,6 +109,22 @@ export function linkifyText(text: string): string {
   );
 }
 
+/**
+ * Drop the `_pvt` preview token from a link's visible text. The server signs
+ * preview URLs in agent output so they open without a session cookie; the
+ * token belongs in the href, not in the transcript.
+ */
+export function stripPreviewToken(text: string): string {
+  return text.replace(/([?&])_pvt=[^&#\s]*(&?)/g, (_m, sep: string, amp: string) =>
+    sep === "?" ? (amp ? "?" : "") : amp ? "&" : "");
+}
+
+function stripPreviewTokenChildren(children: React.ReactNode): React.ReactNode {
+  if (typeof children === "string") return stripPreviewToken(children);
+  if (Array.isArray(children)) return children.map((c) => (typeof c === "string" ? stripPreviewToken(c) : c));
+  return children;
+}
+
 // ─── Fullscreen Overlay ──────────────────────────────────────────────
 
 function FullscreenOverlay({ title, actions, onClose, children }: {
@@ -296,7 +312,7 @@ export function MarkdownContent({ content, isStreaming }: { content: string; isS
             }}
             {...props}
           >
-            {children}
+            {stripPreviewTokenChildren(children)}
           </a>
         ),
         pre: ({ children }) => {
