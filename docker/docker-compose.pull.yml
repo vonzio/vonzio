@@ -9,10 +9,23 @@
 services:
   server:
     image: ghcr.io/vonzio/vonzio/server:${VONZIO_IMAGE_TAG:-latest}
+    # The base file waits for the `agent` image-carrier service to complete.
+    # In pull mode that service is behind the `images` profile (see below),
+    # so replace the dependency list instead of merging into it.
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_healthy
     environment:
       # The orchestrator spawns the prebuilt agent image, not a locally-built
       # vonzio-agent:latest.
       - AGENT_IMAGE=ghcr.io/vonzio/vonzio/agent:${VONZIO_IMAGE_TAG:-latest}
 
+  # The `agent` service exists only to carry the image: its entrypoint
+  # prints "Agent image built" and exits, which reads as a failure in
+  # `docker compose ps` after a pull install. Park it behind a profile so
+  # `pull --profile images` fetches the image but plain `up` never starts it.
   agent:
     image: ghcr.io/vonzio/vonzio/agent:${VONZIO_IMAGE_TAG:-latest}
+    profiles: ["images"]

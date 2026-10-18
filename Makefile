@@ -162,7 +162,7 @@ docker-dev-oss-detached: ## Same as docker-dev-detached but REGISTRATION_ENABLED
 # Pin the version with VONZIO_IMAGE_TAG (default :latest).
 COMPOSE_PULL = docker compose --env-file ../.env -f docker-compose.yml -f docker-compose.pull.yml
 docker-pull-oss: ## Pull prebuilt OSS images + start detached (no build). Set VONZIO_IMAGE_TAG to pin a version.
-	cd docker && $(COMPOSE_PULL) pull
+	cd docker && $(COMPOSE_PULL) --profile images pull
 	cd docker && $(COMPOSE_PULL) up -d --no-build
 
 urls: ## Print the dev stack's addresses (dashboard, API, webhook tunnel)

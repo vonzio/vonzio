@@ -82,8 +82,9 @@ cd vonzio
 ./install.sh
 ```
 
-Then visit `http://localhost:5173`. First visit lands on `/setup` to create your admin
+Then open `http://localhost:3000`. First visit lands on `/setup` to create your admin
 account, then `/onboarding` to add a credential and pick a default model. After that you're in.
+(Building from source with `make docker-dev-oss` serves the dashboard through Vite on `:5173` instead.)
 
 Full self-host guide — env reference, upgrade path, troubleshooting:
 [docs/SELF_HOST.md](docs/SELF_HOST.md).

@@ -39,6 +39,21 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **First run goes setup → onboarding.** Creating the admin account now
+  signs it in and lands on `/onboarding` instead of bouncing through
+  `/login` (falls back to `/login` only if the sign-in step fails).
+- **Pull installs no longer show an `Exited` agent container.** The
+  image-carrier `agent` service sits behind the `images` compose profile in
+  the pull overlay: `make docker-pull-oss` still pulls the image, plain `up`
+  never starts it.
+- **`--uninstall --purge` sweeps per-session volumes.** Session volumes
+  (`vonzio-ws-*`, `vonzio-sdk-*`, `vonzio-dind-*`) are named by session id,
+  so the project-prefixed match never removed them. Purge now removes them
+  once no vonzio server container remains on the host, and new volumes carry
+  the `managed-by=vonzio` label.
+- **Docs point pull installs at `:3000`.** README and SELF_HOST.md said
+  `:5173`, which only applies to build-from-source / Vite mode.
+
 - **Installer: purge now removes the pulled app images.** `--uninstall --purge`
   only matched the source-build image names (`vonzio-server:latest`,
   `vonzio-agent:latest`), silently leaving the ~8 GB of pulled

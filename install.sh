@@ -599,6 +599,28 @@ preflight() {
   preflight_disk
 }
 
+# True when no vonzio server container (any instance, running or stopped)
+# remains on the host. Matches both the pulled image (ghcr.io/vonzio/vonzio/
+# server) and the source-built one (vonzio-server).
+no_vonzio_servers_remain() {
+  ! docker ps -a --format '{{.Image}}' 2>/dev/null | grep -qE '(^|/)vonzio[-/]server(:|$)'
+}
+
+# Remove per-session volumes left behind by any instance, but only when the
+# last vonzio server is gone (see do_uninstall). Idempotent and best-effort.
+purge_orphaned_session_volumes() {
+  if ! no_vonzio_servers_remain; then
+    info "Other vonzio instances still exist — leaving per-session volumes in place."
+    return 0
+  fi
+  local vols
+  vols="$(docker volume ls -q 2>/dev/null | grep -E '^vonzio-(ws|sdk|dind)-' || true)"
+  [[ -z "$vols" ]] && return 0
+  # shellcheck disable=SC2086
+  docker volume rm $vols >/dev/null 2>&1 || true
+  info "Removed $(printf '%s\n' "$vols" | grep -c .) orphaned per-session volume(s)."
+}
+
 # ─── Arg parsing ───────────────────────────────────────────────────────
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -806,10 +828,14 @@ do_uninstall() {
     exit 1
   fi
 
-  # Volumes: this instance's data (project-prefixed) + legacy names + per-session.
+  # Volumes: this instance's data (project-prefixed) + legacy names.
   docker volume rm "${proj}_pgdata" "${proj}_vonzio-data" >/dev/null 2>&1 || true
   [[ "$proj" == "vonzio" ]] && docker volume rm docker_pgdata docker_vonzio-data >/dev/null 2>&1 || true
-  docker volume ls -q 2>/dev/null | grep -E "^${proj}-(ws|sdk)-" | xargs -r docker volume rm >/dev/null 2>&1 || true
+  # Per-session volumes (vonzio-ws-/vonzio-sdk-/vonzio-dind-<session>) are named
+  # by session id, not by instance, so they can't be attributed to THIS
+  # install. Sweep them only once no vonzio server is left on the host —
+  # at that point nothing can still own them.
+  purge_orphaned_session_volumes
   ok "Volumes removed."
 
   # Images: app images always — both the source-build names AND the pulled
@@ -879,7 +905,7 @@ write_run_makefile() {
     printf 'INSTALL_URL = %s\n\n' "$install_url"
     printf '.PHONY: docker-pull-oss docker-logs docker-down docker-restart uninstall nuke\n\n'
     printf 'docker-pull-oss:\n'
-    printf '\tcd docker && $(COMPOSE) pull\n'
+    printf '\tcd docker && $(COMPOSE) --profile images pull\n'
     printf '\tcd docker && $(COMPOSE) up -d --no-build\n\n'
     printf 'docker-logs:\n'
     printf '\tcd docker && $(COMPOSE) logs -f\n\n'
