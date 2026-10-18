@@ -144,6 +144,7 @@ jobs:
             packages/core-server/src/services/scope.test.ts \
             packages/core-server/src/services/title-service.test.ts \
             packages/core-server/src/lib/safe-webhook-fetch.test.ts \
+            packages/core-server/src/lib/default-model.test.ts \
             packages/core-server/src/mcp/mail-mcp.test.ts \
             packages/core-server/src/services/mail-service.test.ts \
             packages/core-server/src/services/calendar-service.test.ts \

@@ -18,6 +18,7 @@ import { eq } from "drizzle-orm";
 import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
+import { CLAUDE_DEFAULT_MODEL, NoModelError, isAnthropicProvider } from "../lib/default-model.js";
 import { ContainerPool } from "../container/pool.js";
 import { ensureContainerRunning } from "../container/ensure-running.js";
 import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID, parseMemory } from "../container/docker-manager.js";
@@ -147,6 +148,13 @@ export interface OrchestratorDeps {
    * this undefined.
    */
   resolveOrgIdForTask?: (taskId: string) => Promise<string | null>;
+  /**
+   * A provider-appropriate default model for an api key (lib/default-model.ts),
+   * used when a turn on a non-Anthropic key has no model from the task, the
+   * workspace override or the profile. Undefined → such a turn fails with a
+   * "pick a model" message instead of sending the SDK's Claude default.
+   */
+  defaultModelForKey?: (apiKeyId: string) => Promise<string | null>;
   db: DrizzleDB;
   log?: Logger;
   config: {
@@ -1047,16 +1055,12 @@ export class Orchestrator extends EventEmitter {
       // on the model the workspace actually uses.
       const judgeWorkspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
       // The claude-* fallback is only meaningful on Anthropic providers — on a
-      // gateway provider (openai/codex/ollama) with no model configured it
-      // would be forwarded upstream and 400. There the in-container judge
-      // inherits the SDK's default (which the gateway pins to the session
-      // model), so pass no explicit model at all.
-      const anthropicProvider = profile.resolved_provider === "api_key"
-        || profile.resolved_provider === "claude_subscription"
-        || !profile.resolved_provider;
+      // gateway provider (openai/codex/ollama) it would be forwarded upstream
+      // and 400. fetchProfile already filled profile.model for those, so the
+      // undefined branch is only a defensive no-model case.
       const judgeModel = resolveTaskModel(task, judgeWorkspace, profile)
         ?? profile.model
-        ?? (anthropicProvider ? "claude-opus-4-8" : undefined);
+        ?? (isAnthropicProvider(profile.resolved_provider) ? CLAUDE_DEFAULT_MODEL : undefined);
       const judgeEffort = task.effort ?? profile.effort ?? undefined;
       const goal = task.prompt;
       // Per-message acceptance criteria from the composer (optional).
@@ -2315,6 +2319,22 @@ export class Orchestrator extends EventEmitter {
     const profile = await this.deps.profileService.getResolved(task.profile_id, { apiKeyIdOverride });
     if (!profile) {
       throw new Error(`Profile ${task.profile_id} not found`);
+    }
+    // No model anywhere (task → workspace override → profile) on a gateway
+    // provider: the SDK would fall back to its Claude default, which the
+    // upstream rejects ("The 'claude-…' model is not supported…"). Resolve the
+    // key's provider default instead, or fail the turn with a clear message.
+    // Anthropic keys keep the SDK's own Claude default.
+    if (!resolveTaskModel(task, workspace, profile) && !isAnthropicProvider(profile.resolved_provider)) {
+      let model: string | null = null;
+      // Same key order getResolved used: the override, then the profile's own
+      // key (the override may have been deleted).
+      for (const keyId of [apiKeyIdOverride, profile.api_key_id]) {
+        if (model || !keyId || !this.deps.defaultModelForKey) continue;
+        model = await this.deps.defaultModelForKey(keyId).catch(() => null);
+      }
+      if (!model) throw new NoModelError();
+      profile.model = model;
     }
     return profile;
   }

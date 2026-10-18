@@ -1,3 +1,4 @@
+import { defaultModelForProvider } from "./lib/default-model.js";
 import { existsSync, readFileSync } from "node:fs";
 import { LOG_REDACT_PATHS } from "./auth/log-redaction.js";
 import { join, dirname, resolve } from "node:path";
@@ -229,13 +230,20 @@ export async function buildServer(deps: ServerDeps) {
   // Drop a key's cached model list when its credential or base_url changes,
   // so editing an OpenAI endpoint doesn't serve the old provider's models.
   apiKeyService.setKeyChangeListener((id) => modelListService.invalidate(id));
-  // Let ProfileService auto-pick a model for ollama/openai keys when an agent
-  // is created/attached without one (wired here to avoid a construction cycle:
-  // modelListService depends on profileService).
-  profileService.setDefaultModelResolver(async (apiKeyId) => {
-    const r = await modelListService.listForApiKey(apiKeyId);
-    return r.ok ? (r.models[0]?.id ?? null) : null;
-  });
+  // A provider-appropriate default model for a key (lib/default-model.ts).
+  // ProfileService uses it to auto-pick a model when an agent is created or
+  // attached without one, and the orchestrator to fill a missing model at
+  // turn time (wired here to avoid a construction cycle: modelListService
+  // depends on profileService).
+  const defaultModelForKey = async (apiKeyId: string): Promise<string | null> => {
+    const key = await apiKeyService.get(apiKeyId);
+    if (!key) return null;
+    return defaultModelForProvider(key.provider, async () => {
+      const r = await modelListService.listForApiKey(apiKeyId);
+      return r.ok ? (r.models[0]?.id ?? null) : null;
+    });
+  };
+  profileService.setDefaultModelResolver(defaultModelForKey);
   const toolFileService = new ToolFileService(db, config.TOOLS_DIR);
   const skillService = new SkillService(db, config.SKILLS_DIR, new FsSkillStorage(config.SKILLS_DATA_DIR));
   const subagentService = new SubagentService(db);
@@ -321,6 +329,7 @@ export async function buildServer(deps: ServerDeps) {
 
   const orchestrator = new Orchestrator({
     queue,
+    defaultModelForKey,
     containerManager,
     pool: containerPool,
     sessionRegistry,
