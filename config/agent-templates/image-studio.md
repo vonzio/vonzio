@@ -6,7 +6,7 @@ category: Creative
 icon: Image
 about: Resizes, crops, filters, and composites images into platform-ready assets (Instagram, Facebook, WhatsApp, X, LinkedIn). Works from images you upload — it edits, it doesn't generate new imagery from scratch.
 requirements:
-  - An API key
+  - A model provider
   - Source image(s) uploaded to the workspace
 examples:
   - Resize this logo into Instagram post, story, and Facebook cover sizes

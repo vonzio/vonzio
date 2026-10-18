@@ -6,7 +6,7 @@ category: Engineering
 icon: Code2
 about: A general-purpose software engineer. Clones repos, edits code, runs tests, and opens changes. Strongest when pointed at a single repo with a clear task.
 requirements:
-  - An API key (Anthropic or OpenAI-compatible)
+  - A model provider
   - A connected git provider for cloning/pushing (optional)
 examples:
   - Add input validation to the signup endpoint and a test for it

@@ -16,6 +16,7 @@ export interface CoreDepsServices {
   secretVaultService: SecretVaultService;
   integrationService: IntegrationService;
   registrationEnabled: boolean;
+  embedEnabled?: boolean;
 }
 
 /**
@@ -36,7 +37,10 @@ export function buildDefaultCoreDeps(services: CoreDepsServices): CoreDeps {
     tokenValidator: new DefaultTokenValidator(services.db),
     quotaConfig: new DefaultQuotaConfig(),
     usageEmitter: new NoopUsageEmitter(),
-    entitlementsProvider: new DefaultEntitlementsProvider({ registrationEnabled: services.registrationEnabled }),
+    entitlementsProvider: new DefaultEntitlementsProvider({
+      registrationEnabled: services.registrationEnabled,
+      embedEnabled: services.embedEnabled,
+    }),
     vpnTunnelProvider: new NoopVpnTunnelProvider(),
   };
 }

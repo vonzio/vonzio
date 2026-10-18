@@ -95,10 +95,11 @@ export function Login({ onLogin, showRegister, authProviders, turnstileSiteKey, 
   const { token: captchaToken, reset: resetCaptcha } = useTurnstile(turnstileSiteKey, turnstileRef);
 
   const hasOAuth = authProviders?.google || authProviders?.github;
-  // Footer Privacy/Terms point at the marketing site. Fall back to the
-  // dashboard's static stubs if the server didn't expose MARKETING_URL.
-  const privacyHref = marketingUrl ? `${marketingUrl}/privacy` : "/privacy.html";
-  const termsHref = marketingUrl ? `${marketingUrl}/terms` : "/terms.html";
+  // Terms/Privacy and "Back to home" point at the marketing site, so they
+  // only render when the server exposes MARKETING_URL. A plain self-hosted
+  // install has no marketing pages and shows none of them.
+  const privacyHref = `${marketingUrl}/privacy`;
+  const termsHref = `${marketingUrl}/terms`;
   // Brand logo + the explicit back link in the footer both lead to the
   // marketing site. When MARKETING_URL isn't configured we fall back to
   // "/" so the brand still acts as "home" instead of being a dead link.
@@ -229,10 +230,12 @@ export function Login({ onLogin, showRegister, authProviders, turnstileSiteKey, 
               {loading ? "Signing in…" : "Sign in →"}
             </button>
 
-            <p className="login-tos">
-              By continuing, you agree to our{" "}
-              <a href={termsHref}>Terms</a> and <a href={privacyHref}>Privacy</a>.
-            </p>
+            {marketingUrl && (
+              <p className="login-tos">
+                By continuing, you agree to our{" "}
+                <a href={termsHref}>Terms</a> and <a href={privacyHref}>Privacy</a>.
+              </p>
+            )}
           </form>
 
           {showRegister && (
@@ -245,13 +248,15 @@ export function Login({ onLogin, showRegister, authProviders, turnstileSiteKey, 
 
         <div className="login-footer">
           <span className="status">tls 1.3 · zero-data-retention</span>
-          <span className="links">
-            <a href={homeHref} className="back-link">← Back to home</a>
-            <span aria-hidden="true">·</span>
-            <a href={privacyHref}>Privacy</a>
-            <span aria-hidden="true">·</span>
-            <a href={termsHref}>Terms</a>
-          </span>
+          {marketingUrl && (
+            <span className="links">
+              <a href={homeHref} className="back-link">← Back to home</a>
+              <span aria-hidden="true">·</span>
+              <a href={privacyHref}>Privacy</a>
+              <span aria-hidden="true">·</span>
+              <a href={termsHref}>Terms</a>
+            </span>
+          )}
         </div>
       </div>
     </div>

@@ -198,8 +198,9 @@ The full env var reference is in [packages/core-server/src/config.ts](../package
 | `DATABASE_URL` | `postgres://vonzio:vonzio_dev@localhost:5432/vonzio` | Postgres connection string |
 | `REGISTRATION_ENABLED` | `false` | OSS keeps this false — single user only |
 | `OLLAMA_ENABLED` | `false` | Show Ollama Cloud as a credential option |
+| `EMBED_ENABLED` | `false` | Show the Settings › Embed tab (chat widget + chat link) |
 | `RESEND_API_KEY` | unset | Enable password-reset emails via Resend |
-| `EMAIL_FROM` | `Vonzio <noreply@app.vonz.io>` | From-address for reset/invite emails |
+| `EMAIL_FROM` | `vonzio <noreply@example.com>` | From-address for reset/invite emails |
 | `BETTER_AUTH_URL` | `http://localhost:3000` | Public URL where vonzio is reachable |
 | `CORS_ORIGIN` | `*` | Comma-separated allowed origins |
 | `AGENT_IMAGE` | `vonzio-agent:latest` | Container image for agent sessions |

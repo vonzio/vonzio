@@ -70,7 +70,7 @@ services:
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173,http://localhost:3000}
       - REGISTRATION_ENABLED=${REGISTRATION_ENABLED:-true}
       - RESEND_API_KEY=${RESEND_API_KEY:-}
-      - EMAIL_FROM=${EMAIL_FROM:-Vonzio <noreply@vonz.io>}
+      - EMAIL_FROM=${EMAIL_FROM:-vonzio <noreply@example.com>}
       - PLATFORM_TELEGRAM_BOT_TOKEN=${PLATFORM_TELEGRAM_BOT_TOKEN:-}
       - PLATFORM_TELEGRAM_WEBHOOK_SECRET=${PLATFORM_TELEGRAM_WEBHOOK_SECRET:-}
       # Chat-surface integrations live as plugins as of Phase 3D/3E --

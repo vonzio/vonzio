@@ -29,7 +29,7 @@ const configSchema = z.object({
 
   // Email (Resend)
   RESEND_API_KEY: z.string().optional(),
-  EMAIL_FROM: z.string().default("vonzio <noreply@app.vonz.io>"),
+  EMAIL_FROM: z.string().default("vonzio <noreply@example.com>"),
 
   // Platform-hosted Telegram bot — optional. When set, users can pair
   // their account with a single shared bot (one tap) instead of running
@@ -314,6 +314,9 @@ const configSchema = z.object({
   METRICS_FLUSH_INTERVAL_SECS: z.coerce.number().default(60),
   METRICS_RETENTION_DAYS: z.coerce.number().default(7),
   OLLAMA_ENABLED: z.string().transform((v) => v === "true").default("false"),
+  // Shows the Settings › Embed tab (chat widget + direct chat link). The
+  // widget routes stay mounted either way; this only gates the dashboard UI.
+  EMBED_ENABLED: z.string().transform((v) => v === "true").default("false"),
 
   // Teller config moved to the external @vonzio/plugin-teller plugin (its own
   // TELLER_* env schema + mtls_secrets policy entry). Core no longer reads it.

@@ -5,6 +5,8 @@ import type {
 
 export interface DefaultEntitlementsProviderOptions {
   registrationEnabled: boolean;
+  /** EMBED_ENABLED: grants `embed`, which shows the Settings › Embed tab. Off by default. */
+  embedEnabled?: boolean;
 }
 
 export class DefaultEntitlementsProvider implements EntitlementsProvider {
@@ -16,6 +18,7 @@ export class DefaultEntitlementsProvider implements EntitlementsProvider {
     // tolerated local pattern. SaaS overrides compute() to gate it behind an admin
     // allowlist (a per-user feature flag). See feature 0047.
     const ents: string[] = ["self_hosted", "subscription_oauth"];
+    if (this.opts.embedEnabled) ents.push("embed");
     if (user.role === "admin") {
       ents.push("admin");
       if (this.opts.registrationEnabled) ents.push("admin_multitenant");
