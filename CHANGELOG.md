@@ -105,6 +105,18 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
   model-less agent now picks its default too, as Ollama and OpenAI keys
   already did. The Claude fallback lives in one place
   (`lib/default-model.ts`).
+- **Provider rejections read as words, with a hint.** A rejected model call
+  used to show the SDK's raw `API Error: 400 {"type":"error",…}` blob in the
+  chat. The server now rewords it (in the bubble, the failed-turn message and
+  the replayed history): a rejected model reads e.g. "The 'gpt-x' model is
+  not supported when using Codex with a ChatGPT account. Pick a different
+  model for this agent in Settings → Agents, or switch models from the model
+  picker in the chat.", other structured 4xx/5xx bodies become one line with
+  the status. The gateway also returns a rejected model as a 400 rather than
+  a 502, so the SDK no longer retries it several times first.
+- **A failed turn's bubble is no longer overwritten by the next turn.** The
+  chat kept the failed turn's streaming bubble as the target for new tokens,
+  so the next reply (or failure) replaced it instead of appearing below it.
 - **First run goes setup → onboarding.** Creating the admin account now
   signs it in and lands on `/onboarding` instead of bouncing through
   `/login` (falls back to `/login` only if the sign-in step fails).

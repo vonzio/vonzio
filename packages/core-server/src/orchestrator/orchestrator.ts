@@ -19,6 +19,7 @@ import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { CLAUDE_DEFAULT_MODEL, NoModelError, isAnthropicProvider } from "../lib/default-model.js";
+import { humanizeProviderError } from "../lib/provider-error.js";
 import { ContainerPool } from "../container/pool.js";
 import { ensureContainerRunning } from "../container/ensure-running.js";
 import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID, parseMemory } from "../container/docker-manager.js";
@@ -2054,6 +2055,15 @@ export class Orchestrator extends EventEmitter {
     let currentToolName: string | undefined;
 
     for await (const msg of this.agentComms.dispatch(containerId, payload, env)) {
+      // The SDK reports an upstream rejection as assistant text ("API Error:
+      // 400 {…json…}") and as the turn's result. Reword it before it reaches
+      // any surface (and the event log) so the user sees a readable message
+      // with a hint instead of a raw JSON blob.
+      if (msg.type === "token" && msg.text) {
+        msg.text = humanizeProviderError(msg.text, { httpForm: false }) ?? msg.text;
+      } else if (msg.type === "result" && msg.result?.text) {
+        msg.result.text = humanizeProviderError(msg.result.text, { httpForm: false }) ?? msg.result.text;
+      }
       this.relayMessage(task.id, relaySessionId, msg);
 
       if (msg.type === "init" && msg.session_id) {
@@ -2256,9 +2266,10 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async handleFailure(task: Task, err: unknown): Promise<void> {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    const errorType = errorMessage.includes("timeout") ? "timeout" as const : "error" as const;
-    this.log.error({ taskId: task.id, sessionId: task.session_id, error: errorMessage, errorType }, "Task failed");
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = humanizeProviderError(rawMessage) ?? rawMessage;
+    const errorType = rawMessage.includes("timeout") ? "timeout" as const : "error" as const;
+    this.log.error({ taskId: task.id, sessionId: task.session_id, error: rawMessage, errorType }, "Task failed");
 
     // Self-heal a poisoned SDK conversation. A failed turn can leave content in
     // the SDK session history that the model rejects on every resume — e.g. an

@@ -194,10 +194,14 @@ export function foldResult(result: ChatResultLike, model: string) {
   };
 }
 
-/** HTTP status and Anthropic error type for a failed turn. */
+/** HTTP status and Anthropic error type for a failed turn. A rejected model
+ *  (byok words it without the status) maps to 400: as a 502 the SDK would
+ *  retry it several times before reporting the same failure. */
 export function errorStatus(message: string): { status: number; type: string } {
   const m = /HTTP (\d{3})/.exec(message);
-  const status = m ? Number(m[1]) : /ChatGPT rejected this sign-in|sign in again/i.test(message) ? 401
+  const status = m ? Number(m[1])
+    : /model is not available|model[\s\S]{0,200}not supported|Pick (?:another|a different) model/i.test(message) ? 400
+    : /ChatGPT rejected this sign-in|sign in again/i.test(message) ? 401
     : /limit is reached|rate.?limit/i.test(message) ? 429
     : /Timed out/i.test(message) ? 504
     : 502;
