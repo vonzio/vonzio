@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { cookieNames, redactAuthBody, setCookieNames } from "./log-redaction.js";
 import { captcha } from "better-auth/plugins";
 import pg from "pg";
 import { sql } from "drizzle-orm";
@@ -369,43 +370,28 @@ export function mountBetterAuth(server: FastifyInstance, auth: Auth): void {
       }
 
       const text = await response.text();
-      // Log Better Auth response bodies so we can debug failures —
-      // Fastify access log shows the status code but not the body,
-      // Better Auth returns error details in the body, and a "succeeds
-      // but returns wrong shape" failure mode looks like a 200 in the
-      // access log.
+      // Diagnostics for the auth round-trip, with every secret stripped:
+      // cookie NAMES only (never values), and the response body with
+      // token-like keys redacted. Session tokens must never reach the
+      // log stream — `docker logs` is not a trust boundary.
+      const isDiagnosticPath =
+        url.pathname.startsWith("/api/auth/sign-in") ||
+        url.pathname.startsWith("/api/auth/admin") ||
+        url.pathname.startsWith("/api/auth/get-session");
       if (response.status >= 500) {
         request.log.error(
-          { authPath: url.pathname, status: response.status, body: text },
+          { authPath: url.pathname, status: response.status, body: redactAuthBody(text) },
           "Better Auth returned 5xx",
         );
-      } else if (
-        url.pathname.startsWith("/api/auth/sign-in") ||
-        url.pathname.startsWith("/api/auth/admin") ||
-        url.pathname.startsWith("/api/auth/get-session")
-      ) {
-        // Also dump cookie headers for sign-in / get-session — diagnosing
-        // a case where a fresh login persists in the DB but get-session
-        // returns null. The set-cookies tell us what the client was
-        // handed; the request's cookie header tells us what came back.
-        const reqCookieHeader = request.headers["cookie"] as string | undefined;
-        const setCookieHeaders = response.headers.getSetCookie?.() ?? [];
-        request.log.info(
+      } else if (isDiagnosticPath) {
+        request.log.debug(
           {
             authPath: url.pathname,
-            requestCookies: reqCookieHeader,
-            setCookies: setCookieHeaders,
+            status: response.status,
+            requestCookieNames: cookieNames(request.headers["cookie"] as string | undefined),
+            setCookieNames: setCookieNames(response.headers.getSetCookie?.() ?? []),
+            body: response.status >= 400 ? redactAuthBody(text) : undefined,
           },
-          "Better Auth cookies",
-        );
-      }
-      if (
-        url.pathname.startsWith("/api/auth/sign-in") ||
-        url.pathname.startsWith("/api/auth/admin") ||
-        url.pathname.startsWith("/api/auth/get-session")
-      ) {
-        request.log.info(
-          { authPath: url.pathname, status: response.status, body: text },
           "Better Auth response",
         );
       }
