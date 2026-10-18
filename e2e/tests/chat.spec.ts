@@ -7,7 +7,7 @@ import { test, expect, type Page } from "@playwright/test";
  * How the mock is wired (see docker/docker-compose.e2e.yml + e2e/README.md):
  * the agent uses @anthropic-ai/claude-agent-sdk, so the chat path speaks the
  * Anthropic Messages API. We configure the profile with the `ollama` provider,
- * whose in-container proxy forwards the agent's LLM calls to OLLAMA_TARGET_URL
+ * whose in-container gateway forwards the agent's LLM calls to LLM_GATEWAY_TARGET_URL
  * (= the server's OLLAMA_BASE_URL) — pointed at the `mock-llm` service, which
  * returns a canned "E2E pong". No real provider, no API key, no cost.
  *

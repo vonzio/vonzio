@@ -7,6 +7,19 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Added
 
+- **The in-container gateway runs on byok.** `docker/llm-gateway.cjs` (1,368
+  lines of hand-written Anthropic↔OpenAI/Codex translation) and
+  `docker/ollama-proxy.cjs` are replaced by one daemon, `packages/llm-gateway`,
+  bundled into the agent base image. Its `openai` and `codex` modes run each
+  Agent SDK call as a `@amenophis1er/byok/core` `chat()` turn and relay the
+  turn's events as Anthropic SSE as they arrive (byok 0.1.6's `onEvent`), so
+  tokens still stream live; `ollama` and `passthrough` forward the Anthropic
+  request as before (Bearer rewrite, tool-result image fix, egress tunnel).
+  One daemon on :11434 also fixes the mid-session provider switch that used to
+  leave the old mode running: the gateway is restarted whenever its mode or
+  upstream changes, not only the upstream. Codex requests now carry byok's
+  identity headers rather than the `CODEX_ORIGINATOR` env, which is gone.
+
 - **Provider connections run on byok.** Key validation, model listing, the
   goal-loop's server-side judge and auto-titles now go through
   [`@amenophis1er/byok/core`](https://github.com/amenophis1er/byok) instead of

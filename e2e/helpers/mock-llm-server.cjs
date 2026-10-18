@@ -1,10 +1,10 @@
 /**
  * Mock LLM endpoint for the E2E chat test — runs as a container on
  * vonzio-network so both core-server (model list) and the agent container
- * (via the in-container ollama-proxy) can reach it by DNS.
+ * (via the in-container llm-gateway) can reach it by DNS.
  *
  * The agent uses @anthropic-ai/claude-agent-sdk, so the chat path speaks the
- * ANTHROPIC Messages API. The ollama-proxy is a dumb pass-through (it only
+ * ANTHROPIC Messages API. The gateway's ollama mode is a pass-through (it only
  * swaps x-api-key→Bearer), so requests arrive here unchanged. We implement:
  *
  *   GET  /v1/models               OpenAI-shaped list — core-server lists and

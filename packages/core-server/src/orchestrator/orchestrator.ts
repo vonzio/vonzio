@@ -75,13 +75,11 @@ const PROVIDER_ROUTE_ENV = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_BASE_URL",
   "CLAUDE_CODE_OAUTH_TOKEN",
-  "OLLAMA_TARGET_URL",
   "LLM_GATEWAY_MODE",
   "LLM_GATEWAY_TARGET_URL",
   "LLM_GATEWAY_PASSTHROUGH_RAW",
   "LLM_GATEWAY_DEFAULT_MODEL",
   "CODEX_ACCOUNT_ID",
-  "CODEX_ORIGINATOR",
   // Model-alias remaps (issue: subagent model:"haiku" on a non-Anthropic
   // provider resolves to a claude-* id the upstream rejects). Set for
   // gateway-routed providers; must reset on a switch back to Anthropic or
@@ -1534,24 +1532,17 @@ export class Orchestrator extends EventEmitter {
       await this.runSetupCommands(containerId, ['printf %s "$LLM_GATEWAY_DEFAULT_MODEL" > /tmp/llm-gateway.model'], env);
     }
 
-    // Start Ollama auth proxy if needed — only once per container (skip if already running)
-    if (env?.OLLAMA_TARGET_URL) {
-      // Redirect the daemon's stdout/stderr to a file: a backgrounded process
-      // that keeps writing to the exec's pipe holds it open, so the setup
-      // command's `__RC__` exit marker races and is sometimes missed (surfaces
-      // as a spurious "exit -1" even though the proxy started fine).
-      await this.runSetupCommands(containerId, ["node /app/ollama-proxy.cjs >/tmp/ollama-proxy.log 2>&1 &\nsleep 0.3"], env);
-    }
-    // Start the OpenAI translating gateway if this profile uses an OpenAI(-compatible) key.
-    // The container is reused across turns and a cross-key switch changes
-    // LLM_GATEWAY_TARGET_URL — so restart the gateway when the upstream changed
-    // (or it died). Otherwise the stale gateway (bound to :11434; EADDRINUSE
-    // makes a naive re-start exit) keeps routing to the previous provider's
-    // endpoint. PID + target files avoid a procps dependency and skip needless
-    // restarts when the upstream is unchanged.
+    // Start the in-container gateway (packages/llm-gateway, on byok) for every
+    // non-native provider: openai / codex translate, ollama / passthrough
+    // forward. The container is reused across turns and a cross-key switch
+    // changes the mode or the upstream — so restart the gateway when its
+    // routing changed (or it died). Otherwise the stale gateway (bound to
+    // :11434; EADDRINUSE makes a naive re-start exit) keeps serving the
+    // previous provider. PID + routing files avoid a procps dependency and
+    // skip needless restarts when nothing changed.
     if (env?.LLM_GATEWAY_MODE) {
       await this.runSetupCommands(containerId, [
-        'NEW="$LLM_GATEWAY_TARGET_URL"\n' +
+        'NEW="$LLM_GATEWAY_MODE|$LLM_GATEWAY_TARGET_URL|$LLM_GATEWAY_PASSTHROUGH_RAW"\n' +
         'OLD="$(cat /tmp/llm-gateway.pid 2>/dev/null)"\n' +
         'if [ "$(cat /tmp/llm-gateway.target 2>/dev/null)" = "$NEW" ] && kill -0 "$OLD" 2>/dev/null; then\n' +
         "  :\n" +  // already running with the right upstream — nothing to do
@@ -1564,8 +1555,9 @@ export class Orchestrator extends EventEmitter {
         // EADDRINUSE on :11434 and exit — fixed sleeps race.
         '    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$OLD" 2>/dev/null || break; sleep 0.1; done\n' +
         "  fi\n" +
-        // Redirect output (see the ollama-proxy note) so the backgrounded
-        // gateway doesn't hold the exec pipe open and race the RC marker.
+        // Redirect the daemon's stdout/stderr to a file: a backgrounded process
+        // that keeps writing to the exec's pipe holds it open, so the setup
+        // command's `__RC__` exit marker races and is sometimes missed.
         "  node /app/llm-gateway.cjs >/tmp/llm-gateway.log 2>&1 &\n" +
         "  echo $! > /tmp/llm-gateway.pid\n" +
         '  printf %s "$NEW" > /tmp/llm-gateway.target\n' +
@@ -2353,24 +2345,25 @@ export class Orchestrator extends EventEmitter {
     // per-turn runAgent value wins for the runner process.
     const gatewayDefaultModel = profile.model ?? "";
     if (profile.resolved_provider === "ollama" && profile.resolved_api_key) {
+      // Ollama Cloud serves the Anthropic Messages API natively; the gateway
+      // forwards (Bearer auth, tool-result image fix) rather than translates.
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
       env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
       const { OLLAMA_BASE_URL } = await import("../services/ollama-service.js");
-      env.OLLAMA_TARGET_URL = OLLAMA_BASE_URL;
+      env.LLM_GATEWAY_MODE = "ollama";
+      env.LLM_GATEWAY_TARGET_URL = OLLAMA_BASE_URL;
       if (gatewayDefaultModel) env.LLM_GATEWAY_DEFAULT_MODEL = gatewayDefaultModel;
     } else if (profile.resolved_provider === "openai" && profile.resolved_api_key) {
       // The Claude Agent SDK still speaks the Anthropic Messages API; the
-      // in-container llm-gateway translates it to OpenAI Chat Completions and
-      // forwards to LLM_GATEWAY_TARGET_URL.
+      // in-container llm-gateway runs each call as a byok turn against the
+      // OpenAI-compatible API root (the same root the dashboard lists models
+      // from — one mapping, see byok-connection.ts).
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
       env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
       env.LLM_GATEWAY_MODE = "openai";
-      // Per-key endpoint override (OpenRouter/Azure/vLLM/LM Studio); falls
-      // back to the server-wide OPENAI_BASE_URL when the key has none.
-      const { OPENAI_BASE_URL, normalizeOpenAIBaseUrl } = await import("../services/openai-service.js");
-      env.LLM_GATEWAY_TARGET_URL = profile.resolved_base_url
-        ? normalizeOpenAIBaseUrl(profile.resolved_base_url)
-        : OPENAI_BASE_URL;
+      const { connectionFor } = await import("../services/byok-connection.js");
+      const target = connectionFor({ provider: "openai", api_key: profile.resolved_api_key, base_url: profile.resolved_base_url });
+      env.LLM_GATEWAY_TARGET_URL = target!.conn.baseUrl;
       if (gatewayDefaultModel) env.LLM_GATEWAY_DEFAULT_MODEL = gatewayDefaultModel;
     } else if (profile.resolved_provider === "claude_subscription" && profile.resolved_api_key) {
       // Claude Pro/Max subscription: the value is an sk-ant-oat01- OAuth token,
@@ -2393,16 +2386,14 @@ export class Orchestrator extends EventEmitter {
       // ChatGPT subscription (Codex OAuth): resolved_api_key is a short-lived
       // access token (refreshed at resolve time by ProfileService). The SDK
       // sends it to the in-container gateway as x-api-key; the gateway's "codex"
-      // mode translates Anthropic Messages <-> the OpenAI Responses API against
-      // the ChatGPT Codex backend. Account id + originator ride in as env.
+      // mode runs each call as a byok turn against the ChatGPT Codex backend
+      // (the Responses API). The account id is decoded from the token per
+      // request; the env value is only a fallback.
       const { accountIdFromJwt } = await import("../services/codex-oauth-service.js");
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;
       env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
       env.LLM_GATEWAY_MODE = "codex";
       env.CODEX_ACCOUNT_ID = accountIdFromJwt(profile.resolved_api_key) ?? "";
-      // Truthful by default (see feature 0047 §5); a self-hoster can set
-      // CODEX_ORIGINATOR=codex_cli_rs for full CLI parity at their own risk.
-      env.CODEX_ORIGINATOR = process.env.CODEX_ORIGINATOR || "vonzio";
       if (gatewayDefaultModel) env.LLM_GATEWAY_DEFAULT_MODEL = gatewayDefaultModel;
     } else if (profile.resolved_api_key) {
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;

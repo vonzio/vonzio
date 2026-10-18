@@ -56,8 +56,8 @@ browser can't intercept it. So instead we redirect the agent's upstream:
 - `OLLAMA_BASE_URL` is env-overridable (`packages/core-server/.../ollama-service.ts`).
   `docker/docker-compose.e2e.yml` points it at the `mock-llm` service.
 - The test configures the profile with the **ollama** provider, whose
-  in-container proxy (`docker/ollama-proxy.cjs`) forwards the agent's LLM calls
-  to `OLLAMA_TARGET_URL` (= `OLLAMA_BASE_URL`) — i.e. to the mock.
+  in-container gateway (`packages/llm-gateway`, mode `ollama`) forwards the
+  agent's LLM calls to `LLM_GATEWAY_TARGET_URL` (= `OLLAMA_BASE_URL`) — i.e. to the mock.
 - `helpers/mock-llm-server.cjs` is a tiny Anthropic-shaped endpoint: `GET
   /v1/models` (for the model picker / credential validation) and `POST
   /v1/messages` (streaming + not) returning a canned `E2E pong`. No real

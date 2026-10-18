@@ -12,9 +12,8 @@ describe("modelHostsFromEnv", () => {
     const env = {
       ANTHROPIC_BASE_URL: "http://127.0.0.1:11434", // local gateway → skip
       LLM_GATEWAY_TARGET_URL: "https://api.openai.com/v1", // real upstream
-      OLLAMA_TARGET_URL: "https://ollama.example.com",
     };
-    expect(modelHostsFromEnv(env).sort()).toEqual(["api.openai.com", "ollama.example.com"]);
+    expect(modelHostsFromEnv(env).sort()).toEqual(["api.openai.com"]);
   });
 
   it("returns the native Anthropic host when ANTHROPIC_BASE_URL is external", () => {
@@ -88,9 +87,10 @@ describe("routeModelThroughGateway", () => {
     expect(env).toEqual(before);
   });
 
-  it("leaves an Ollama agent untouched (ollama-proxy is itself proxy-aware)", () => {
+  it("leaves an Ollama agent untouched (its gateway mode is itself proxy-aware)", () => {
     const env: Record<string, string> = {
-      OLLAMA_TARGET_URL: "https://ollama.com",
+      LLM_GATEWAY_MODE: "ollama",
+      LLM_GATEWAY_TARGET_URL: "https://ollama.com",
       ANTHROPIC_BASE_URL: "http://127.0.0.1:11434",
     };
     const before = { ...env };

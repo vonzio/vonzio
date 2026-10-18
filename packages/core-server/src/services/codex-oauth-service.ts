@@ -1,7 +1,7 @@
 /**
  * OpenAI Codex subscription (Sign in with ChatGPT) OAuth service.
  * Self-contained — the credential-acquisition half of the `openai_subscription`
- * provider. The inference half lives in docker/llm-gateway.cjs (Codex mode).
+ * provider. The inference half is the in-container gateway (packages/llm-gateway, codex mode).
  *
  * Why this exists: a ChatGPT Plus/Pro subscription is far cheaper per token than
  * a metered API key, and OpenAI's Codex CLI reaches it via an OAuth device flow.

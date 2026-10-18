@@ -48,6 +48,7 @@ jobs:
               - 'docker/Dockerfile.agent.base'
               - 'docker/Dockerfile.agent'
               - 'agent-runner/**'
+              - 'packages/llm-gateway/**'
               - '.github/workflows/ci.yml'
 
   typecheck:
@@ -72,6 +73,10 @@ jobs:
       - run: npx tsc --project packages/plugins/slack/tsconfig.json --noEmit
       - run: npx tsc --project packages/core-server/tsconfig.json --noEmit
       - run: npx tsc --project packages/dashboard/tsconfig.json --noEmit
+      # The in-container gateway has its own lockfile (not a workspace member;
+      # see packages/llm-gateway/README.md).
+      - run: npm ci --prefix packages/llm-gateway --no-audit --no-fund
+      - run: npm run typecheck --prefix packages/llm-gateway
       # Plugins must route outbound HTTP through the audited ctx.http.fetch (§10).
       - name: no raw fetch in plugin backends
         run: node scripts/no-raw-fetch-in-plugins.mjs
@@ -155,6 +160,8 @@ jobs:
             packages/core-server/src/plugins/parity-check.test.ts \
             packages/core-server/src/dashboard-csp.test.ts \
             packages/dashboard
+      - name: llm-gateway unit tests
+        run: npm ci --prefix packages/llm-gateway --no-audit --no-fund && npm test --prefix packages/llm-gateway
 
   image-build-and-scan:
     # Builds the agent-base + server images on every PR and scans both

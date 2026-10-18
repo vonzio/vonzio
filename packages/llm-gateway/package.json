@@ -1,0 +1,28 @@
+{
+  "name": "@vonzio/llm-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "In-container gateway: the Claude Agent SDK's Anthropic Messages calls, served by any provider through @amenophis1er/byok/core. Bundled into the agent base image as /app/llm-gateway.cjs.",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vonzio/vonzio.git",
+    "directory": "packages/llm-gateway"
+  },
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/llm-gateway.cjs --log-level=warning",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@amenophis1er/byok": "^0.1.6",
+    "undici": "^8.12.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "esbuild": "0.28.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

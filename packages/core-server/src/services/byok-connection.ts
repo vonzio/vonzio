@@ -9,9 +9,9 @@
  * and auto-titles all route the same way. Nothing else in core-server should
  * build provider URLs or auth headers by hand.
  *
- * The in-container gateway (docker/llm-gateway.cjs) is NOT on byok yet: it
- * must relay the Agent SDK's stream token by token, which core's `chat()`
- * doesn't expose. That move is tracked upstream.
+ * The in-container gateway (packages/llm-gateway) runs on the same byok core
+ * and reads its connection from the env the orchestrator builds; the API root
+ * for an OpenAI-compatible key comes from `connectionFor` here as well.
  */
 import { chat, listModels, type ChatOptions, type ChatRequest, type Connection } from "@amenophis1er/byok/core";
 import type { ProfileProvider } from "@vonzio/shared";
