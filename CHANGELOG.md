@@ -82,6 +82,11 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
   preview URLs keep `_pvt` in the link target but show a clean URL as the
   link text in the dashboard.
 
+- **Start on Home sends the task.** Typing a task on Home and clicking
+  Start now opens the workspace and sends it once the chat is ready, instead
+  of leaving it in the composer for a second click. The text travels as
+  navigation state and is cleared once consumed, so a reload or
+  back-navigation never sends it twice.
 - **First run goes setup → onboarding.** Creating the admin account now
   signs it in and lands on `/onboarding` instead of bouncing through
   `/login` (falls back to `/login` only if the sign-in step fails).

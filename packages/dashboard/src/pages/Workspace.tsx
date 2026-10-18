@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Send, Loader2, Paperclip, X, FileText, ChevronDown, Sparkles, Code, MessageSquare, Menu, Key, Square, Target, Bot, Gamepad2, BarChart3, Search, Rocket, Globe, Plus, PanelLeftOpen, Mic, MicOff } from "lucide-react";
 import { useUser } from "../contexts/UserContext.js";
 import { useWorkspaces } from "../hooks/useWorkspaces.js";
@@ -19,7 +19,7 @@ import { UserMenu } from "../components/UserMenu.js";
 import { MessageList } from "../components/MessageList.js";
 import { ThreadNavigator } from "../components/ThreadNavigator.js";
 import { QuestionPicker } from "../components/ChatCore.js";
-import { HOME_DRAFT_KEY, HOME_AGENT_KEY } from "./Home.js";
+import type { HomeHandoff } from "./Home.js";
 import { reopenOnboarding } from "../components/OnboardingHost.js";
 import { Button, Select } from "../brand/components.js";
 import { authClient } from "../lib/auth-client.js";
@@ -95,6 +95,7 @@ const SUGGESTION_FALLBACK: PromptSuggestion[] = [
 
 export function Workspace() {
   const navigate = useNavigate();
+  const location = useLocation();
   const currentUser = useUser();
   const isAdmin = currentUser.role === "admin";
   const { id: routeId } = useParams<{ id: string }>();
@@ -421,19 +422,36 @@ export function Workspace() {
     .filter(Boolean);
   const defaultProfileId = (profiles?.find((p) => p.is_default) ?? profiles?.[0])?.id ?? "";
 
-  // Pick up a draft / chosen agent handed off from the Home launcher (it stashes
-  // these then navigates to /w). Apply once on a fresh new-chat mount, then clear.
+  // Pick up a draft / chosen agent handed off from the Home launcher via
+  // navigation state. Consumed once per history entry (the ref survives
+  // StrictMode's double effect run), and the state is wiped from the entry
+  // right away so a reload or back/forward to it can't replay — or re-send — it.
+  const consumedHandoffKeyRef = useRef<string | null>(null);
+  // Text to send as soon as the new chat can dispatch (Home's Start button).
+  // State, not a ref, so the send effect runs on a render that already has
+  // the handed-off agent selected. The fired ref is the double-send guard.
+  const [autoSendText, setAutoSendText] = useState<string | null>(null);
+  const autoSendFiredRef = useRef(false);
   useEffect(() => {
     if (routeId) return; // only for new chat (/w)
-    try {
-      const draft = localStorage.getItem(HOME_DRAFT_KEY);
-      if (draft) { setInput(draft); localStorage.removeItem(HOME_DRAFT_KEY); }
-      const agent = localStorage.getItem(HOME_AGENT_KEY);
-      if (agent) { setSelectedProfileId(agent); localStorage.removeItem(HOME_AGENT_KEY); }
-      if (draft || agent) setTimeout(() => inputRef.current?.focus(), 100);
-    } catch { /* ignore storage errors */ }
+    const handoff = (location.state as { homeHandoff?: HomeHandoff } | null)?.homeHandoff;
+    if (!handoff || consumedHandoffKeyRef.current === location.key) return;
+    consumedHandoffKeyRef.current = location.key;
+    navigate(location.pathname, { replace: true, state: null });
+    if (handoff.draft) setInput(handoff.draft);
+    if (handoff.agentId) {
+      setSelectedProfileId(handoff.agentId);
+      setPendingModelOverride(null);
+      setPendingKeyOverride(null);
+    }
+    if (handoff.autoSend && handoff.draft) {
+      autoSendFiredRef.current = false;
+      setAutoSendText(handoff.draft);
+    } else if (handoff.draft || handoff.agentId) {
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeId]);
+  }, [routeId, location.key]);
 
   const hasApiKey = activeProfile?.api_key_id ? true : false;
   // Only treat "no key" as actionable once profiles have actually loaded —
@@ -796,6 +814,7 @@ export function Workspace() {
 
   function handleCreate() {
     resetWorkspaceState();
+    setAutoSendText(null);
     setActiveWorkspaceId(null);
     setPendingNew(true);
     setPanelOpen(false);
@@ -890,9 +909,28 @@ export function Workspace() {
     });
   }
 
+  // Home "Start": send the handed-off task once the new chat can dispatch —
+  // socket open, profiles loaded, an agent with a key selected. If it can't
+  // (no agent / no key), drop the auto-send and leave the text in the composer.
+  const autoSendProfileId = selectedProfileId || defaultProfileId;
+  useEffect(() => {
+    if (autoSendText === null || autoSendFiredRef.current) return;
+    if (activeWorkspaceId) { setAutoSendText(null); return; }
+    if (profiles === undefined) return;
+    if (!autoSendProfileId || keyMissing) { setAutoSendText(null); return; }
+    if (!chat.connected || chat.streaming) return;
+    autoSendFiredRef.current = true;
+    void handleSend(autoSendText);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSendText, activeWorkspaceId, profiles, autoSendProfileId, keyMissing, chat.connected, chat.streaming]);
+
   // ─── Send message ────────────────────────────────────────────────
-  async function handleSend() {
-    const text = input.trim();
+  // `textOverride` lets the Home auto-send dispatch its handed-off text without
+  // waiting for the composer's `input` state to land in this closure.
+  async function handleSend(textOverride?: string) {
+    // Any send (manual or the Home auto-send itself) settles a pending auto-send.
+    setAutoSendText(null);
+    const text = (textOverride ?? input).trim();
     if ((!text && attachments.length === 0) || chat.streaming) return;
     if (text) pushHistory(text);
     const atts = attachments.length > 0
@@ -1760,7 +1798,7 @@ export function Workspace() {
                       </button>
                     ) : (
                       <button
-                        onClick={handleSend}
+                        onClick={() => { void handleSend(); }}
                         disabled={(!chat.connected && !!activeWorkspaceId) || (!input.trim() && attachments.length === 0)}
                         style={{
                           background: "var(--vz-sodium)", color: "#fff",

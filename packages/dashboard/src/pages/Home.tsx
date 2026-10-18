@@ -3,8 +3,9 @@
  *
  * Replaces "drop straight into a new workspace" with an agent-centric launcher:
  * a quick prompt, your agents as cards, templates, and recent runs. Starting
- * anything hands off into the Workspace (the composer lives there); a short
- * draft / chosen-agent are passed via localStorage and picked up on /w mount.
+ * anything hands off into the Workspace (the composer lives there); the typed
+ * task / chosen agent ride along as router navigation state (HomeHandoff) and
+ * are picked up once on the /w mount. "Start" sends the task right away.
  */
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -14,9 +15,18 @@ import { fetchProfiles, fetchWorkspaces, type ProfileSummary, type WorkspaceList
 import { Button } from "../brand/components.js";
 import { formatRelative } from "../lib/utils.js";
 
-// Handoff keys read by Workspace on a fresh /w mount.
-export const HOME_DRAFT_KEY = "vonzio_home_draft";
-export const HOME_AGENT_KEY = "vonzio_home_agent";
+// Handoff read by Workspace on a fresh /w mount (location.state.homeHandoff).
+// Navigation state rather than localStorage: it belongs to exactly one history
+// entry, so it can't leak into a later new chat or another tab, and Workspace
+// clears it once consumed so a reload / back-navigation never re-sends it.
+export interface HomeHandoff {
+  /** Text typed on Home. */
+  draft?: string;
+  /** Agent (profile) to start with. */
+  agentId?: string;
+  /** Send `draft` as soon as the workspace is ready (the Start button). */
+  autoSend?: boolean;
+}
 
 export function Home() {
   const navigate = useNavigate();
@@ -41,12 +51,14 @@ export function Home() {
     if (!prev || w.last_active_at > prev) lastUsedByAgent.set(w.profile_id, w.last_active_at);
   }
 
-  function startChat(opts?: { agentId?: string }) {
-    try {
-      if (prompt.trim()) localStorage.setItem(HOME_DRAFT_KEY, prompt.trim());
-      if (opts?.agentId) localStorage.setItem(HOME_AGENT_KEY, opts.agentId);
-    } catch { /* ignore storage errors */ }
-    navigate("/w");
+  function startChat(opts?: { agentId?: string; autoSend?: boolean }) {
+    const draft = prompt.trim();
+    const homeHandoff: HomeHandoff = {
+      draft: draft || undefined,
+      agentId: opts?.agentId,
+      autoSend: !!opts?.autoSend && !!draft,
+    };
+    navigate("/w", { state: { homeHandoff } });
   }
 
   return (
@@ -61,9 +73,9 @@ export function Home() {
         <p style={{ fontSize: 13, color: "var(--vz-muted)", margin: 0 }}>Start a chat, pick an agent, or open a template.</p>
       </div>
 
-      {/* Quick prompt — fast path. Hands the text to the workspace composer. */}
+      {/* Quick prompt — fast path. Start opens a workspace and sends the text. */}
       <form
-        onSubmit={(e) => { e.preventDefault(); startChat(); }}
+        onSubmit={(e) => { e.preventDefault(); startChat({ autoSend: true }); }}
         style={{ display: "flex", gap: 8 }}
       >
         <input
