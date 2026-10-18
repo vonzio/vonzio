@@ -5,10 +5,12 @@ import { test, expect, type Page } from "@playwright/test";
  * a fresh OSS install:
  *
  *   1. /setup  — create the lone admin account (the only signup an OSS
- *                instance ever offers; it 409s forever after).
- *   2. /login  — sign in with those credentials.
- *   3. /onboarding — a signed-in user with zero profiles is routed into the
- *                "pick a provider" wizard (App.tsx → AppRoutesGuard).
+ *                instance ever offers; it 409s forever after). Setup signs
+ *                the new admin in and lands on /onboarding directly.
+ *   2. /login  — with the session cleared, sign in with those credentials;
+ *                a signed-in user with zero profiles is routed into
+ *                /onboarding (App.tsx → AppRoutesGuard).
+ *   3. /onboarding — the "pick a provider" wizard renders.
  *
  * These three steps share ONE browser context (cookies/session persist across
  * them), so the suite is serial and reuses a single page. None of this touches
@@ -37,7 +39,7 @@ test.describe.serial("OSS first-run", () => {
     await page.close();
   });
 
-  test("setup wizard creates the admin and hands off to login", async () => {
+  test("setup wizard creates the admin and lands on onboarding", async () => {
     await page.goto("/setup");
 
     // The wizard only renders on a fresh DB. Once an admin exists the route
@@ -57,11 +59,15 @@ test.describe.serial("OSS first-run", () => {
     await page.locator('input[type="password"]').fill(ADMIN.password);
     await createBtn.click();
 
-    // Setup does a full window.location reload to /login once the admin exists.
-    await expect(page).toHaveURL(/\/login/);
+    // Setup signs the admin in and does a full window.location reload to
+    // /onboarding. (It only falls back to /login if that sign-in fails.)
+    await expect(page).toHaveURL(/\/onboarding/);
   });
 
   test("admin signs in and is routed into onboarding", async () => {
+    // Drop the session setup just established so this exercises /login
+    // for real rather than riding the existing cookie.
+    await page.context().clearCookies();
     await page.goto("/login");
     await page.locator('input[type="email"]').fill(ADMIN.email);
     await page.locator('input[type="password"]').fill(ADMIN.password);
