@@ -60,6 +60,7 @@ import { userResourceRoutes } from "./routes/user-resources.js";
 import { poolRoutes } from "./routes/pool.js";
 import { adminRoutes } from "./routes/admin.js";
 import { previewRoutes, setupHostnamePreviewProxy, setupPreviewWebSocketProxy } from "./routes/preview.js";
+import { previewRefererRedirect } from "./routes/preview-rewrite.js";
 import { gitOAuthRoutes, gitOAuthCallbackRoute } from "./routes/git-oauth.js";
 // telegramSetupRoutes + resyncTelegramBotCommands now live in
 // @vonzio/plugin-telegram. The plugin's init() registers the same
@@ -1025,6 +1026,13 @@ export async function buildServer(deps: ServerDeps) {
     // index.html + SPA fallback: serve with a per-request CSP nonce. "/" and any
     // non-API unmatched route land here (static index is disabled above).
     server.setNotFoundHandler(async (request, reply) => {
+      // A root-relative request from a path-mode preview page that the
+      // proxy's HTML/CSS rewrite couldn't catch (URL built in JS, fetch):
+      // send it back under the preview prefix, where auth applies as usual.
+      if (config.PREVIEW_MODE === "path") {
+        const target = previewRefererRedirect(request.method, request.url, request.headers.referer, request.headers.host);
+        if (target) return reply.redirect(target, 307);
+      }
       // API namespaces + /assets (a missing hashed asset must 404, not get the
       // SPA shell with text/html — which would surface as a confusing MIME
       // error in the browser).
