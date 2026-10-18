@@ -7,19 +7,13 @@ import type { ApiKeyService } from "./api-key-service.js";
  * The service has three external dependencies:
  *   - profileService.get → checks profile exists + finds api_key_id
  *   - apiKeyService.getWithSecrets → returns the resolved key + provider
- *   - global fetch → Anthropic /v1/models (mocked per test)
- *   - fetchOllamaModels (mocked via vi.mock at the module boundary)
+ *   - global fetch → every provider's model listing, via byok (stubbed per test)
  */
-vi.mock("./ollama-service.js", () => ({
-  fetchOllamaModels: vi.fn(),
-}));
+const headerOf = (init: RequestInit | undefined, name: string) =>
+  new Headers(init?.headers as HeadersInit | undefined).get(name);
 
-vi.mock("./openai-service.js", () => ({
-  fetchOpenAIModels: vi.fn(),
-}));
-
-import { fetchOllamaModels } from "./ollama-service.js";
-import { fetchOpenAIModels } from "./openai-service.js";
+const jsonResponse = (body: unknown) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
 function makeServices(profile: unknown, apiKey: unknown) {
   return {
@@ -98,42 +92,76 @@ describe("ModelListService", () => {
     svc.stop();
   });
 
-  it("delegates to fetchOllamaModels for ollama keys", async () => {
-    (fetchOllamaModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-      { id: "llama3", name: "Llama 3" },
-      { id: "qwen2", name: null },
-    ]);
+  it("lists ollama keys against the Ollama OpenAI-compatible /v1/models with a Bearer", async () => {
+    const fetchSpy = vi.fn(async () => jsonResponse({ data: [{ id: "qwen2" }, { id: "llama3" }] }));
+    vi.stubGlobal("fetch", fetchSpy);
 
     const { profileService, apiKeyService } = makeServices(
       PROFILE_WITH_OLLAMA,
-      { provider: "ollama", api_key: "http://localhost:11434" },
+      { provider: "ollama", api_key: "ollama-key" },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_2");
     expect(result.ok).toBe(true);
     if (result.ok) {
+      // byok sorts by id; Ollama has no display names.
       expect(result.models).toEqual([
-        { id: "llama3", display_name: "Llama 3", provider: "ollama" },
+        { id: "llama3", display_name: null, provider: "ollama" },
         { id: "qwen2", display_name: null, provider: "ollama" },
       ]);
     }
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [URL | string, RequestInit];
+    expect(String(url)).toMatch(/^https:\/\/ollama\.com\/v1\/models$/);
+    expect(headerOf(init, "authorization")).toBe("Bearer ollama-key");
     svc.stop();
   });
 
-  it("delegates to fetchOpenAIModels for openai keys", async () => {
-    (fetchOpenAIModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-      { id: "gpt-x", name: "gpt-x" },
-    ]);
+  it("lists openai keys at the key's base_url and tags them openai", async () => {
+    const fetchSpy = vi.fn(async () => jsonResponse({ data: [{ id: "gpt-x" }] }));
+    vi.stubGlobal("fetch", fetchSpy);
 
     const { profileService, apiKeyService } = makeServices(
       { id: "prof_3", name: "OpenAI", api_key_id: "key_openai", user_id: "user_1" },
-      { provider: "openai", api_key: "sk-openai-test", auth_token: null },
+      { provider: "openai", api_key: "sk-openai-test", auth_token: null, base_url: "https://openrouter.ai/api/v1" },
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_3");
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.models).toEqual([{ id: "gpt-x", display_name: "gpt-x", provider: "openai" }]);
+      expect(result.models).toEqual([{ id: "gpt-x", display_name: null, provider: "openai" }]);
+    }
+    const [url] = fetchSpy.mock.calls[0] as unknown as [URL | string];
+    expect(String(url)).toBe("https://openrouter.ai/api/v1/models");
+    svc.stop();
+  });
+
+  it("refuses an openai base_url that resolves to a private address", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const { profileService, apiKeyService } = makeServices(
+      { id: "prof_3", name: "OpenAI", api_key_id: "key_openai", user_id: "user_1" },
+      { provider: "openai", api_key: "sk", base_url: "http://169.254.169.254" },
+    );
+    const svc = new ModelListService(profileService, apiKeyService);
+    const result = await svc.listForProfile("prof_3");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    svc.stop();
+  });
+
+  it("lists ChatGPT keys from the live Codex catalog and falls back to the baked list", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
+    const { profileService, apiKeyService } = makeServices(
+      { id: "prof_4", name: "ChatGPT", api_key_id: "key_codex", user_id: "user_1" },
+      { provider: "openai_subscription", api_key: "eyJ.eyJ.sig" },
+    );
+    const svc = new ModelListService(profileService, apiKeyService);
+    const result = await svc.listForProfile("prof_4");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.models.length).toBeGreaterThan(0);
+      expect(result.models.every((m) => m.provider === "openai")).toBe(true);
     }
     svc.stop();
   });
@@ -181,9 +209,8 @@ describe("ModelListService", () => {
     if (result.ok) expect(result.models[0].provider).toBe("anthropic");
     // Authenticated via Bearer, NOT x-api-key.
     const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
-    const headers = init.headers as Record<string, string>;
-    expect(headers["Authorization"]).toBe("Bearer sk-ant-oat01-tok");
-    expect(headers["x-api-key"]).toBeUndefined();
+    expect(headerOf(init, "authorization")).toBe("Bearer sk-ant-oat01-tok");
+    expect(headerOf(init, "x-api-key")).toBeNull();
     svc.stop();
   });
 

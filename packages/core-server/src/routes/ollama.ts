@@ -4,7 +4,7 @@
 import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
 import type { ApiKeyService } from "../services/api-key-service.js";
-import { fetchOllamaModels } from "../services/ollama-service.js";
+import { describeFailure, listModelsFor } from "../services/byok-connection.js";
 import { ErrorCodes, errorResponse } from "../errors.js";
 
 export interface OllamaRoutesOptions {
@@ -39,13 +39,10 @@ export const ollamaRoutes = fp(
         }
 
         try {
-          const models = await fetchOllamaModels(key.api_key);
-          return { models };
+          const models = await listModelsFor(key);
+          return { models: models.map((m) => ({ id: m.id, name: m.name })) };
         } catch (err) {
-          return reply.code(502).send(errorResponse(
-            ErrorCodes.BAD_REQUEST,
-            err instanceof Error ? err.message : "Failed to fetch Ollama models",
-          ));
+          return reply.code(502).send(errorResponse(ErrorCodes.BAD_REQUEST, describeFailure("ollama", err)));
         }
       },
     );
