@@ -216,3 +216,37 @@ GHSA-qwww-vcr4-c8h2
 # with the same justification if Microsoft hasn't shipped one.
 CVE-2026-56852
 CVE-2026-39822
+
+# ============================================================================
+# GO TOOLCHAIN CVEs IN PREBUILT BINARIES (agent-base image only)
+# ============================================================================
+# Expires: 2026-11-15
+#
+# Go stdlib / x/net / x/text advisories published in October 2026, found in
+# two binaries we install prebuilt and cannot rebuild:
+#   - /usr/bin/gh: GitHub CLI 2.102.0 (latest release), built with Go 1.27.1;
+#     fixed in Go 1.27.2 and x/net 0.60.0.
+#   - Microsoft's native tsc (typescript 7.0.2, latest), built with Go 1.26.4
+#     and x/text 0.38.0.
+# Every entry is denial-of-service class except CVE-2026-56858 (html/template
+# XSS), which needs a binary that renders HTML templates to a browser; neither
+# does. gh is an HTTPS client talking to GitHub's API, tsc processes workspace
+# source with no network listener, and both run only inside the sandboxed
+# agent container (unprivileged user, PID + memory limits, no host access).
+# Worst case is a hung command in a disposable container.
+#
+# When this expires: rebuild agent-base. A gh release built with Go >= 1.27.2
+# and a typescript release built with Go >= 1.26.9 / x/text >= 0.41.0 clear
+# these; delete the entries Trivy no longer reports and renew the rest.
+CVE-2026-33818
+CVE-2026-39821
+CVE-2026-46600
+CVE-2026-56851
+CVE-2026-56853
+CVE-2026-56858
+CVE-2026-56859
+CVE-2026-56860
+CVE-2026-56862
+CVE-2026-78667
+CVE-2026-78669
+CVE-2026-97031
