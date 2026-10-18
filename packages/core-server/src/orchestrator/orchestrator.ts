@@ -18,6 +18,8 @@ import { eq } from "drizzle-orm";
 import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
+import { CLAUDE_DEFAULT_MODEL, NoModelError, isAnthropicProvider } from "../lib/default-model.js";
+import { humanizeProviderError } from "../lib/provider-error.js";
 import { ContainerPool } from "../container/pool.js";
 import { ensureContainerRunning } from "../container/ensure-running.js";
 import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID, parseMemory } from "../container/docker-manager.js";
@@ -147,6 +149,13 @@ export interface OrchestratorDeps {
    * this undefined.
    */
   resolveOrgIdForTask?: (taskId: string) => Promise<string | null>;
+  /**
+   * A provider-appropriate default model for an api key (lib/default-model.ts),
+   * used when a turn on a non-Anthropic key has no model from the task, the
+   * workspace override or the profile. Undefined → such a turn fails with a
+   * "pick a model" message instead of sending the SDK's Claude default.
+   */
+  defaultModelForKey?: (apiKeyId: string) => Promise<string | null>;
   db: DrizzleDB;
   log?: Logger;
   config: {
@@ -1047,16 +1056,12 @@ export class Orchestrator extends EventEmitter {
       // on the model the workspace actually uses.
       const judgeWorkspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
       // The claude-* fallback is only meaningful on Anthropic providers — on a
-      // gateway provider (openai/codex/ollama) with no model configured it
-      // would be forwarded upstream and 400. There the in-container judge
-      // inherits the SDK's default (which the gateway pins to the session
-      // model), so pass no explicit model at all.
-      const anthropicProvider = profile.resolved_provider === "api_key"
-        || profile.resolved_provider === "claude_subscription"
-        || !profile.resolved_provider;
+      // gateway provider (openai/codex/ollama) it would be forwarded upstream
+      // and 400. fetchProfile already filled profile.model for those, so the
+      // undefined branch is only a defensive no-model case.
       const judgeModel = resolveTaskModel(task, judgeWorkspace, profile)
         ?? profile.model
-        ?? (anthropicProvider ? "claude-opus-4-8" : undefined);
+        ?? (isAnthropicProvider(profile.resolved_provider) ? CLAUDE_DEFAULT_MODEL : undefined);
       const judgeEffort = task.effort ?? profile.effort ?? undefined;
       const goal = task.prompt;
       // Per-message acceptance criteria from the composer (optional).
@@ -2050,6 +2055,15 @@ export class Orchestrator extends EventEmitter {
     let currentToolName: string | undefined;
 
     for await (const msg of this.agentComms.dispatch(containerId, payload, env)) {
+      // The SDK reports an upstream rejection as assistant text ("API Error:
+      // 400 {…json…}") and as the turn's result. Reword it before it reaches
+      // any surface (and the event log) so the user sees a readable message
+      // with a hint instead of a raw JSON blob.
+      if (msg.type === "token" && msg.text) {
+        msg.text = humanizeProviderError(msg.text, { httpForm: false }) ?? msg.text;
+      } else if (msg.type === "result" && msg.result?.text) {
+        msg.result.text = humanizeProviderError(msg.result.text, { httpForm: false }) ?? msg.result.text;
+      }
       this.relayMessage(task.id, relaySessionId, msg);
 
       if (msg.type === "init" && msg.session_id) {
@@ -2252,9 +2266,10 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async handleFailure(task: Task, err: unknown): Promise<void> {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    const errorType = errorMessage.includes("timeout") ? "timeout" as const : "error" as const;
-    this.log.error({ taskId: task.id, sessionId: task.session_id, error: errorMessage, errorType }, "Task failed");
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = humanizeProviderError(rawMessage) ?? rawMessage;
+    const errorType = rawMessage.includes("timeout") ? "timeout" as const : "error" as const;
+    this.log.error({ taskId: task.id, sessionId: task.session_id, error: rawMessage, errorType }, "Task failed");
 
     // Self-heal a poisoned SDK conversation. A failed turn can leave content in
     // the SDK session history that the model rejects on every resume — e.g. an
@@ -2315,6 +2330,22 @@ export class Orchestrator extends EventEmitter {
     const profile = await this.deps.profileService.getResolved(task.profile_id, { apiKeyIdOverride });
     if (!profile) {
       throw new Error(`Profile ${task.profile_id} not found`);
+    }
+    // No model anywhere (task → workspace override → profile) on a gateway
+    // provider: the SDK would fall back to its Claude default, which the
+    // upstream rejects ("The 'claude-…' model is not supported…"). Resolve the
+    // key's provider default instead, or fail the turn with a clear message.
+    // Anthropic keys keep the SDK's own Claude default.
+    if (!resolveTaskModel(task, workspace, profile) && !isAnthropicProvider(profile.resolved_provider)) {
+      let model: string | null = null;
+      // Same key order getResolved used: the override, then the profile's own
+      // key (the override may have been deleted).
+      for (const keyId of [apiKeyIdOverride, profile.api_key_id]) {
+        if (model || !keyId || !this.deps.defaultModelForKey) continue;
+        model = await this.deps.defaultModelForKey(keyId).catch(() => null);
+      }
+      if (!model) throw new NoModelError();
+      profile.model = model;
     }
     return profile;
   }

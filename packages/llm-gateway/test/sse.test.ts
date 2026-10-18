@@ -90,4 +90,9 @@ describe("errorStatus", () => {
     expect(errorStatus("Timed out waiting for the model.")).toEqual({ status: 504, type: "api_error" });
     expect(errorStatus("Network error")).toEqual({ status: 502, type: "api_error" });
   });
+
+  it("maps a rejected model to 400 so the SDK does not retry it as a 5xx", () => {
+    expect(errorStatus("That model is not available for this ChatGPT account. Pick another model in Settings."))
+      .toEqual({ status: 400, type: "invalid_request_error" });
+  });
 });

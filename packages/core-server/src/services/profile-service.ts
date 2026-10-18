@@ -1,3 +1,4 @@
+import { isAnthropicProvider } from "../lib/default-model.js";
 import { eq, or, isNull, and, desc, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { encrypt, decrypt } from "../auth/crypto.js";
@@ -166,13 +167,14 @@ export class ProfileService {
   }
 
   /** When a key is attached but no model is chosen, pick a provider-appropriate
-   *  default. Only for ollama/openai — an empty model on those resolves to a
-   *  Claude id at run time and fails ("model … may not exist"). Anthropic keeps
-   *  an empty model (the SDK picks a valid Claude default). */
+   *  default. Only for non-Anthropic kinds (ollama/openai/ChatGPT) — an empty
+   *  model on those resolves to a Claude id at run time and fails ("model …
+   *  not supported"). Anthropic keeps an empty model (the SDK picks a valid
+   *  Claude default). */
   private async pickDefaultModel(model: string | null, apiKeyId: string | null): Promise<string | null> {
     if (model || !apiKeyId || !this.defaultModelResolver || !this.apiKeyService) return model;
     const key = await this.apiKeyService.get(apiKeyId);
-    if (!key || (key.provider !== "ollama" && key.provider !== "openai")) return model;
+    if (!key || isAnthropicProvider(key.provider)) return model;
     return (await this.defaultModelResolver(apiKeyId)) ?? null;
   }
 

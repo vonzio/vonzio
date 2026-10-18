@@ -502,6 +502,12 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
         setStreaming(false);
         setAgentStatus({ state: "idle" });
         streamBufferRef.current = "";
+        // End the streaming segment (as "cancelled" and "done" do): a failed
+        // turn that had already streamed text (e.g. the SDK's "API Error: …"
+        // bubble) would otherwise stay the token target, and the NEXT turn's
+        // first token would overwrite that bubble instead of starting its own.
+        streamingMsgIdRef.current = null;
+        suppressNextAssistantRef.current = false;
         log(`[${ts()}] ✗ Error: ${msg.message ?? msg.code ?? "unknown"}`);
         break;
     }
