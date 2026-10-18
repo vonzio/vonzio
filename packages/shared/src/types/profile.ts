@@ -277,6 +277,10 @@ export interface ResolvedProfile extends Profile {
   resolved_provider: ProfileProvider;
   /** OpenAI-compatible base URL from the resolved key (openai provider only). */
   resolved_base_url?: string;
+  /** Id of the key the credential was actually loaded from (the conversation's
+   *  override, or the profile's own key when the override could not be loaded).
+   *  Undefined when no key resolved. */
+  resolved_api_key_id?: string;
 }
 
 export interface CallerKey {

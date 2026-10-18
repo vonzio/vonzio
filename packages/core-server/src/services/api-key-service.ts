@@ -222,9 +222,11 @@ export class ApiKeyService {
       .set({ api_key_id: null })
       .where(eq(schema.profiles.api_key_id, id));
     // Clear any per-conversation key overrides pinned to this key so workspaces
-    // fall back cleanly to their profile's key (resolve also guards this).
+    // fall back cleanly to their profile's key (resolve also guards this). The
+    // paired model override came from this key too — drop it with the key, or
+    // the conversation would send that model to the profile's provider.
     await this.db.update(schema.workspaces)
-      .set({ api_key_id_override: null })
+      .set({ api_key_id_override: null, model_override: null })
       .where(eq(schema.workspaces.api_key_id_override, id));
     // Junction table rows are cascade-deleted by FK constraint
     const result = await this.db.delete(schema.anthropicKeys).where(eq(schema.anthropicKeys.id, id)).returning();

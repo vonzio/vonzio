@@ -24,11 +24,22 @@ export function resolveWorkspaceModel(
   return workspace?.model_override ?? profile?.model ?? null;
 }
 
-/** Dispatch-time resolution: task-level override wins over workspace + profile. */
+/** Dispatch-time resolution: task-level override wins over workspace + profile.
+ *
+ *  The workspace's model_override is paired with its api_key_id_override (the
+ *  picker sets both). When the credential could NOT be loaded from that key
+ *  (deleted/revoked → getResolved fell back to the profile's key), the
+ *  override model belongs to a key that isn't the one running the turn, so it
+ *  is ignored and the profile default is used instead — sending e.g. an Ollama
+ *  model to a ChatGPT key would just fail upstream. */
 export function resolveTaskModel(
   task: { model?: string } | null | undefined,
-  workspace: Pick<Workspace, "model_override"> | null | undefined,
-  profile: { model?: string | null } | null | undefined,
+  workspace: (Pick<Workspace, "model_override"> & { api_key_id_override?: string | null }) | null | undefined,
+  profile: { model?: string | null; resolved_api_key_id?: string } | null | undefined,
 ): string | null {
-  return task?.model ?? resolveWorkspaceModel(workspace, profile);
+  if (task?.model) return task.model;
+  const overrideKey = workspace?.api_key_id_override;
+  const keyMismatch = !!overrideKey && !!profile?.resolved_api_key_id && profile.resolved_api_key_id !== overrideKey;
+  if (keyMismatch) return profile?.model ?? null;
+  return resolveWorkspaceModel(workspace, profile);
 }

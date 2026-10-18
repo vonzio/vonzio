@@ -2306,9 +2306,9 @@ export class Orchestrator extends EventEmitter {
     // Cross-key model selection: when the conversation carries an api_key_id
     // override, resolve the profile's credential from that key instead (its
     // provider + base_url too). The matching model comes separately from
-    // workspace.model_override (resolveTaskModel) — the (model, key) pair is
-    // set together by the picker, NOT guaranteed at this layer; a mismatched
-    // pair would just error at the provider. The cross-model-switch replay
+    // workspace.model_override (resolveTaskModel) — the picker always sets the
+    // (model, key) pair together, and resolveTaskModel drops the model when
+    // this key couldn't be loaded (profile-key fallback). The cross-model-switch replay
     // handles the SDK session reset when the model id changes.
     const workspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
     const apiKeyIdOverride = workspace?.api_key_id_override ?? null;

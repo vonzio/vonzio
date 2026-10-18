@@ -347,6 +347,7 @@ export class ProfileService {
     let resolvedApiKey: string | undefined;
     let resolvedProvider: ProfileProvider = "api_key";
     let resolvedBaseUrl: string | undefined;
+    let resolvedApiKeyId: string | undefined;
 
     const effectiveKeyId = opts?.apiKeyIdOverride || profile.api_key_id;
     if (this.apiKeyService && effectiveKeyId) {
@@ -366,6 +367,7 @@ export class ProfileService {
         resolvedApiKey = apiKey.api_key;
         resolvedProvider = apiKey.provider;
         resolvedBaseUrl = apiKey.base_url ?? undefined;
+        resolvedApiKeyId = resolvedKeyId;
 
         // OAuth-subscription refresh-before-use: rotate a near-expiry access
         // token before the turn (single-flight; see refreshCodexKeyIfNeeded).
@@ -386,6 +388,7 @@ export class ProfileService {
       resolved_api_key: resolvedApiKey,
       resolved_provider: resolvedProvider,
       resolved_base_url: resolvedBaseUrl,
+      resolved_api_key_id: resolvedApiKeyId,
     };
   }
 
