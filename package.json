@@ -2,7 +2,7 @@
   "name": "vonzio",
   "version": "0.1.0",
   "private": true,
-  "description": "vonzio core — open-source Claude Code agent runtime + dashboard.",
+  "description": "vonzio core \u2014 open-source Claude Code agent runtime + dashboard.",
   "license": "AGPL-3.0-or-later",
   "homepage": "https://vonzio.com",
   "repository": {
@@ -48,6 +48,7 @@
     "tsx": {
       "esbuild": "0.28.1"
     },
-    "shell-quote": "^1.8.4"
+    "shell-quote": "^1.8.4",
+    "undici": "^8.10.2"
   }
 }
