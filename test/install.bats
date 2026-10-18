@@ -512,3 +512,35 @@ setup() {
   [[ "$output" == *"Install failed"* ]]
   [[ "$output" == *"re-running is safe"* ]]
 }
+
+@test "purge_orphaned_session_volumes: sweeps vonzio-ws/sdk/dind volumes once no server remains" {
+  CALLS="$BATS_TEST_TMPDIR/calls"; : > "$CALLS"; export CALLS
+  docker() {
+    case "$1 $2" in
+      "ps -a") return 0 ;;                                   # no containers at all → no servers remain
+      "volume ls") printf 'vonzio-ws-abc\nvonzio-sdk-abc\nvonzio-dind-abc\nbuddi-trial\nvonzio_pgdata\n' ;;
+      "volume rm") shift 2; printf '%s\n' "$@" >> "$CALLS" ;;
+    esac
+    return 0
+  }
+  export -f docker
+  run purge_orphaned_session_volumes
+  [ "$status" -eq 0 ]
+  grep -qx 'vonzio-ws-abc' "$CALLS" && grep -qx 'vonzio-sdk-abc' "$CALLS" && grep -qx 'vonzio-dind-abc' "$CALLS"
+  ! grep -q 'buddi-trial' "$CALLS" && ! grep -q 'vonzio_pgdata' "$CALLS"
+}
+
+@test "purge_orphaned_session_volumes: leaves session volumes alone while another server exists" {
+  CALLS="$BATS_TEST_TMPDIR/calls2"; : > "$CALLS"; export CALLS
+  docker() {
+    case "$1 $2" in
+      "ps -a") printf 'ghcr.io/vonzio/vonzio/server:0.5.13\npostgres:17-alpine\n' ;;
+      "volume ls") printf 'vonzio-ws-abc\n' ;;
+      "volume rm") shift 2; printf '%s\n' "$@" >> "$CALLS" ;;
+    esac
+    return 0
+  }
+  export -f docker
+  run purge_orphaned_session_volumes
+  [ "$status" -eq 0 ] && [[ "$output" == *"Other vonzio instances"* ]] && [ ! -s "$CALLS" ]
+}

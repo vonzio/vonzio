@@ -1,12 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 import "./login.css";
+import { authClient } from "../lib/auth-client.js";
 
 /**
  * OSS first-run setup wizard. Renders when REGISTRATION_ENABLED=false and
  * no users exist in the database. POSTs to /api/setup to create the lone
- * admin account, then full-reloads to /login. The wizard route 409s for
- * any subsequent visit; users land on /login from then on.
+ * admin account, signs that account in with the same credentials, then
+ * full-reloads into /onboarding. If the sign-in step fails for any reason
+ * the user lands on /login with the account already created. The wizard
+ * route 409s for any subsequent visit.
  *
  * Visually mirrors pages/Login.tsx (same .sodium-shell + login.css) so the
  * first impression matches the rest of the dashboard chrome.
@@ -36,9 +39,12 @@ export function Setup() {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      // Full reload so /api/config refetches setupNeeded=false and the
-      // catch-all stops redirecting back here.
-      window.location.href = "/login";
+      // Sign the fresh admin in so the first run is setup → onboarding,
+      // not setup → login → onboarding. Full reload either way so
+      // /api/config refetches setupNeeded=false and the catch-all stops
+      // redirecting back here.
+      const { error: signInError } = await authClient.signIn.email({ email, password });
+      window.location.href = signInError ? "/login" : "/onboarding";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Setup failed");
       setSubmitting(false);

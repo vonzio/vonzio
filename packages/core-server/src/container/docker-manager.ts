@@ -530,7 +530,10 @@ export class DockerManager implements ContainerManager {
   }
 
   async createNamedVolume(name: string): Promise<void> {
-    await this.docker.createVolume({ Name: name });
+    // Labelled so `install.sh --uninstall --purge` (and operators) can find
+    // per-session volumes, which are named by session id rather than by
+    // compose project.
+    await this.docker.createVolume({ Name: name, Labels: { [MANAGED_LABEL]: MANAGED_VALUE } });
   }
 
   async removeNamedVolume(name: string): Promise<void> {
