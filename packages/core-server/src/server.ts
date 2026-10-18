@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { LOG_REDACT_PATHS } from "./auth/log-redaction.js";
 import { join, dirname, resolve } from "node:path";
 import { serveDashboardIndex, widgetFrameAncestors, previewFrameSrc } from "./dashboard-csp.js";
 import { assertDashboardParity } from "./plugins/parity-check.js";
@@ -109,7 +110,12 @@ export async function buildServer(deps: ServerDeps) {
   const { config, db, handle, pool: pgPool, containerManager } = deps;
 
   const server = Fastify({
-    logger: { level: config.LOG_LEVEL },
+    logger: {
+      level: config.LOG_LEVEL,
+      // Backstop: never let cookies, auth headers or set-cookie values
+      // reach the log stream even if a handler logs a request object.
+      redact: { paths: LOG_REDACT_PATHS, censor: "[redacted]" },
+    },
     // Accept OpenAPI annotation keywords (example, examples, etc.)
     // in route schemas. See ajvOptions for rationale. Sharing the
     // constant keeps the boot smoke test in sync with reality.
