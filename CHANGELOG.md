@@ -7,6 +7,13 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Added
 
+- **Sign-in flows run on byok too.** The Claude subscription PKCE flow and
+  the ChatGPT device flow now come from `@amenophis1er/byok/core/auth`; the
+  two vonzio services keep only what a server owns (the encrypted, user-bound
+  pending sign-in token, the stored expiry threshold, the curated Codex
+  fallback list). The `ANTHROPIC_OAUTH_*` and `CODEX_OAUTH_*` endpoint and
+  client-id overrides are gone with the hand-written flows.
+
 - **The in-container gateway runs on byok.** `docker/llm-gateway.cjs` (1,368
   lines of hand-written Anthropic↔OpenAI/Codex translation) and
   `docker/ollama-proxy.cjs` are replaced by one daemon, `packages/llm-gateway`,

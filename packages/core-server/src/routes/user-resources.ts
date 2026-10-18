@@ -534,7 +534,7 @@ export const userResourceRoutes = fp(
       if (!device_auth_id || !user_code) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "device_auth_id and user_code are required"));
       }
-      const { pollDeviceToken, exchangeAuthCode, CODEX_DEVICE_REDIRECT_URI } = await import("../services/codex-oauth-service.js");
+      const { pollDeviceToken, exchangeAuthCode } = await import("../services/codex-oauth-service.js");
       const poll = await pollDeviceToken(device_auth_id, user_code);
       if (poll.status === "pending" || poll.status === "slow_down") {
         return { status: poll.status };
@@ -543,7 +543,7 @@ export const userResourceRoutes = fp(
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, `login denied: ${poll.error}`));
       }
       // authorized → exchange (device redirect URI) and persist the credential.
-      const tokens = await exchangeAuthCode({ code: poll.authorizationCode, codeVerifier: poll.codeVerifier, redirectUri: CODEX_DEVICE_REDIRECT_URI });
+      const tokens = await exchangeAuthCode({ code: poll.authorizationCode, codeVerifier: poll.codeVerifier });
       const key = await apiKeyService.create(
         { name: name?.trim() || "My ChatGPT subscription", provider: "openai_subscription", api_key: tokens.accessToken, auth_token: tokens.refreshToken },
         request.user!.id,
@@ -565,7 +565,7 @@ export const userResourceRoutes = fp(
     server.post("/v1/anthropic-keys/claude/start", async (request, reply) => {
       const { startOAuth } = await import("../services/anthropic-oauth-service.js");
       try {
-        return startOAuth(request.user!.id, opts.encryptionKey);
+        return await startOAuth(request.user!.id, opts.encryptionKey);
       } catch (e) {
         return reply.code(502).send(errorResponse(ErrorCodes.BAD_REQUEST, e instanceof Error ? e.message : "sign-in failed to start"));
       }

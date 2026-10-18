@@ -33,7 +33,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@amenophis1er/byok": "^0.1.5",
+    "@amenophis1er/byok": "^0.1.6",
     "@fastify/cors": "^11.3.0",
     "@fastify/multipart": "^10.1.0",
     "@fastify/static": "^10.1.3",
