@@ -28,7 +28,7 @@ import { SessionRegistry, VOLUME_PREFIX_WORKSPACE, VOLUME_PREFIX_SDK, VOLUME_PRE
 import { WorkspaceProvisioner } from "../container/workspace.js";
 import { AgentCommunicator, type AgentMessage, type TaskPayload, type GoalVerdict, type GoalStopReason } from "./agent-comms.js";
 import { decideGoalNext } from "./goal-loop.js";
-import { modelHostsFromEnv, planEgress, buildProxyEnv, routeModelThroughGateway, internalServerHost } from "./egress.js";
+import { modelHostsFromEnv, modelEndpointsFromEnv, planEgress, buildProxyEnv, routeModelThroughGateway, internalServerHost } from "./egress.js";
 import { judgeServerSide } from "./judge-server.js";
 import type { EventLog } from "../events/event-log.js";
 import { RetryHandler } from "./retry.js";
@@ -180,6 +180,9 @@ export interface OrchestratorDeps {
     egressEnforcement?: boolean;
     egressProxyNetwork?: string;
     egressProxySecret?: string;
+    /** Server-wide hosts merged into every enforced agent's allowlist (built-in
+     *  list + EGRESS_ALLOWED_HOSTS — see egressBaseline). */
+    egressBaseline?: string[];
     /** Docker-in-Docker access (feature 0001). "off" disables it regardless of
      *  any profile's docker_access flag; a nested mode enables it host-wide. */
     dockerAccessMode?: "off" | "dind-privileged" | "sysbox";
@@ -2845,7 +2848,7 @@ export class Orchestrator extends EventEmitter {
     // Force the native-Anthropic model call through the proxy-aware gateway
     // BEFORE deriving model hosts, so api.anthropic.com ends up in the allowlist.
     routeModelThroughGateway(env);
-    const plan = planEgress(egressDomains, modelHostsFromEnv(env));
+    const plan = planEgress(egressDomains, modelHostsFromEnv(env), this.deps.config.egressBaseline ?? []);
 
     const proxy = await this.ensureEgressProxy();
     if (!proxy) throw new Error("egress enforcement enabled but proxy unavailable");
@@ -2863,6 +2866,10 @@ export class Orchestrator extends EventEmitter {
       // the egress proxy's deny-by-default allowlist blocks them and the built-in
       // MCP servers never connect.
       noProxyHosts: internalServerHost(this.deps.config.internalServerUrl),
+      // The configured model endpoint may sit on a private address / custom
+      // port (LAN Ollama, self-hosted OpenAI-compatible server) — the proxy
+      // allows exactly these host:port pairs past its public-IP/port checks.
+      modelEndpoints: modelEndpointsFromEnv(env),
     }));
     return { networkMode: proxy.networkName };
   }

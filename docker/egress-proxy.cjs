@@ -52,8 +52,12 @@ const { isIP } = require("net");
 
 // ---------------------------------------------------------------------------
 // Token: payload_b64url "." hmac_b64url. payload = JSON { d: string[] }.
-// `d` is the resolved allowlist (profile defaults ∪ task overrides ∪ model
-// host). A literal "*" means allow any HOSTNAME (private-IP block still
+// `d` is the resolved allowlist (server baseline ∪ profile defaults ∪ task
+// overrides ∪ model host). Optional `m` lists the agent's configured model
+// endpoints as exact "host:port" pairs: those may use any port and may resolve
+// to a private address (a LAN / self-hosted model server the operator
+// configured), but never to link-local/metadata. Everything else in `d` is
+// still public-IP + EGRESS_PROXY_PORTS only. A literal "*" means allow any HOSTNAME (private-IP block still
 // applies); in practice "*" agents bypass the proxy entirely upstream.
 // ---------------------------------------------------------------------------
 
@@ -66,8 +70,9 @@ function b64url(buf) {
  * `exp` (unix seconds) so a leaked token can't be replayed forever — the
  * orchestrator signs one per task, whose lifetime is bounded.
  */
-function signToken(domains, secret, ttlSeconds) {
+function signToken(domains, secret, ttlSeconds, modelEndpoints) {
   const claims = { d: domains };
+  if (Array.isArray(modelEndpoints) && modelEndpoints.length) claims.m = modelEndpoints;
   if (ttlSeconds && ttlSeconds > 0) {
     claims.exp = Math.floor(Date.now() / 1000) + Math.floor(ttlSeconds);
   }
@@ -77,7 +82,7 @@ function signToken(domains, secret, ttlSeconds) {
 }
 
 /**
- * Verify + decode a token. Returns { domains } on success or null on any
+ * Verify + decode a token. Returns { domains, models } on success or null on any
  * failure (bad shape, bad signature, unparseable payload, expired). Constant-
  * time signature comparison. `nowSeconds` is injectable for tests.
  */
@@ -103,7 +108,8 @@ function verifyToken(token, secret, nowSeconds) {
     if (now >= parsed.exp) return null; // expired
   }
   const domains = Array.isArray(parsed && parsed.d) ? parsed.d.filter((x) => typeof x === "string") : [];
-  return { domains };
+  const models = Array.isArray(parsed && parsed.m) ? parsed.m.filter((x) => typeof x === "string") : [];
+  return { domains, models };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +233,46 @@ function isBlockedIp(ip) {
   return false;
 }
 
+/**
+ * The subset of isBlockedIp that stays blocked even for a configured model
+ * endpoint: unspecified, loopback (the proxy's own), link-local (incl. the
+ * 169.254.169.254 cloud metadata service) and multicast. Private RFC1918 /
+ * CGNAT / ULA ranges are allowed there so a LAN or self-hosted model server
+ * (or another container on the stack's network) works under enforcement.
+ */
+function isMetadataIp(ip) {
+  const family = isIP(ip);
+  if (family === 0) return true;
+  if (family === 4) {
+    const [a, b] = ip.split(".").map(Number);
+    if (a === 0) return true;
+    if (a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+  const g = expandIPv6(ip);
+  if (!g) return true;
+  const embeddedV4 = () =>
+    `${(g[6] >> 8) & 0xff}.${g[6] & 0xff}.${(g[7] >> 8) & 0xff}.${g[7] & 0xff}`;
+  const hi5Zero = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0;
+  if (hi5Zero && g[5] === 0 && g[6] === 0 && g[7] === 0) return true; // ::
+  if (hi5Zero && (g[5] === 0xffff || g[5] === 0)) return isMetadataIp(embeddedV4());
+  if (g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) {
+    return isMetadataIp(embeddedV4());
+  }
+  if ((g[0] & 0xffc0) === 0xfe80) return true;
+  if ((g[0] & 0xff00) === 0xff00) return true;
+  return false;
+}
+
+/** True when host:port is one of the token's configured model endpoints. */
+function isModelEndpoint(host, port, models) {
+  if (!host || !Array.isArray(models)) return false;
+  const want = `${host.toLowerCase()}:${port}`;
+  return models.some((m) => String(m).toLowerCase() === want);
+}
+
 /** Parse a CONNECT target ("host:port" — host may be a bracketed IPv6). */
 function parseConnectTarget(target) {
   if (typeof target !== "string" || !target) return null;
@@ -244,18 +290,20 @@ function parseConnectTarget(target) {
 /**
  * Resolve a hostname to a single connectable IP, refusing if it resolves to a
  * blocked range (rebind defense — ALL records are checked). IP literals are
- * checked directly. Returns { ip, family } or throws.
+ * checked directly. `opts.allowPrivate` (configured model endpoints only)
+ * narrows the check to isMetadataIp. Returns { ip, family } or throws.
  */
-async function resolveSafe(host) {
+async function resolveSafe(host, opts) {
+  const blocked = opts && opts.allowPrivate ? isMetadataIp : isBlockedIp;
   const literal = isIP(host);
   if (literal) {
-    if (isBlockedIp(host)) throw new Error(`blocked IP ${host}`);
+    if (blocked(host)) throw new Error(`blocked IP ${host}`);
     return { ip: host, family: literal };
   }
   const records = await dns.lookup(host, { all: true });
   if (!records.length) throw new Error(`no DNS records for ${host}`);
   for (const r of records) {
-    if (isBlockedIp(r.address)) throw new Error(`${host} resolves to blocked IP ${r.address}`);
+    if (blocked(r.address)) throw new Error(`${host} resolves to blocked IP ${r.address}`);
   }
   return { ip: records[0].address, family: records[0].family };
 }
@@ -333,9 +381,11 @@ function authorize(headerValue, host, port, ctx) {
   const token = tokenFromProxyAuth(headerValue);
   const verified = verifyToken(token, ctx.secret);
   if (!verified) return { ok: false, code: 407, msg: "missing or invalid proxy credentials" };
+  // The agent's own model endpoint (exact host:port): any port, private IPs ok.
+  if (isModelEndpoint(host, port, verified.models)) return { ok: true, allowPrivate: true };
   if (!ctx.allowedPorts.has(port)) return { ok: false, code: 403, msg: `port ${port} not allowed` };
   if (!hostMatches(host, verified.domains)) return { ok: false, code: 403, msg: `${host} not in egress allowlist` };
-  return { ok: true };
+  return { ok: true, allowPrivate: false };
 }
 
 async function handleConnect(req, clientSocket, head, ctx) {
@@ -347,7 +397,7 @@ async function handleConnect(req, clientSocket, head, ctx) {
   }
   let resolved;
   try {
-    resolved = await resolveSafe(target.host);
+    resolved = await resolveSafe(target.host, { allowPrivate: auth.allowPrivate });
   } catch (err) {
     return writeConnectError(clientSocket, 403, err.message);
   }
@@ -397,7 +447,7 @@ async function handleHttp(req, res, ctx) {
   if (!auth.ok) return deny(res, auth.code, auth.msg);
   let resolved;
   try {
-    resolved = await resolveSafe(url.hostname);
+    resolved = await resolveSafe(url.hostname, { allowPrivate: auth.allowPrivate });
   } catch (err) {
     return deny(res, 403, err.message);
   }
@@ -430,6 +480,9 @@ module.exports = {
   verifyToken,
   hostMatches,
   isBlockedIp,
+  isMetadataIp,
+  isModelEndpoint,
+  authorize,
   parseConnectTarget,
   tokenFromProxyAuth,
   resolveSafe,

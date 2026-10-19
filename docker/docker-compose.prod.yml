@@ -76,12 +76,14 @@ services:
       - AGENT_IMAGE=vonzio-agent:latest
       - DOCKER_ENABLED=true
       - DOCKER_NETWORK=vonzio-network
-      # Egress enforcement (feature 0005). OFF by default; to enable, set
-      # EGRESS_ENFORCEMENT=1 AND start the egress-proxy service via the profile
-      # (COMPOSE_PROFILES=egress) — agents then sit on the internal network and
-      # reach the internet only through that proxy. EGRESS_PROXY_NETWORK must
-      # match the compose network name (default vonzio-egress).
-      - EGRESS_ENFORCEMENT=${EGRESS_ENFORCEMENT:-false}
+      # Egress enforcement (feature 0005). ON by default — agents sit on the
+      # internal network and reach the internet only through the egress-proxy
+      # service (base file). Opt out with EGRESS_ENFORCEMENT=0.
+      # EGRESS_PROXY_NETWORK must match the compose network name (default
+      # vonzio-egress).
+      - EGRESS_ENFORCEMENT=${EGRESS_ENFORCEMENT:-true}
+      - EGRESS_ALLOWED_HOSTS=${EGRESS_ALLOWED_HOSTS:-}
+      - EGRESS_BUILTIN_ALLOWLIST=${EGRESS_BUILTIN_ALLOWLIST:-true}
       - EGRESS_PROXY_NETWORK=${EGRESS_PROXY_NETWORK:-vonzio-egress}
       # Docker-in-Docker access (feature 0001). OFF by default. Set to
       # dind-privileged (own-box only; needs a direct docker socket, not the

@@ -249,6 +249,52 @@ setup() {
   ( set -e; setup_env )   # subshell exits non-zero → test fails if the bug is back
 }
 
+# ─── egress enforcement upgrade guard ─────────────────────────────────
+# Fresh installs get EGRESS_ENFORCEMENT=1 from .env.example; a kept .env from
+# before the default flipped must NOT silently turn enforcement on.
+_egress_compose() {
+  mkdir -p docker
+  printf '      - EGRESS_ENFORCEMENT=${EGRESS_ENFORCEMENT:-%s}\n' "$1" > docker/docker-compose.yml
+}
+
+@test "setup_env: kept pre-egress .env is pinned to EGRESS_ENFORCEMENT=0 on upgrade" {
+  cd "$BATS_TEST_TMPDIR"
+  _egress_compose true
+  printf 'ENCRYPTION_KEY=x\n' > .env
+  RESET_ENV=false PORTS_BUMPED=false INSTALL_DIR="$PWD"
+  ( set -e; setup_env ) >/dev/null 2>&1 &&
+    grep -qx 'EGRESS_ENFORCEMENT=0' .env
+}
+
+@test "setup_env: an explicit EGRESS_ENFORCEMENT in a kept .env is left alone" {
+  cd "$BATS_TEST_TMPDIR"
+  _egress_compose true
+  printf 'ENCRYPTION_KEY=x\nEGRESS_ENFORCEMENT=1\n' > .env
+  RESET_ENV=false PORTS_BUMPED=false INSTALL_DIR="$PWD"
+  ( set -e; setup_env ) >/dev/null 2>&1 &&
+    grep -qx 'EGRESS_ENFORCEMENT=1' .env &&
+    [ "$(grep -c '^EGRESS_ENFORCEMENT=' .env)" -eq 1 ]
+}
+
+@test "setup_env: no pin when the fetched compose still defaults egress off (version skew)" {
+  cd "$BATS_TEST_TMPDIR"
+  _egress_compose false
+  printf 'ENCRYPTION_KEY=x\n' > .env
+  RESET_ENV=false PORTS_BUMPED=false INSTALL_DIR="$PWD"
+  ( set -e; setup_env ) >/dev/null 2>&1 &&
+    ! grep -q '^EGRESS_ENFORCEMENT=' .env
+}
+
+@test "setup_env: a fresh .env keeps the .env.example default (enforcement on)" {
+  cd "$BATS_TEST_TMPDIR"
+  _egress_compose true
+  rm -f .env
+  printf 'ENCRYPTION_KEY=\nBETTER_AUTH_SECRET=\nPOSTGRES_PASSWORD=\nEGRESS_ENFORCEMENT=1\n' > .env.example
+  RESET_ENV=false PORTS_BUMPED=false INSTALL_DIR="$PWD" PROJECT=vonzio
+  ( set -e; setup_env ) >/dev/null 2>&1 &&
+    grep -qx 'EGRESS_ENFORCEMENT=1' .env
+}
+
 # ─── detect_platform ───────────────────────────────────────────────────
 @test "detect_platform: Darwin -> macos" {
   uname() { echo "Darwin"; }

@@ -240,6 +240,21 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
   instead of the SDK's own pick. The model list endpoints return the chosen
   `default_model`, which onboarding pre-selects; the keyless Claude fallback
   list and the static ChatGPT list are updated to match.
+- **Agent egress is enforced by default.** New installs run every agent on an
+  internal network whose only way out is the `egress-proxy` service, now
+  started by the base compose file and pulled as
+  `ghcr.io/vonzio/vonzio/egress-proxy:<release>` on a pull install (before,
+  the pull stack shipped enforcement off and had no proxy image to turn it on
+  with). Agents reach their model endpoint, a built-in list of model
+  providers, package registries (npm, PyPI, crates.io, Go, Maven, Gradle,
+  RubyGems) and git hosts (GitHub, GitLab, Bitbucket), plus the new
+  `EGRESS_ALLOWED_HOSTS` and each agent's own Network egress list; everything
+  else gets a 403. A configured model endpoint is allowed on its exact
+  host and port even on a private address, so LAN and self-hosted model
+  servers keep working; loopback and cloud metadata stay blocked.
+  `EGRESS_BUILTIN_ALLOWLIST=false` drops the built-in list, and
+  `EGRESS_ENFORCEMENT=0` turns enforcement off. The warm container pool is
+  no longer pre-filled under enforcement, since enforced tasks never use it.
 
 - **Self-hosted copy no longer assumes Anthropic or the hosted service.** The
   Settings › Keys header and the agent template "Needs" lists are
@@ -257,6 +272,12 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Upgrade notes
 
+- **Egress enforcement stays off on upgraded installs.** Re-running the
+  installer over an existing `.env` with no `EGRESS_ENFORCEMENT` line writes
+  `EGRESS_ENFORCEMENT=0`, so agents keep the open internet they had. Set it to
+  `1` to opt in. If you run the compose files yourself without the installer,
+  the server now defaults to on: set `EGRESS_ENFORCEMENT=0` in `.env` to keep
+  the old behavior. Host-mode dev (`make api`) runs with enforcement off.
 - **Existing Teller enrollments are preserved but become unmanaged without the
   plugin.** Rows in `user_integrations` with `type = "teller"` are left untouched
   (no data migration). After upgrading, the dashboard no longer renders or lets

@@ -16,7 +16,7 @@ on top of the defaults; pick the ones that match your threat model.
 
 - [ ] Run agent containers under gVisor or Kata Containers
 - [ ] Front the Docker socket with `docker-socket-proxy`
-- [ ] Set restrictive egress firewall rules on agent containers
+- [ ] Keep egress enforcement on (the default) and trim the allowlist to what your agents need
 - [ ] Rotate `BETTER_AUTH_SECRET` and OAuth client secrets on a schedule
 - [ ] Encrypt the Postgres data volume at rest
 - [ ] Terminate TLS in front of core-server (reverse proxy or load balancer)
@@ -82,23 +82,66 @@ running with the raw socket — usually nothing for the OSS use case.
 
 ## Restrict agent egress
 
-By default, agent containers can reach any host the Docker network
-allows. For agents that should only talk to specific LLM endpoints and
-nothing else, attach them to a custom network with explicit egress
-rules.
+Egress enforcement is **on by default**. Every agent container runs on an
+internal Docker network (`<project>-egress`, `internal: true`) with no route
+to the internet and no external DNS. Its only way out is the `egress-proxy`
+service, an explicit HTTP(S) proxy that reads the `CONNECT` host (no TLS
+interception), resolves it itself, refuses private/link-local/metadata
+addresses, and allows only the hosts in the agent's signed allowlist:
 
-Option A — Docker user-defined network with iptables rules on the host:
+1. **The agent's model endpoint** — the host of its provider (Anthropic,
+   OpenAI or your OpenAI-compatible base URL, ChatGPT subscription, Ollama,
+   OpenCode). The configured endpoint is allowed on its exact `host:port`,
+   even on a private address or a custom port, so a LAN / self-hosted model
+   server keeps working. Loopback and link-local (cloud metadata) stay
+   blocked.
+2. **The built-in list** (each entry includes its subdomains):
+   - model providers: `api.anthropic.com`, `api.openai.com`, `chatgpt.com`,
+     `ollama.com`, `opencode.ai`
+   - git hosts: `github.com`, `githubusercontent.com`, `gitlab.com`,
+     `bitbucket.org`
+   - package registries: `registry.npmjs.org`, `registry.yarnpkg.com`,
+     `pypi.org`, `files.pythonhosted.org`, `crates.io`, `proxy.golang.org`,
+     `sum.golang.org`, `repo.maven.apache.org`, `repo1.maven.org`,
+     `plugins.gradle.org`, `rubygems.org`
+3. **`EGRESS_ALLOWED_HOSTS`** — extra hosts for every agent on this server.
+4. **The agent's own list** — Agents → Edit → Network egress. Turning
+   *Restrict network egress* off there (`["*"]`) exempts that one agent.
+
+Everything else is refused (HTTP 403 from the proxy), including `curl` in a
+shell. Ports are limited to 80/443 except for the model endpoint.
 
 ```bash
-# Allow only Anthropic + the org's MCP endpoint
-iptables -I DOCKER-USER -s 172.20.0.0/16 -d api.anthropic.com -j ACCEPT
-iptables -I DOCKER-USER -s 172.20.0.0/16 -d <your-mcp-host> -j ACCEPT
-iptables -I DOCKER-USER -s 172.20.0.0/16 -j DROP
+# .env
+EGRESS_ALLOWED_HOSTS=docs.python.org,artifacts.internal.example.com
+# Strict: drop the built-in list (model endpoint + the lists above only)
+EGRESS_BUILTIN_ALLOWLIST=false
+# Opt out entirely: agents get unrestricted internet
+EGRESS_ENFORCEMENT=0
 ```
 
-Option B — pin agents to a VPN-attached sidecar (vonzio's built-in
-Tailscale tunnel feature already supports this; see the Tunnels section
-in the dashboard).
+Re-run `make docker-pull-oss` (or the installer) after changing `.env`.
+Allowlist changes apply to **new** chats; a running chat keeps the rules its
+container was created with.
+
+**Upgrading an install from before this default:** the installer keeps
+enforcement **off** for an existing `.env` that has no `EGRESS_ENFORCEMENT`
+line (it writes `EGRESS_ENFORCEMENT=0` and prints a notice), so an upgrade
+never cuts agents off unannounced. Set it to `1` to opt in.
+
+**Exceptions and limits:**
+
+- Workspaces with `docker_access` (nested Docker) and agents on a VPN tunnel
+  bypass the proxy — a nested daemon ignores proxy settings, and the VPN
+  already constrains egress.
+- Allowed hosts are matched on the `CONNECT` target, not the inner TLS SNI,
+  so a disallowed site co-hosted on the same IP as an allowed one could be
+  reached. Allowing `github.com` also means an agent can push data to any
+  repository its token reaches — trim the list if that matters to you.
+- Host-mode dev (`make api`) has no proxy and runs with enforcement off.
+
+For defense in depth on top of the proxy, pin agents to a VPN-attached
+sidecar (Tunnels in the dashboard) or add host firewall rules.
 
 ## Secret rotation
 

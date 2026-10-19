@@ -96,7 +96,7 @@ flowchart TB
     CS["<b>core-server</b> · Fastify<br/>Better Auth · Drizzle · Orchestrator<br/>Container pool · MCP runtime · plugins<br/><i>also serves the dashboard + widget</i>"]
     PG[("Postgres")]
     DSP["docker-socket-proxy"]
-    EG["egress-proxy<br/><i>SNI/Host allowlist<br/>(when enforcement is on)</i>"]
+    EG["egress-proxy<br/><i>host allowlist<br/>(on by default)</i>"]
     subgraph AGENT["Agent container · one per conversation"]
       RUN["agent-runner"]
       WS["/workspace<br/>bind-mount or named volume"]
@@ -130,9 +130,10 @@ flowchart TB
    `/workspace` mount is a bind-mounted host dir for one-shot tasks, or a **named volume**
    for persistent sessions (so files survive container recycling).
 3. core-server **execs** into the container, streaming the request as stdin JSON;
-   `agent-runner` calls your configured **LLM provider** — through the **egress proxy** when
-   enforcement is on (which permits the model endpoint + the profile's allowlist and blocks
-   everything else) — and streams tokens/tool calls back on stdout, relayed to the client WS.
+   `agent-runner` calls your configured **LLM provider** — through the **egress proxy**, on by
+   default (it permits the model endpoint, a built-in list of package registries and git hosts,
+   and the agent's own allowlist, and blocks everything else) — and streams tokens/tool calls
+   back on stdout, relayed to the client WS.
 4. core-server logs every event (token, tool call, file write) and persists the session so
    the next message resumes in the same container with the same memory.
 
