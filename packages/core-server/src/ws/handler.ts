@@ -218,6 +218,7 @@ export function setupWsHandler(
             apiKey: resolved?.resolved_api_key,
             provider: resolved?.resolved_provider,
             baseUrl: resolved?.resolved_base_url,
+            accountId: resolved?.resolved_account_id,
             // Prefer the model that ACTUALLY produced this turn. It is consistent
             // with resolved_provider (the same api_key_id_override ran it). Using
             // model_override ?? resolved.model can desync from the provider: with

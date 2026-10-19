@@ -1,4 +1,4 @@
-export const PROFILE_PROVIDERS = ["api_key", "ollama", "openai", "claude_subscription", "openai_subscription"] as const;
+export const PROFILE_PROVIDERS = ["api_key", "ollama", "openai", "claude_subscription", "openai_subscription", "opencode"] as const;
 export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
 
 /**
@@ -11,7 +11,7 @@ export type ProfileProvider = (typeof PROFILE_PROVIDERS)[number];
  */
 export interface ProviderInfo {
   /** UI discriminator used by the onboarding/settings forms. */
-  kind: "anthropic_key" | "openai" | "ollama" | "anthropic_oauth" | "openai_oauth";
+  kind: "anthropic_key" | "openai" | "ollama" | "anthropic_oauth" | "openai_oauth" | "opencode_oauth";
   /** The stored `provider` value on the credential / profile. */
   provider: ProfileProvider;
   /** Human label shown in pickers ("Anthropic API key"). */
@@ -109,6 +109,18 @@ export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
     oauthLogin: true,
     entitlement: "subscription_oauth",
   },
+  {
+    kind: "opencode_oauth",
+    provider: "opencode",
+    label: "OpenCode (paid plan)",
+    hint: "Sign in with your OpenCode account. Runs on OpenCode's paid models; the free tier only works in OpenCode's own apps.",
+    fieldLabel: "OpenCode account",
+    placeholder: "",
+    defaultKeyName: "My OpenCode account",
+    consoleUrl: "https://opencode.ai",
+    supportsBaseUrl: false,
+    oauthLogin: true,
+  },
 ] as const;
 
 /** Look up a provider's metadata by its stored `provider` value. */
@@ -169,10 +181,13 @@ export interface AnthropicKey {
    * never in redacted listings. Undefined for key-based providers.
    */
   auth_token?: string;
-  /** OAuth access-token expiry (ISO) — Anthropic OAuth sign-in keys only.
+  /** OAuth access-token expiry (ISO) — Anthropic and OpenCode sign-in keys.
    *  Null/undefined for API keys, Codex keys (JWT-borne expiry), and legacy
    *  pasted setup-tokens. */
   token_expires_at?: string | null;
+  /** Non-secret account routing id issued with an OAuth token: the OpenCode
+   *  organization (sent as `x-opencode-org-id`). Null for every other kind. */
+  account_id?: string | null;
   /**
    * OpenAI-compatible endpoint override (non-secret). Only meaningful for
    * `provider: "openai"` — lets a single instance mix OpenAI proper with
@@ -277,6 +292,8 @@ export interface ResolvedProfile extends Profile {
   resolved_provider: ProfileProvider;
   /** OpenAI-compatible base URL from the resolved key (openai provider only). */
   resolved_base_url?: string;
+  /** Account routing id from the resolved key (opencode: the organization). */
+  resolved_account_id?: string;
   /** Id of the key the credential was actually loaded from (the conversation's
    *  override, or the profile's own key when the override could not be loaded).
    *  Undefined when no key resolved. */

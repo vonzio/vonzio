@@ -552,6 +552,57 @@ export const userResourceRoutes = fp(
       return reply.code(201).send({ status: "created", key });
     });
 
+    // ── OpenCode device sign-in ──────────────────────────────────────────
+    // Same two-step shape as ChatGPT's: `start` returns a code the user
+    // approves on opencode.ai (the page names the "vonzio" client); `poll`
+    // stores the opaque access + refresh token, their expiry and the
+    // organization id as an `opencode` key on approval.
+    server.post("/v1/anthropic-keys/opencode/start", async (_request, reply) => {
+      const { startDeviceLogin } = await import("../services/opencode-oauth-service.js");
+      try {
+        const d = await startDeviceLogin();
+        return { device_code: d.deviceCode, user_code: d.userCode, verify_url: d.verifyUrl, interval_sec: d.intervalSec };
+      } catch (e) {
+        return reply.code(502).send(errorResponse(ErrorCodes.BAD_REQUEST, e instanceof Error ? e.message : "OpenCode sign-in failed to start"));
+      }
+    });
+
+    server.post<{
+      Body: { device_code: string; name?: string };
+    }>("/v1/anthropic-keys/opencode/poll", async (request, reply) => {
+      const { device_code, name } = request.body ?? {};
+      if (!device_code) {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "device_code is required"));
+      }
+      const { pollDeviceToken } = await import("../services/opencode-oauth-service.js");
+      let poll;
+      try {
+        poll = await pollDeviceToken(device_code);
+      } catch (e) {
+        return reply.code(502).send(errorResponse(ErrorCodes.BAD_REQUEST, e instanceof Error ? e.message : "OpenCode sign-in failed"));
+      }
+      if (poll.status === "pending" || poll.status === "slow_down") {
+        return { status: poll.status };
+      }
+      if (poll.status === "denied") {
+        return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, poll.error));
+      }
+      const { tokens } = poll;
+      const key = await apiKeyService.create(
+        {
+          name: name?.trim() || "My OpenCode account",
+          provider: "opencode",
+          api_key: tokens.accessToken,
+          auth_token: tokens.refreshToken,
+          token_expires_at: tokens.expiresAt,
+          account_id: tokens.orgId ?? null,
+        },
+        request.user!.id,
+      );
+      await attachKeyToProfile(request.user!.id, request.user!.role, "opencode", key.id);
+      return reply.code(201).send({ status: "created", key });
+    });
+
     // ── Claude Pro/Max subscription OAuth sign-in ────────────────────────
     // Two-step, no polling: `start` mints PKCE state and returns Anthropic's
     // consent URL; the user approves in the browser, which then DISPLAYS a
@@ -613,6 +664,7 @@ export const userResourceRoutes = fp(
       let keyToTest = api_key && api_key.trim() && api_key !== "••••••••" ? api_key.trim() : undefined;
       let providerToTest = provider;
       let baseToTest = base_url;
+      let accountToTest: string | null | undefined;
 
       // Fall back to the stored secret when the key field is masked/blank.
       if (!keyToTest && id) {
@@ -627,6 +679,7 @@ export const userResourceRoutes = fp(
         keyToTest = stored.api_key;
         providerToTest = providerToTest ?? stored.provider;
         if (baseToTest === undefined) baseToTest = stored.base_url;
+        accountToTest = stored.account_id;
       }
 
       if (!keyToTest) {
@@ -636,7 +689,7 @@ export const userResourceRoutes = fp(
       if (nonAscii.test(keyToTest)) {
         return { valid: false, error: "Key contains a non-ASCII character — re-copy from the source." };
       }
-      return validateAnthropicKey(keyToTest, providerToTest ?? "api_key", baseToTest);
+      return validateAnthropicKey(keyToTest, providerToTest ?? "api_key", baseToTest, accountToTest);
     });
 
     server.patch<{ Params: { id: string } }>("/v1/anthropic-keys/:id", async (request, reply) => {

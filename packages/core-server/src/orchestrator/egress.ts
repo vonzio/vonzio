@@ -55,6 +55,9 @@ export function modelHostsFromEnv(env: Record<string, string>): string[] {
     const codexHost = env.LLM_GATEWAY_TARGET_URL ? safeHost(env.LLM_GATEWAY_TARGET_URL) : "chatgpt.com";
     if (codexHost) hosts.add(codexHost);
   }
+  // OpenCode: the API root is in LLM_GATEWAY_TARGET_URL (captured above); the
+  // gateway also defaults to opencode.ai when it is unset, so allow it either way.
+  if (env.LLM_GATEWAY_MODE === "opencode") hosts.add("opencode.ai");
   return [...hosts];
 }
 
@@ -70,7 +73,7 @@ function safeHost(url: string): string | null {
  *
  * No-op when the model already goes through the in-container, proxy-aware
  * gateway (every non-native provider sets LLM_GATEWAY_MODE: openai, codex,
- * ollama). Forcing those would restart the gateway in the wrong mode and
+ * opencode, ollama). Forcing those would restart the gateway in the wrong mode and
  * pollute the allowlist.
  */
 export function routeModelThroughGateway(env: Record<string, string>): void {

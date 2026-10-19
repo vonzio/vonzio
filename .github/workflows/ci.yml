@@ -137,6 +137,8 @@ jobs:
             packages/core-server/src/container/session-registry-sweep.test.ts \
             packages/core-server/src/container/ensure-running.test.ts \
             packages/core-server/src/services/anthropic-oauth-service.test.ts \
+            packages/core-server/src/services/opencode-oauth-service.test.ts \
+            packages/core-server/src/services/byok-connection.test.ts \
             packages/core-server/src/queue/queue.test.ts \
             packages/core-server/src/services/format-message.test.ts \
             packages/core-server/src/services/agent-output-rewriter.test.ts \

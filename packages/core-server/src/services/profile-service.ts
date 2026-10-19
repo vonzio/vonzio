@@ -133,6 +133,51 @@ export class ProfileService {
     return rotated.accessToken;
   }
 
+  /** OpenCode twin of refreshClaudeKeyIfNeeded: opaque tokens, expiry in the
+   *  persisted column, same single-flight map and same failure posture. */
+  private async refreshOpencodeKeyIfNeeded(keyId: string, accessToken: string, refreshToken: string, tokenExpiresAt?: string | null): Promise<string> {
+    if (!this.apiKeyService) return accessToken;
+    const { needsRefresh } = await import("./opencode-oauth-service.js");
+    if (!needsRefresh(tokenExpiresAt)) return accessToken;
+
+    let inflight = this.codexRefreshInFlight.get(keyId);
+    if (!inflight) {
+      inflight = this.doRefreshOpencodeKey(keyId, refreshToken, accessToken);
+      this.codexRefreshInFlight.set(keyId, inflight);
+      void inflight.finally(() => {
+        if (this.codexRefreshInFlight.get(keyId) === inflight) this.codexRefreshInFlight.delete(keyId);
+      });
+    }
+    return inflight;
+  }
+
+  private async doRefreshOpencodeKey(keyId: string, refreshToken: string, oldAccess: string): Promise<string> {
+    const { refreshTokens } = await import("./opencode-oauth-service.js");
+    let rotated;
+    try {
+      rotated = await refreshTokens(refreshToken);
+    } catch {
+      // Network blip, or another replica already rotated and persisted the
+      // pair: prefer a fresher stored token, else keep the current one (the
+      // skew leaves it valid for a few more minutes).
+      try {
+        const reloaded = await this.apiKeyService!.getWithSecrets(keyId);
+        if (reloaded?.api_key && reloaded.api_key !== oldAccess) return reloaded.api_key;
+      } catch { /* reload is best-effort */ }
+      return oldAccess;
+    }
+    try {
+      await this.apiKeyService!.rotateSubscriptionTokens(keyId, rotated.accessToken, rotated.refreshToken, rotated.expiresAt, rotated.orgId);
+    } catch {
+      try {
+        await this.apiKeyService!.rotateSubscriptionTokens(keyId, rotated.accessToken, rotated.refreshToken, rotated.expiresAt, rotated.orgId);
+      } catch (e) {
+        console.error(`[opencode] rotated token but failed to persist for key ${keyId} — credential may need re-linking:`, e instanceof Error ? e.message : e);
+      }
+    }
+    return rotated.accessToken;
+  }
+
   private async doRefreshCodexKey(keyId: string, refreshToken: string, oldAccess: string): Promise<string> {
     const { refreshTokens } = await import("./codex-oauth-service.js");
     let rotated;
@@ -349,6 +394,7 @@ export class ProfileService {
     let resolvedApiKey: string | undefined;
     let resolvedProvider: ProfileProvider = "api_key";
     let resolvedBaseUrl: string | undefined;
+    let resolvedAccountId: string | undefined;
     let resolvedApiKeyId: string | undefined;
 
     const effectiveKeyId = opts?.apiKeyIdOverride || profile.api_key_id;
@@ -369,6 +415,7 @@ export class ProfileService {
         resolvedApiKey = apiKey.api_key;
         resolvedProvider = apiKey.provider;
         resolvedBaseUrl = apiKey.base_url ?? undefined;
+        resolvedAccountId = apiKey.account_id ?? undefined;
         resolvedApiKeyId = resolvedKeyId;
 
         // OAuth-subscription refresh-before-use: rotate a near-expiry access
@@ -382,6 +429,10 @@ export class ProfileService {
         if (apiKey.provider === "claude_subscription" && apiKey.api_key && apiKey.auth_token) {
           resolvedApiKey = await this.refreshClaudeKeyIfNeeded(resolvedKeyId, apiKey.api_key, apiKey.auth_token, apiKey.token_expires_at);
         }
+        // OpenCode sign-in keys: opaque tokens, expiry persisted like Claude's.
+        if (apiKey.provider === "opencode" && apiKey.api_key && apiKey.auth_token) {
+          resolvedApiKey = await this.refreshOpencodeKeyIfNeeded(resolvedKeyId, apiKey.api_key, apiKey.auth_token, apiKey.token_expires_at);
+        }
       }
     }
 
@@ -390,6 +441,7 @@ export class ProfileService {
       resolved_api_key: resolvedApiKey,
       resolved_provider: resolvedProvider,
       resolved_base_url: resolvedBaseUrl,
+      resolved_account_id: resolvedAccountId,
       resolved_api_key_id: resolvedApiKeyId,
     };
   }

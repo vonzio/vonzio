@@ -4,7 +4,7 @@
  * byok owns the provider protocols (Anthropic Messages, OpenAI Chat
  * Completions / Responses, Gemini, the Codex catalog, Ollama signing). vonzio
  * owns storage, sign-in flows and the UI. This module is the one place that
- * maps an `api_keys` row — `{ provider, api_key, base_url }` — to a byok
+ * maps an `api_keys` row — `{ provider, api_key, base_url, account_id }` — to a byok
  * connection plus credential, so listing, validation, the server-side judge
  * and auto-titles all route the same way. Nothing else in core-server should
  * build provider URLs or auth headers by hand.
@@ -17,6 +17,7 @@ import { chat, listModels, type ChatOptions, type ChatRequest, type Connection }
 import type { ProfileProvider } from "@vonzio/shared";
 import { OLLAMA_BASE_URL } from "./ollama-service.js";
 import { accountIdFromJwt } from "./codex-oauth-service.js";
+import { OPENCODE_BASE, OPENCODE_FREE_TIER } from "./opencode-oauth-service.js";
 import { normalizeOpenAIBaseUrl } from "./openai-service.js";
 import { assertSocketHostAllowed, SsrfBlockedError } from "../lib/safe-webhook-fetch.js";
 
@@ -25,6 +26,8 @@ export interface StoredCredential {
   provider?: string | null;
   api_key?: string | null;
   base_url?: string | null;
+  /** opencode: the organization the token was issued for. */
+  account_id?: string | null;
 }
 
 export interface ByokTarget {
@@ -38,6 +41,8 @@ export interface ByokTarget {
  *  by validation and listing so both surfaces give identical guidance. */
 export const SUBSCRIPTION_TOKEN_INVALID =
   "Token expired or invalid — re-run `claude setup-token` and update it in Settings";
+export const OPENCODE_SESSION_INVALID =
+  "OpenCode session expired or revoked — sign in with OpenCode again";
 export const SUBSCRIPTION_LIMIT_REACHED =
   "Claude subscription limit reached — try again later";
 
@@ -76,6 +81,21 @@ export function connectionFor(key: StoredCredential): ByokTarget | null {
         family: "openai",
         credential,
         conn: { kind: "chatgpt", baseUrl: "", accountId: accountIdFromJwt(credential) },
+      };
+    case "opencode":
+      // OpenCode Console token: Bearer plus x-opencode-org-id. byok picks the
+      // protocol per model (Claude on Messages, GPT on Responses, Gemini on
+      // the Gemini API, the rest on Chat Completions) from `issuer`.
+      return {
+        family: "openai",
+        credential,
+        conn: {
+          kind: "openai-compatible",
+          baseUrl: OPENCODE_BASE,
+          auth: "oauth",
+          issuer: "opencode",
+          ...(key.account_id ? { orgId: key.account_id } : {}),
+        },
       };
     case "claude_subscription":
       // Both a `claude setup-token` (sk-ant-oat01-) and a Sign-in-with-Claude
@@ -133,6 +153,10 @@ export function describeFailure(provider: string | null | undefined, err: unknow
   const status = statusOf(message);
   const subscription = provider === "claude_subscription";
   const anthropic = subscription || provider === "api_key" || !provider;
+  if (provider === "opencode") {
+    if (status === 403) return OPENCODE_FREE_TIER;
+    if (status === 401) return OPENCODE_SESSION_INVALID;
+  }
   if (status === 401) {
     if (subscription) return SUBSCRIPTION_TOKEN_INVALID;
     return anthropic ? "Invalid API key" : message;

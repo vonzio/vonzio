@@ -679,6 +679,18 @@ export function pollCodexLogin(body: { device_auth_id: string; user_code: string
   return request("/anthropic-keys/codex/poll", { method: "POST", body: JSON.stringify(body) });
 }
 
+// --- OpenCode device sign-in ---
+
+export function startOpencodeLogin(): Promise<{ device_code: string; user_code: string; verify_url: string; interval_sec: number }> {
+  return request("/anthropic-keys/opencode/start", { method: "POST" });
+}
+
+/** Poll once: {status:"pending"|"slow_down"} while waiting, {status:"created", key}
+ *  once approved and saved. A denial or expired code is an error. */
+export function pollOpencodeLogin(body: { device_code: string; name?: string }): Promise<{ status: string; key?: UserAnthropicKey }> {
+  return request("/anthropic-keys/opencode/poll", { method: "POST", body: JSON.stringify(body) });
+}
+
 // --- Claude Pro/Max subscription OAuth sign-in ---
 
 export function startClaudeLogin(): Promise<{ auth_id: string; authorize_url: string }> {

@@ -7,11 +7,13 @@ Messages API, run on whichever provider the user connected. It listens on
 
 Two kinds of mode:
 
-- **byok modes** (`openai`, `codex`): each `/v1/messages` request is
+- **byok modes** (`openai`, `codex`, `opencode`): each `/v1/messages` request is
   translated to a [`@amenophis1er/byok/core`](https://github.com/amenophis1er/byok)
   `chat()` turn and the turn's events are written back as Anthropic SSE as they
   arrive. byok owns the protocols (Chat Completions, Responses, Gemini);
-  this package owns the Anthropic wire format on both ends.
+  this package owns the Anthropic wire format on both ends. In `opencode`
+  mode byok picks each model's protocol (Claude on Messages, GPT on
+  Responses, Gemini on the Gemini API, the rest on Chat Completions).
 - **passthrough modes** (`ollama`, `passthrough`): the request is forwarded
   as Anthropic Messages. Ollama Cloud serves that API natively; `passthrough`
   with `LLM_GATEWAY_PASSTHROUGH_RAW=1` is how a native-Anthropic agent reaches
@@ -19,11 +21,12 @@ Two kinds of mode:
 
 | Env | Meaning |
 |---|---|
-| `LLM_GATEWAY_MODE` | `openai` \| `codex` \| `ollama` \| `passthrough` |
-| `LLM_GATEWAY_TARGET_URL` | byok `openai`: the API root (`…/v1`); passthrough: the upstream origin |
+| `LLM_GATEWAY_MODE` | `openai` \| `codex` \| `opencode` \| `ollama` \| `passthrough` |
+| `LLM_GATEWAY_TARGET_URL` | byok `openai` / `opencode`: the API root (`…/v1`); passthrough: the upstream origin |
 | `LLM_GATEWAY_PASSTHROUGH_RAW` | `1` keeps the client's own auth headers (native Anthropic) |
 | `LLM_GATEWAY_DEFAULT_MODEL` / `/tmp/llm-gateway.model` | substitute for any `claude-*` id that reaches a non-Anthropic upstream |
 | `CODEX_ACCOUNT_ID` | fallback `chatgpt-account-id` when the token carries none |
+| `OPENCODE_ORG_ID` | opencode: the organization sent as `x-opencode-org-id` |
 | `HTTPS_PROXY` / `HTTP_PROXY` | egress proxy; honoured for every upstream call |
 
 The credential arrives per request as `x-api-key` (what the SDK sends for

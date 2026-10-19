@@ -24,6 +24,7 @@ import { authClient } from "../../../lib/auth-client.js";
 import { useUser } from "../../../contexts/UserContext.js";
 import { ErrorBanner, SubLabel } from "./_shared.js";
 import { useChatGptSignIn, ChatGptSignInPanel } from "../../../components/ChatGptSignIn.js";
+import { useOpencodeSignIn, OpencodeSignInPanel } from "../../../components/OpencodeSignIn.js";
 import { useClaudeSignIn, ClaudeSignInPanel } from "../../../components/ClaudeSignIn.js";
 
 // ───────────────────────────────────────────────────────────────────
@@ -67,6 +68,12 @@ export function AnthropicKeySection() {
 
   const startCodexSignIn = () => { setCodexOpen(true); codex.start(); };
   const closeCodex = () => { codex.cancel(); setCodexOpen(false); };
+
+  // OpenCode device sign-in — same shared device flow (components/DeviceSignIn.tsx).
+  const [opencodeOpen, setOpencodeOpen] = useState(false);
+  const opencode = useOpencodeSignIn(() => refetch());
+  const startOpencodeSignIn = () => { setOpencodeOpen(true); opencode.start(); };
+  const closeOpencode = () => { opencode.cancel(); setOpencodeOpen(false); };
 
   // Claude Pro/Max subscription OAuth sign-in — shared flow, see
   // components/ClaudeSignIn.tsx (also used by the onboarding wizard).
@@ -246,7 +253,7 @@ export function AnthropicKeySection() {
   const entitlements = useEntitlements();
   const isEntitled = (m: Pick<ProviderInfo, "entitlement">) => !m.entitlement || entitlements.includes(m.entitlement);
   const providerOpts: SelectOption[] = PROVIDER_CATALOG
-    // OAuth-login providers (ChatGPT subscription) are added via a Sign-in flow,
+    // OAuth-login providers (ChatGPT, OpenCode) are added via a Sign-in flow,
     // not a pasted token, so they don't belong in this paste-a-key picker.
     .filter((p) => !p.oauthLogin)
     // Entitlement-gated providers only show when the caller has the entitlement.
@@ -261,6 +268,8 @@ export function AnthropicKeySection() {
   const canConnectChatGPT = !!codexProviderInfo && isEntitled(codexProviderInfo);
   const claudeProviderInfo = PROVIDER_CATALOG.find((p) => p.provider === "claude_subscription");
   const canConnectClaude = !!claudeProviderInfo && isEntitled(claudeProviderInfo);
+  const opencodeProviderInfo = PROVIDER_CATALOG.find((p) => p.provider === "opencode");
+  const canConnectOpencode = !!opencodeProviderInfo && isEntitled(opencodeProviderInfo);
   const createMeta = providerInfoByProvider(provider);
   // How-to-get-a-key hint, catalog-driven: the provider's one-line instruction
   // (e.g. "Run `claude setup-token` …" for a subscription token) plus a docs
@@ -322,6 +331,9 @@ export function AnthropicKeySection() {
             )}
             {canConnectChatGPT && (
               <Button size="sm" variant="ghost" onClick={startCodexSignIn}>Sign in with ChatGPT</Button>
+            )}
+            {canConnectOpencode && (
+              <Button size="sm" variant="ghost" onClick={startOpencodeSignIn}>Sign in with OpenCode</Button>
             )}
             <Button size="sm" icon={<Plus size={14} />} onClick={() => setShowForm(true)}>Add key</Button>
           </div>
@@ -553,6 +565,15 @@ export function AnthropicKeySection() {
         footer={<Button size="sm" variant={codex.status === "created" ? "primary" : "ghost"} onClick={closeCodex}>{codex.status === "created" ? "Done" : "Cancel"}</Button>}
       >
         <ChatGptSignInPanel state={codex} />
+      </Modal>
+
+      <Modal
+        open={opencodeOpen}
+        onClose={closeOpencode}
+        title="Sign in with OpenCode"
+        footer={<Button size="sm" variant={opencode.status === "created" ? "primary" : "ghost"} onClick={closeOpencode}>{opencode.status === "created" ? "Done" : "Cancel"}</Button>}
+      >
+        <OpencodeSignInPanel state={opencode} />
       </Modal>
 
       <Modal

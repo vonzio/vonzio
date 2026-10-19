@@ -24,6 +24,8 @@ export async function validateAnthropicKey(
   key: string,
   type: ProfileProvider = "api_key",
   baseUrl?: string | null,
+  /** opencode: the organization stored with the token. */
+  accountId?: string | null,
 ): Promise<KeyValidationResult> {
   if (type === "openai_subscription") {
     const { expiryFromAccessToken } = await import("./codex-oauth-service.js");
@@ -36,7 +38,7 @@ export async function validateAnthropicKey(
   if (type === "ollama") return validateOllamaKey(key);
 
   try {
-    await listModelsFor({ provider: type, api_key: key, base_url: baseUrl });
+    await listModelsFor({ provider: type, api_key: key, base_url: baseUrl, account_id: accountId });
     return { valid: true };
   } catch (err) {
     return { valid: false, error: describeFailure(type, err) };

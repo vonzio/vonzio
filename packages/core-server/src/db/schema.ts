@@ -101,6 +101,9 @@ export const anthropicKeys = pgTable(
     /** OAuth access-token expiry (ISO). Null for plain API keys, legacy pasted
      *  setup-tokens, and Codex keys (their JWTs carry their own exp). */
     token_expires_at: text("token_expires_at"),
+    /** Non-secret account routing id issued with an OAuth token (OpenCode:
+     *  the organization, sent as x-opencode-org-id). Null for other kinds. */
+    account_id: text("account_id"),
     // OpenAI-compatible endpoint override (non-secret); null = server default.
     base_url: text("base_url"),
     created_at: text("created_at").notNull(),

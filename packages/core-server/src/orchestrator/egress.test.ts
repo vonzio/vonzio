@@ -36,6 +36,11 @@ describe("modelHostsFromEnv", () => {
     expect(modelHostsFromEnv({ LLM_GATEWAY_MODE: "codex", LLM_GATEWAY_TARGET_URL: "https://proxy.example.com/backend-api" }).sort())
       .toEqual(["proxy.example.com"]);
   });
+
+  it("allows opencode.ai for opencode mode, with or without a target URL", () => {
+    expect(modelHostsFromEnv({ LLM_GATEWAY_MODE: "opencode", ANTHROPIC_BASE_URL: "http://127.0.0.1:11434" })).toEqual(["opencode.ai"]);
+    expect(modelHostsFromEnv({ LLM_GATEWAY_MODE: "opencode", LLM_GATEWAY_TARGET_URL: "https://opencode.ai/inference/v1" })).toEqual(["opencode.ai"]);
+  });
 });
 
 describe("planEgress", () => {

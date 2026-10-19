@@ -6,7 +6,7 @@ import http from "node:http";
 import { handleByok, type ByokModeOptions } from "./byok-handler.js";
 import { handlePassthrough } from "./passthrough.js";
 
-export type GatewayMode = "openai" | "codex" | "ollama" | "passthrough";
+export type GatewayMode = "openai" | "codex" | "opencode" | "ollama" | "passthrough";
 
 export interface GatewayConfig {
   mode: GatewayMode;
@@ -14,11 +14,13 @@ export interface GatewayConfig {
   raw: boolean;
   port: number;
   codexAccountId?: string;
+  opencodeOrgId?: string;
 }
 
 const DEFAULT_TARGET: Record<GatewayMode, string> = {
   openai: "https://api.openai.com/v1",
   codex: "",
+  opencode: "https://opencode.ai/inference/v1",
   ollama: "https://ollama.com",
   passthrough: "https://api.anthropic.com",
 };
@@ -26,7 +28,7 @@ const DEFAULT_TARGET: Record<GatewayMode, string> = {
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const mode = (env.LLM_GATEWAY_MODE || "openai") as GatewayMode;
   if (!(mode in DEFAULT_TARGET)) {
-    throw new Error(`LLM_GATEWAY_MODE '${mode}' is not one of openai, codex, ollama, passthrough`);
+    throw new Error(`LLM_GATEWAY_MODE '${mode}' is not one of openai, codex, opencode, ollama, passthrough`);
   }
   return {
     mode,
@@ -34,12 +36,13 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayConf
     raw: env.LLM_GATEWAY_PASSTHROUGH_RAW === "1",
     port: parseInt(env.LLM_GATEWAY_PORT || "11434", 10),
     codexAccountId: env.CODEX_ACCOUNT_ID || undefined,
+    opencodeOrgId: env.OPENCODE_ORG_ID || undefined,
   };
 }
 
 export function createServer(config: GatewayConfig): http.Server {
-  const byok: ByokModeOptions | null = config.mode === "openai" || config.mode === "codex"
-    ? { mode: config.mode, target: config.target, codexAccountId: config.codexAccountId }
+  const byok: ByokModeOptions | null = config.mode === "openai" || config.mode === "codex" || config.mode === "opencode"
+    ? { mode: config.mode, target: config.target, codexAccountId: config.codexAccountId, opencodeOrgId: config.opencodeOrgId }
     : null;
   return http.createServer((req, res) => {
     const run = byok

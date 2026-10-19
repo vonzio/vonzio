@@ -166,6 +166,24 @@ describe("ModelListService", () => {
     svc.stop();
   });
 
+  it("lists an OpenCode sign-in live from OpenCode's API with the token and org", async () => {
+    const fetchSpy = vi.fn(async () => jsonResponse({ data: [{ id: "claude-sonnet-4-6" }, { id: "gpt-5.5" }] }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const { profileService, apiKeyService } = makeServices(
+      { id: "prof_5", name: "OpenCode", api_key_id: "key_opencode", user_id: "user_1" },
+      { provider: "opencode", api_key: "oc-token", account_id: "org_1" },
+    );
+    const svc = new ModelListService(profileService, apiKeyService);
+    const result = await svc.listForProfile("prof_5");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.models.map((m) => m.id)).toEqual(["claude-sonnet-4-6", "gpt-5.5"]);
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [URL | string, RequestInit];
+    expect(String(url)).toBe("https://opencode.ai/inference/v1/models");
+    expect(headerOf(init, "authorization")).toBe("Bearer oc-token");
+    expect(headerOf(init, "x-opencode-org-id")).toBe("org_1");
+    svc.stop();
+  });
+
   it("returns ok:true with empty models when the Ollama key is missing", async () => {
     const { profileService, apiKeyService } = makeServices(
       PROFILE_WITH_OLLAMA,
