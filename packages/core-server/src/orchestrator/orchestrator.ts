@@ -83,6 +83,7 @@ const PROVIDER_ROUTE_ENV = [
   "LLM_GATEWAY_PASSTHROUGH_RAW",
   "LLM_GATEWAY_DEFAULT_MODEL",
   "CODEX_ACCOUNT_ID",
+  "OPENCODE_ORG_ID",
   // Model-alias remaps (issue: subagent model:"haiku" on a non-Anthropic
   // provider resolves to a claude-* id the upstream rejects). Set for
   // gateway-routed providers; must reset on a switch back to Anthropic or
@@ -1190,6 +1191,7 @@ export class Orchestrator extends EventEmitter {
                   apiKey: profile.resolved_api_key,
                   provider: profile.resolved_provider,
                   baseUrl: judgeBaseUrl,
+                  accountId: profile.resolved_account_id,
                   model: judgeModel,
                 },
                 this.log,
@@ -1526,7 +1528,8 @@ export class Orchestrator extends EventEmitter {
     // is the gateway-side safety net for any claude-* id that slips through.
     const gatewayProvider = profile.resolved_provider === "ollama"
       || profile.resolved_provider === "openai"
-      || profile.resolved_provider === "openai_subscription";
+      || profile.resolved_provider === "openai_subscription"
+      || profile.resolved_provider === "opencode";
     if (gatewayProvider && model && env) {
       env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
       env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
@@ -1550,7 +1553,7 @@ export class Orchestrator extends EventEmitter {
     // skip needless restarts when nothing changed.
     if (env?.LLM_GATEWAY_MODE) {
       await this.runSetupCommands(containerId, [
-        'NEW="$LLM_GATEWAY_MODE|$LLM_GATEWAY_TARGET_URL|$LLM_GATEWAY_PASSTHROUGH_RAW"\n' +
+        'NEW="$LLM_GATEWAY_MODE|$LLM_GATEWAY_TARGET_URL|$LLM_GATEWAY_PASSTHROUGH_RAW|$OPENCODE_ORG_ID"\n' +
         'OLD="$(cat /tmp/llm-gateway.pid 2>/dev/null)"\n' +
         'if [ "$(cat /tmp/llm-gateway.target 2>/dev/null)" = "$NEW" ] && kill -0 "$OLD" 2>/dev/null; then\n' +
         "  :\n" +  // already running with the right upstream — nothing to do
@@ -2367,7 +2370,7 @@ export class Orchestrator extends EventEmitter {
     return { serveraddress: reg.url, username: reg.username, password: reg.password };
   }
 
-  private async buildEnvFromProfile(profile: { resolved_api_key?: string; resolved_provider?: string; resolved_base_url?: string; git_provider_id?: string; git_provider_ids?: string[]; id: string; user_id?: string | null; model?: string | null }): Promise<Record<string, string>> {
+  private async buildEnvFromProfile(profile: { resolved_api_key?: string; resolved_provider?: string; resolved_base_url?: string; resolved_account_id?: string; git_provider_id?: string; git_provider_ids?: string[]; id: string; user_id?: string | null; model?: string | null }): Promise<Record<string, string>> {
     // Inject the secrets granted to this profile — system vars (API key,
     // git tokens) override below. Per-agent scoping (feature #17): a secret
     // with scope='all' goes to every profile; scope='agents' only to those
@@ -2436,6 +2439,19 @@ export class Orchestrator extends EventEmitter {
       env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
       env.LLM_GATEWAY_MODE = "codex";
       env.CODEX_ACCOUNT_ID = accountIdFromJwt(profile.resolved_api_key) ?? "";
+      if (gatewayDefaultModel) env.LLM_GATEWAY_DEFAULT_MODEL = gatewayDefaultModel;
+    } else if (profile.resolved_provider === "opencode" && profile.resolved_api_key) {
+      // OpenCode sign-in: resolved_api_key is the Console access token
+      // (refreshed at resolve time by ProfileService) and reaches the gateway
+      // per request as x-api-key. The gateway's "opencode" mode runs each call
+      // as a byok turn on OpenCode's API with the org header; byok picks each
+      // model's protocol (Messages / Responses / Gemini / Chat Completions).
+      const { OPENCODE_BASE } = await import("../services/opencode-oauth-service.js");
+      env.ANTHROPIC_API_KEY = profile.resolved_api_key;
+      env.ANTHROPIC_BASE_URL = "http://127.0.0.1:11434";
+      env.LLM_GATEWAY_MODE = "opencode";
+      env.LLM_GATEWAY_TARGET_URL = OPENCODE_BASE;
+      env.OPENCODE_ORG_ID = profile.resolved_account_id ?? "";
       if (gatewayDefaultModel) env.LLM_GATEWAY_DEFAULT_MODEL = gatewayDefaultModel;
     } else if (profile.resolved_api_key) {
       env.ANTHROPIC_API_KEY = profile.resolved_api_key;

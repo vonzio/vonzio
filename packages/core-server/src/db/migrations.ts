@@ -793,6 +793,13 @@ const migrations: Migration[] = [
       await handle.db.execute(sql`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS token_expires_at TEXT`);
     },
   },
+  {
+    version: 38,
+    description: "OpenCode sign-in: api_keys.account_id (non-secret account routing id issued with an OAuth token — the OpenCode organization; null for every other provider).",
+    up: async (handle) => {
+      await handle.db.execute(sql`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS account_id TEXT`);
+    },
+  },
 ];
 
 /**

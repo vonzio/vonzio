@@ -20,7 +20,7 @@ describe("isAnthropicProvider", () => {
   });
 
   it("treats the gateway providers as non-Anthropic", () => {
-    for (const p of ["ollama", "openai", "openai_subscription"]) expect(isAnthropicProvider(p)).toBe(false);
+    for (const p of ["ollama", "openai", "openai_subscription", "opencode"]) expect(isAnthropicProvider(p)).toBe(false);
   });
 });
 

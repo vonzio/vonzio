@@ -250,7 +250,7 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
       if (!key.api_key) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "API key has no credential stored"));
       }
-      const result = await validateAnthropicKey(key.api_key, key.provider, key.base_url);
+      const result = await validateAnthropicKey(key.api_key, key.provider, key.base_url, key.account_id);
       return result;
     });
 
@@ -434,7 +434,7 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (server
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "Profile has no linked API key"));
       }
 
-      const result = await validateAnthropicKey(resolved.resolved_api_key, resolved.resolved_provider, resolved.resolved_base_url);
+      const result = await validateAnthropicKey(resolved.resolved_api_key, resolved.resolved_provider, resolved.resolved_base_url, resolved.resolved_account_id);
       return { profile_id: resolved.id, ...result };
     });
 

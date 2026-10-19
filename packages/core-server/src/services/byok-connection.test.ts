@@ -14,6 +14,15 @@ describe("connectionFor", () => {
     expect(connectionFor({ provider: "openai_subscription", api_key: "a.b.c" })?.conn).toMatchObject({ kind: "chatgpt" });
   });
 
+  it("maps an OpenCode sign-in to OpenCode's API with the issuer and org", () => {
+    expect(connectionFor({ provider: "opencode", api_key: "tok", account_id: "org_1" })).toEqual({
+      family: "openai",
+      credential: "tok",
+      conn: { kind: "openai-compatible", baseUrl: "https://opencode.ai/inference/v1", auth: "oauth", issuer: "opencode", orgId: "org_1" },
+    });
+    expect(connectionFor({ provider: "opencode", api_key: "tok" })?.conn).not.toHaveProperty("orgId");
+  });
+
   it("returns null without a secret", () => {
     expect(connectionFor({ provider: "ollama", api_key: null })).toBeNull();
   });
@@ -27,6 +36,11 @@ describe("describeFailure", () => {
     expect(describeFailure("api_key", new Error("HTTP 403: nope"))).toMatch(/disabled/);
     expect(describeFailure("openai", new Error("HTTP 401: Incorrect API key"))).toBe("HTTP 401: Incorrect API key");
     expect(describeFailure("openai", new Error("EHOSTUNREACH"))).toBe("EHOSTUNREACH");
+  });
+
+  it("words OpenCode's free-tier 403 and an expired session", () => {
+    expect(describeFailure("opencode", new Error("HTTP 403: Forbidden"))).toMatch(/free tier only works in OpenCode's own apps; a paid plan is needed/);
+    expect(describeFailure("opencode", new Error("HTTP 401: Unauthorized"))).toMatch(/sign in with OpenCode again/);
   });
 });
 

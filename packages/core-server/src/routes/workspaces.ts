@@ -380,6 +380,7 @@ export const workspaceRoutes = fp(
         apiKey: resolved?.resolved_api_key,
         provider: resolved?.resolved_provider,
         baseUrl: resolved?.resolved_base_url,
+        accountId: resolved?.resolved_account_id,
         // Prefer the model that actually ran this workspace's last turn — it's
         // consistent with resolved_provider. model_override ?? resolved.model can
         // desync from the provider (profile default model vs a switched-to key)

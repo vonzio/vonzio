@@ -21,6 +21,8 @@ export interface TitleCreds {
   /** ResolvedProfile.resolved_provider: "api_key" | "claude_subscription" | "openai" | "ollama" */
   provider?: string;
   baseUrl?: string;
+  /** opencode: the organization stored with the token. */
+  accountId?: string;
   /** The workspace's active model (workspace.model_override ?? resolved.model).
    *  May be unset for Anthropic profiles that don't pin one — see the Haiku
    *  fallback in generateTitle. */
@@ -85,7 +87,7 @@ export async function generateTitle(
   }
   try {
     const raw = await completeText(
-      { provider: creds.provider, api_key: creds.apiKey, base_url: creds.baseUrl },
+      { provider: creds.provider, api_key: creds.apiKey, base_url: creds.baseUrl, account_id: creds.accountId },
       model,
       {
         system: TITLE_SYSTEM,

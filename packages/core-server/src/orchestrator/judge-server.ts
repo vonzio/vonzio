@@ -31,6 +31,8 @@ export interface ServerJudgeCreds {
   /** ResolvedProfile.resolved_provider: "api_key" (Anthropic) | "claude_subscription" (Anthropic via OAuth) | "openai" | "ollama" */
   provider?: string;
   baseUrl?: string;
+  /** opencode: the organization stored with the token. */
+  accountId?: string;
   model: string;
 }
 
@@ -102,7 +104,7 @@ export async function judgeServerSide(
   let raw: string;
   try {
     raw = await completeText(
-      { provider: creds.provider, api_key: creds.apiKey, base_url: creds.baseUrl },
+      { provider: creds.provider, api_key: creds.apiKey, base_url: creds.baseUrl, account_id: creds.accountId },
       creds.model,
       // No JSON mode: some OpenAI-compatible providers reject it with a 400.
       // The prompt demands a bare JSON object and parseVerdict() is lenient.

@@ -151,7 +151,7 @@ export class ModelListService {
    * static list, and a Codex catalog failure falls back to the baked list so
    * a transient backend error doesn't empty the picker.
    */
-  private async fetchModels(apiKey: { provider: string; api_key?: string | null; base_url?: string | null }) {
+  private async fetchModels(apiKey: { provider: string; api_key?: string | null; base_url?: string | null; account_id?: string | null }) {
     if (apiKey.provider === "openai_subscription") {
       const { codexModels } = await import("./codex-oauth-service.js");
       if ((process.env.CODEX_MODELS ?? "").trim()) return codexModels().map((id) => ({ id, name: id }));
