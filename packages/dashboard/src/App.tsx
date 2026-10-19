@@ -57,6 +57,7 @@ export function App() {
       if (c.ollamaEnabled) { (window as any).__VONZIO_OLLAMA_ENABLED = true; }
       (window as any).__VONZIO_EGRESS_ENFORCEMENT = !!c.egressEnforcement;
       (window as any).__VONZIO_EGRESS_BASELINE = Array.isArray(c.egressBaseline) ? c.egressBaseline : [];
+      (window as any).__VONZIO_EGRESS_EXTRA_COUNT = Number(c.egressExtraHostCount) || 0;
       if (c.previewUrlTemplate) { (window as any).__VONZIO_PREVIEW_URL_TEMPLATE = c.previewUrlTemplate; }
       if (c.fileServerPort) { (window as any).__VONZIO_FILE_SERVER_PORT = c.fileServerPort; }
       if (c.memoryLimitDefault) { (window as any).__VONZIO_MEMORY_LIMIT_DEFAULT = c.memoryLimitDefault; }

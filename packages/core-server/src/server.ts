@@ -35,7 +35,7 @@ import { CONTAINER_MODE_LABEL, ContainerMode } from "./container/docker-manager.
 import { SessionRegistry } from "./container/session-registry.js";
 import { WorkspaceProvisioner } from "./container/workspace.js";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
-import { egressBaseline, parseHostList } from "./orchestrator/egress.js";
+import { egressBaseline, parseHostList, DEFAULT_EGRESS_ALLOWLIST } from "./orchestrator/egress.js";
 import { MetricsCollector } from "./metrics/collector.js";
 import { TaskService } from "./services/task-service.js";
 import { WorkspaceService } from "./services/workspace-service.js";
@@ -505,7 +505,13 @@ export async function buildServer(deps: ServerDeps) {
       egressEnforcement: config.EGRESS_ENFORCEMENT,
       // Hosts every agent may reach under enforcement (shown in the Network
       // panel so the per-agent list isn't mistaken for the whole allowlist).
-      egressBaseline: config.EGRESS_ENFORCEMENT ? egressAllowBaseline : [],
+      // This route is public (pre-login), so only the built-in list is named;
+      // the operator's EGRESS_ALLOWED_HOSTS (possibly internal hostnames) is
+      // reported as a count.
+      egressBaseline: config.EGRESS_ENFORCEMENT && config.EGRESS_BUILTIN_ALLOWLIST ? [...DEFAULT_EGRESS_ALLOWLIST] : [],
+      egressExtraHostCount: config.EGRESS_ENFORCEMENT
+        ? egressAllowBaseline.length - (config.EGRESS_BUILTIN_ALLOWLIST ? egressBaseline({ builtin: true }).length : 0)
+        : 0,
     };
   });
 

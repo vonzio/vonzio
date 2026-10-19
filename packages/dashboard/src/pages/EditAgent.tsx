@@ -125,6 +125,7 @@ export function EditAgent() {
   const egressEnforced = !!(window as unknown as { __VONZIO_EGRESS_ENFORCEMENT?: boolean }).__VONZIO_EGRESS_ENFORCEMENT;
   // Hosts every agent may reach on this server (built-in + EGRESS_ALLOWED_HOSTS).
   const egressBaseline = (window as unknown as { __VONZIO_EGRESS_BASELINE?: string[] }).__VONZIO_EGRESS_BASELINE ?? [];
+  const egressExtraCount = (window as unknown as { __VONZIO_EGRESS_EXTRA_COUNT?: number }).__VONZIO_EGRESS_EXTRA_COUNT ?? 0;
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
@@ -850,7 +851,7 @@ export function EditAgent() {
                             <div style={{ fontSize: 12, color: "var(--vz-muted)", marginTop: 3, lineHeight: 1.5 }}>
                               {allowAllEgress
                                 ? "Off — the agent can reach any host on the internet."
-                                : egressBaseline.length
+                                : egressBaseline.length || egressExtraCount
                                   ? "On — the agent reaches only its model endpoint, the server-wide hosts listed below the field, and the domains you add; everything else is blocked (including shell commands like curl)."
                                   : "On — the agent reaches only the model endpoint and the domains below; everything else is blocked (including shell commands like curl)."}
                             </div>
@@ -895,9 +896,12 @@ export function EditAgent() {
                         onBlur={() => addEgressDomains(egressInput)}
                         placeholder="docs.example.com"
                       />
-                      {egressBaseline.length > 0 && (
+                      {(egressBaseline.length > 0 || egressExtraCount > 0) && (
                         <div style={{ fontSize: 11.5, color: "var(--vz-muted-2)", marginTop: 6, lineHeight: 1.5 }}>
-                          Always allowed on this server: {egressBaseline.join(", ")}.
+                          Always allowed on this server: {[
+                            ...egressBaseline,
+                            ...(egressExtraCount > 0 ? [`${egressExtraCount} host${egressExtraCount === 1 ? "" : "s"} set by the operator`] : []),
+                          ].join(", ")}.
                         </div>
                       )}
                     </Field>
