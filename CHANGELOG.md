@@ -71,6 +71,11 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **The dashboard dev server starts after `npm ci`.** The lockfile listed
+  `@vitejs/plugin-react` without its dependencies, so `react-refresh` was
+  never installed and `vite` failed on the first import. They are locked
+  again.
+
 - **Home "Start" sends on a fresh page load.** The new chat briefly saw an
   empty agent list on mount, read it as "no key" and dropped the handed-off
   task, leaving it in the composer. It now waits until an agent resolves and
