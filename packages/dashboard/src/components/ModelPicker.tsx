@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchAllUserModels, type ProfileModel, type KeyModelGroup } from "../api/client.js";
 import { Icon } from "../brand/components.js";
-import { MODEL_DISPLAY_FALLBACK } from "../lib/model-display.js";
+import { MODEL_DISPLAY_FALLBACK, modelChipLabel, providerLabel } from "../lib/model-display.js";
 
 interface Props {
   /** The profile's attached key — used to mark the profile default in the list. */
@@ -102,10 +102,20 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
   // The key whose model is currently effective (override, else profile's).
   const effectiveKeyId = apiKeyIdOverride ?? profileApiKeyId;
   const allModels = useMemo(() => groups.flatMap((g) => g.models), [groups]);
-  const currentModel = value ? allModels.find((m) => m.id === value) : undefined;
-  const defaultModel = profileDefaultModel ? allModels.find((m) => m.id === profileDefaultModel) : undefined;
-  const resolvedLabel =
-    (value ? currentModel?.display_name ?? value : defaultModel?.display_name ?? profileDefaultModel) ?? "default";
+  // The chip names the key the turn will actually run on: the conversation's
+  // key override, else the agent's key — the same model id can exist on
+  // several providers (kimi-k3 on Ollama Cloud and OpenCode).
+  const effectiveGroup = groups.find((g) => g.key_id === effectiveKeyId);
+  const effectiveModelId = value ?? profileDefaultModel ?? effectiveGroup?.default_model ?? null;
+  const effectiveModel = effectiveModelId
+    ? effectiveGroup?.models.find((m) => m.id === effectiveModelId) ?? allModels.find((m) => m.id === effectiveModelId)
+    : undefined;
+  const chip = modelChipLabel({
+    provider: effectiveGroup?.provider,
+    keyName: effectiveGroup?.key_name,
+    modelId: effectiveModelId,
+    modelName: effectiveModel?.display_name,
+  });
 
   const overridden = !!value || !!apiKeyIdOverride;
   const pillBg = overridden ? "color-mix(in srgb, var(--vz-sodium) 10%, transparent)" : "transparent";
@@ -155,7 +165,7 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
           setOpen((o) => !o);
         }}
         disabled={disabled}
-        title={overridden ? `Override: ${resolvedLabel}` : `Profile default: ${resolvedLabel}`}
+        title={overridden ? `This conversation: ${chip.title}` : `Agent default: ${chip.title}`}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -174,7 +184,7 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
           transition: "background var(--vz-fast) var(--vz-ease), color var(--vz-fast) var(--vz-ease), border-color var(--vz-fast) var(--vz-ease)",
         }}
       >
-        <span>{resolvedLabel}</span>
+        <span style={{ maxWidth: "min(240px, 50vw)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{chip.label}</span>
         <Icon.chevron width="11" height="11" />
       </button>
       {open && (
@@ -249,7 +259,7 @@ export function ModelPicker({ profileApiKeyId, profileDefaultModel, value, apiKe
                       }}
                     >
                       <span style={{ fontWeight: 600, color: "var(--vz-muted)" }}>{g.key_name}</span>
-                      <span style={{ opacity: 0.6 }}>· {g.provider}</span>
+                      <span style={{ opacity: 0.6 }}>· {providerLabel(g.provider)}</span>
                     </div>
                   )}
                   {g.models.map((m) => {

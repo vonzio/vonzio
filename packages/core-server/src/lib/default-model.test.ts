@@ -6,7 +6,9 @@ import {
   NoModelError,
   defaultModelForProvider,
   isAnthropicProvider,
+  isOpencodeFreeModel,
   modelPreferences,
+  runnableModels,
   pickDefaultModel,
 } from "./default-model.js";
 import { CODEX_MODELS } from "../services/codex-oauth-service.js";
@@ -100,5 +102,26 @@ describe("NoModelError", () => {
     const e = new NoModelError();
     expect(e.message).toBe(NO_MODEL_MESSAGE);
     expect(e.message).toMatch(/Pick a model for this agent in Settings/);
+  });
+});
+
+describe("OpenCode free tier", () => {
+  const listed = ["big-pickle", "beam-free", "glm-5.3-flash-free", "test", "claude-opus-5-5", "kimi-k3", "glm-5.3-flash"];
+
+  it("recognises free-tier ids", () => {
+    for (const id of ["big-pickle", "beam-free", "Glm-5.3-Flash-FREE"]) expect(isOpencodeFreeModel(id)).toBe(true);
+    for (const id of ["kimi-k3", "glm-5.3-flash", "freedom-1"]) expect(isOpencodeFreeModel(id)).toBe(false);
+  });
+
+  it("drops them from an OpenCode catalog only", () => {
+    expect(runnableModels("opencode", listed, (id) => id)).toEqual(["test", "claude-opus-5-5", "kimi-k3", "glm-5.3-flash"]);
+    expect(runnableModels("ollama", listed, (id) => id)).toEqual(listed);
+  });
+
+  it("never defaults to a free-tier model", () => {
+    expect(pickDefaultModel("opencode", listed)).toBe("kimi-k3");
+    expect(pickDefaultModel("opencode", ["big-pickle", "beam-free", "jev-1.13"])).toBe("jev-1.13");
+    expect(pickDefaultModel("opencode", null)).toBe("kimi-k3");
+    expect(pickDefaultModel("opencode", ["big-pickle"])).toBe("kimi-k3");
   });
 });

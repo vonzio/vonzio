@@ -1858,6 +1858,8 @@ export function Workspace() {
                   containerName={chat.containerName}
                   profileName={profileName}
                   profileId={activeWorkspace?.profile_id ?? activeProfile?.id ?? null}
+                  modelOverride={activeWorkspace?.model_override ?? null}
+                  apiKeyIdOverride={activeWorkspace?.api_key_id_override ?? null}
                   workspaceStatus={activeWorkspace?.status ?? "unknown"}
                   persistent={activeWorkspace?.persistent ?? false}
                   createdAt={activeWorkspace?.created_at ?? new Date().toISOString()}
@@ -1897,6 +1899,8 @@ export function Workspace() {
                   containerName={chat.containerName}
                   profileName={profileName}
                   profileId={activeWorkspace?.profile_id ?? activeProfile?.id ?? null}
+                  modelOverride={activeWorkspace?.model_override ?? null}
+                  apiKeyIdOverride={activeWorkspace?.api_key_id_override ?? null}
                   workspaceStatus={activeWorkspace?.status ?? "unknown"}
                   persistent={activeWorkspace?.persistent ?? false}
                   createdAt={activeWorkspace?.created_at ?? new Date().toISOString()}

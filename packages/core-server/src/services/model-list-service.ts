@@ -20,7 +20,7 @@
 import type { ProfileService } from "./profile-service.js";
 import type { ApiKeyService } from "./api-key-service.js";
 import { connectionFor, describeFailure, listModelsFor } from "./byok-connection.js";
-import { pickDefaultModel } from "../lib/default-model.js";
+import { pickDefaultModel, runnableModels } from "../lib/default-model.js";
 
 export interface ProfileModel {
   id: string;
@@ -129,7 +129,9 @@ export class ModelListService {
 
     let models: ProfileModel[];
     try {
-      models = (await this.fetchModels(apiKey)).map((m) => ({
+      // OpenCode's free tier only runs in OpenCode's own apps: don't offer it.
+      const listed = runnableModels(apiKey.provider, await this.fetchModels(apiKey), (m) => m.id);
+      models = listed.map((m) => ({
         id: m.id,
         display_name: m.name && m.name !== m.id ? m.name : null,
         provider: target.family,

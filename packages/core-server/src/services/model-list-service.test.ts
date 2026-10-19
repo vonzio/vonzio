@@ -292,4 +292,22 @@ describe("ModelListService", () => {
     }
     svc.stop();
   });
+  it("leaves OpenCode's free-tier models out of the list and the default", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      object: "list",
+      data: ["big-pickle", "beam-free", "glm-5.3-flash-free", "glm-5.3", "kimi-k3"].map((id) => ({ id, object: "model", owned_by: "opencode" })),
+    })));
+    const { profileService, apiKeyService } = makeServices(
+      { ...PROFILE_WITH_ANTHROPIC, api_key_id: "key_oc" },
+      { provider: "opencode", api_key: "oc-token", account_id: "org_1" },
+    );
+    const svc = new ModelListService(profileService, apiKeyService);
+    const result = await svc.listForApiKey("key_oc");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.models.map((m) => m.id)).toEqual(["glm-5.3", "kimi-k3"]);
+      expect(result.defaultModel).toBe("kimi-k3");
+    }
+    svc.stop();
+  });
 });

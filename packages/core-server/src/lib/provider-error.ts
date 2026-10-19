@@ -40,6 +40,15 @@ const SDK_INVALID_KEY = /^(?:Invalid API key|Invalid bearer token|OAuth token (?
 
 const AUTH_HINT = "Check the key, or sign in again, in Settings → Keys.";
 
+/** OpenCode's free tier answers 403 to any client but OpenCode's own apps.
+ *  The key is fine — the model is the problem. */
+export const OPENCODE_FREE_TIER_MESSAGE =
+  "This OpenCode model is free-tier, which only works in OpenCode's own apps. Pick a paid model from the model picker.";
+
+// The gateway's wording of that 403 (llm-gateway byok-handler OPENCODE_FREE_TIER,
+// current and earlier copy).
+const OPENCODE_FREE_TIER = /\bOpenCode(?:'s)?\b[\s\S]{0,40}?\bfree[- ]tier\b/i;
+
 /**
  * Drop the SDK's internal "… returned an error result:" prefix from a failure
  * message, so the turn's own error text is all the user sees.
@@ -156,7 +165,17 @@ export function humanizeProviderError(
     return null;
   }
 
-  const { detail, parsed } = extractDetail(body);
+  const extracted = extractDetail(body);
+  const parsed = extracted.parsed;
+  let detail = extracted.detail;
+  // byok words an upstream failure "HTTP <status>: <message>"; the status is
+  // already in our own copy, so don't repeat it ("(HTTP 403): HTTP 403: …").
+  const inner = /^HTTP (\d{3}):?\s*([\s\S]*)$/.exec(detail);
+  if (inner) {
+    status ??= Number(inner[1]);
+    detail = inner[2].trim();
+  }
+  if (detail && OPENCODE_FREE_TIER.test(detail)) return OPENCODE_FREE_TIER_MESSAGE;
   if (detail && MODEL_REJECTED.test(detail)) {
     const cleaned = detail.replace(BYOK_MODEL_HINT, "").trim() || "The provider rejected the model";
     return `${sentence(cleaned)} ${SWITCH_MODEL_HINT}`;
