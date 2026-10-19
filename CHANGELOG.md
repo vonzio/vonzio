@@ -81,6 +81,17 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **OpenCode's free-tier models are no longer offered.** They answer 403 to
+  any client but OpenCode's own apps, so the model list for an `opencode` key
+  leaves them out and the default model is never one of them (OpenCode keys
+  now prefer kimi-k3, then Claude Sonnet 5.5, GPT-6.1-Sol, GLM-5.3). OpenCode's
+  model list carries no price or tier, so they are recognised by id: a `-free`
+  suffix, plus `big-pickle`. A turn that still lands on one (an older pick)
+  says "This OpenCode model is free-tier, which only works in OpenCode's own
+  apps. Pick a paid model from the model picker." instead of "rejected the key
+  (HTTP 403): HTTP 403: …" with a check-your-key hint, and a provider failure
+  no longer repeats its HTTP status.
+
 - **Keys are checked before they are saved.** Onboarding and Settings saved a
   pasted key without asking the provider, so a mistyped or autofilled key only
   failed on the first chat. The key is now checked first and a definite
@@ -224,6 +235,14 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
   may embed the chat (CSP `frame-ancestors`; default same-origin only).
 
 ### Changed
+
+- **The composer's model chip names the provider.** It reads "OpenCode ·
+  kimi-k3", "Ollama Cloud · kimi-k3", "Claude · Opus 5.5" — the same model id
+  can exist on several keys — and reflects the key the turn runs on: the
+  conversation's key override, else the agent's. Long names truncate; the
+  tooltip has the key name, provider and full model. The picker's group
+  headers and the workspace Info panel use the same provider names, and the
+  Info panel shows the conversation's override instead of the agent's model.
 
 - **No dollar figures for flat-rate providers.** Turns on a Claude or ChatGPT
   subscription or Ollama Cloud (and any provider kind without per-token

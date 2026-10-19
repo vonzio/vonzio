@@ -7,6 +7,7 @@ import { TerminalTab } from "./TerminalTab.js";
 import { KnowledgeSection } from "./KnowledgeSection.js";
 import { FILE_SERVER_PORT } from "@vonzio/shared";
 import { useApi } from "../hooks/useApi.js";
+import { MODEL_DISPLAY_FALLBACK, providerLabel } from "../lib/model-display.js";
 import { fetchProfiles, fetchUserAnthropicKeys, type ProfileSummary, type UserAnthropicKey, type WorkspacePort, type PreviewPortMode } from "../api/client.js";
 
 type TabId = "preview" | "files" | "console" | "logs" | "knowledge" | "info";
@@ -18,6 +19,9 @@ interface Props {
   profileName: string;
   /** Owning agent/profile — drives the Knowledge tab (null until resolved). */
   profileId: string | null;
+  /** The conversation's model / key override (null = the agent's own). */
+  modelOverride?: string | null;
+  apiKeyIdOverride?: string | null;
   workspaceStatus: string;
   persistent: boolean;
   createdAt: string;
@@ -61,11 +65,13 @@ function CopyButton({ value, children }: { value: string; children: React.ReactN
   );
 }
 
-function InfoTab({ containerId, containerName, profileName, profileId, workspaceStatus, persistent, createdAt, expiresAt }: {
+function InfoTab({ containerId, containerName, profileName, profileId, modelOverride, apiKeyIdOverride, workspaceStatus, persistent, createdAt, expiresAt }: {
   containerId: string | null;
   containerName: string | null;
   profileName: string;
   profileId: string | null;
+  modelOverride?: string | null;
+  apiKeyIdOverride?: string | null;
   workspaceStatus: string;
   persistent: boolean;
   createdAt: string;
@@ -79,13 +85,16 @@ function InfoTab({ containerId, containerName, profileName, profileId, workspace
       ? "var(--vz-warn)"
       : "var(--vz-muted-2)";
 
-  // Resolve model + provider for this session's agent.
+  // Resolve the model + key this conversation runs on: its override, else the
+  // agent's own (the same rule the composer's model chip uses).
   const { data: profiles } = useApi<ProfileSummary[]>(() => fetchProfiles());
   const { data: keys } = useApi<UserAnthropicKey[]>(() => fetchUserAnthropicKeys());
   const profile = (profiles ?? []).find((p) => p.id === profileId);
-  const key = profile ? (keys ?? []).find((k) => k.id === profile.api_key_id) : undefined;
-  const model = profile?.model || "Default";
-  const provider = key?.provider;
+  const keyId = apiKeyIdOverride ?? profile?.api_key_id;
+  const key = keyId ? (keys ?? []).find((k) => k.id === keyId) : undefined;
+  const modelId = modelOverride ?? profile?.model;
+  const model = modelId ? MODEL_DISPLAY_FALLBACK[modelId] ?? modelId : "Default";
+  const provider = providerLabel(key?.provider);
   const toolCount = profile?.default_tools?.length ?? 0;
 
   const labelStyle = { color: "var(--vz-muted)" };
@@ -109,7 +118,7 @@ function InfoTab({ containerId, containerName, profileName, profileId, workspace
           <span className="text-xs" style={labelStyle}>Model</span>
           <div className="flex items-center gap-1.5">
             <Cpu className="w-3 h-3" style={iconStyle} />
-            <span className="font-mono text-xs truncate max-w-[180px]" style={valueStyle}>{model}</span>
+            <span className="font-mono text-xs truncate max-w-[180px]" style={valueStyle} title={modelId ?? undefined}>{model}</span>
           </div>
         </div>
 
@@ -227,7 +236,7 @@ const tabDefs: Array<{ value: TabId; label: string; icon: typeof Globe }> = [
 ];
 
 export function RightPanel({
-  workspaceId, containerId, containerName, profileName, profileId, workspaceStatus, persistent, createdAt, expiresAt,
+  workspaceId, containerId, containerName, profileName, profileId, modelOverride, apiKeyIdOverride, workspaceStatus, persistent, createdAt, expiresAt,
   previewUrl, previewRefresh, ports, currentPort, publicPreview, onSelectPort, onSetPortAccess, buildPortUrl, onRescanPorts,
   logs, activeTab, onTabChange, onClose,
 }: Props) {
@@ -350,6 +359,8 @@ export function RightPanel({
             containerName={containerName}
             profileName={profileName}
             profileId={profileId}
+            modelOverride={modelOverride}
+            apiKeyIdOverride={apiKeyIdOverride}
             workspaceStatus={workspaceStatus}
             persistent={persistent}
             createdAt={createdAt}
