@@ -20,6 +20,7 @@
 import type { ProfileService } from "./profile-service.js";
 import type { ApiKeyService } from "./api-key-service.js";
 import { connectionFor, describeFailure, listModelsFor } from "./byok-connection.js";
+import { pickDefaultModel } from "../lib/default-model.js";
 
 export interface ProfileModel {
   id: string;
@@ -39,11 +40,18 @@ export type ModelListResult =
        * `null` when the profile has no default configured.
        */
       profileDefault: string | null;
+      /**
+       * The provider-preferred default model for the key (lib/default-model.ts),
+       * so clients pre-select the same model the server would fall back to.
+       * `null` when there is no key or no default can be determined.
+       */
+      defaultModel: string | null;
     }
   | { ok: false; status: number; error: string };
 
 interface CacheEntry {
   models: ProfileModel[];
+  defaultModel: string | null;
   ts: number;
 }
 
@@ -94,10 +102,10 @@ export class ModelListService {
     const profile = await this.profileService.get(profileId);
     if (!profile) return { ok: false, status: 404, error: "Profile not found" };
     const profileDefault = profile.model ?? null;
-    if (!profile.api_key_id) return { ok: true, models: [], profileDefault };
+    if (!profile.api_key_id) return { ok: true, models: [], profileDefault, defaultModel: null };
     const inner = await this.listForApiKey(profile.api_key_id);
     if (!inner.ok) return inner;
-    return { ok: true, models: inner.models, profileDefault };
+    return { ok: true, models: inner.models, profileDefault, defaultModel: inner.defaultModel };
   }
 
   /**
@@ -110,14 +118,14 @@ export class ModelListService {
   async listForApiKey(apiKeyId: string): Promise<ModelListResult> {
     const cached = this.cache.get(apiKeyId);
     if (cached && Date.now() - cached.ts < MODELS_CACHE_TTL) {
-      return { ok: true, models: cached.models, profileDefault: null };
+      return { ok: true, models: cached.models, profileDefault: null, defaultModel: cached.defaultModel };
     }
 
     const apiKey = await this.apiKeyService.getWithSecrets(apiKeyId);
-    if (!apiKey) return { ok: true, models: [], profileDefault: null };
+    if (!apiKey) return { ok: true, models: [], profileDefault: null, defaultModel: null };
 
     const target = connectionFor(apiKey);
-    if (!target) return { ok: true, models: [], profileDefault: null };
+    if (!target) return { ok: true, models: [], profileDefault: null, defaultModel: null };
 
     let models: ProfileModel[];
     try {
@@ -132,8 +140,9 @@ export class ModelListService {
       return { ok: false, status: 502, error: describeFailure(apiKey.provider, err) };
     }
 
-    this.cache.set(apiKeyId, { models, ts: Date.now() });
-    return { ok: true, models, profileDefault: null };
+    const defaultModel = pickDefaultModel(apiKey.provider, models.map((m) => m.id));
+    this.cache.set(apiKeyId, { models, defaultModel, ts: Date.now() });
+    return { ok: true, models, profileDefault: null, defaultModel };
   }
 
   /**

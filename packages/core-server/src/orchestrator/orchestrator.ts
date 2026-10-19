@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TaskQueue } from "@vonzio/shared";
 import type { Task, TaskResult } from "@vonzio/shared";
+import { usageBillingFor } from "@vonzio/shared";
 import type { ContainerManager } from "@vonzio/shared";
 import { FILE_SERVER_PORT } from "@vonzio/shared";
 import type { ConcurrencyLimiter, VpnTunnelProvider } from "@vonzio/shared";
@@ -18,7 +19,7 @@ import { eq } from "drizzle-orm";
 import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
-import { CLAUDE_DEFAULT_MODEL, NoModelError, isAnthropicProvider } from "../lib/default-model.js";
+import { NoModelError, isAnthropicProvider, pickDefaultModel } from "../lib/default-model.js";
 import { humanizeProviderError } from "../lib/provider-error.js";
 import { ContainerPool } from "../container/pool.js";
 import { ensureContainerRunning } from "../container/ensure-running.js";
@@ -1055,13 +1056,14 @@ export class Orchestrator extends EventEmitter {
       // overridden provider (e.g. an Anthropic key) → 404. The judge must run
       // on the model the workspace actually uses.
       const judgeWorkspace = task.session_id ? this.deps.sessionRegistry.get(task.session_id) : null;
-      // The claude-* fallback is only meaningful on Anthropic providers — on a
-      // gateway provider (openai/codex/ollama) it would be forwarded upstream
-      // and 400. fetchProfile already filled profile.model for those, so the
-      // undefined branch is only a defensive no-model case.
+      // fetchProfile already filled profile.model from the key's default, so
+      // the last branch is only a defensive no-model case: the provider's
+      // first preferred model (lib/default-model.ts), never a claude-* id on a
+      // gateway provider.
       const judgeModel = resolveTaskModel(task, judgeWorkspace, profile)
         ?? profile.model
-        ?? (isAnthropicProvider(profile.resolved_provider) ? CLAUDE_DEFAULT_MODEL : undefined);
+        ?? pickDefaultModel(profile.resolved_provider, null)
+        ?? undefined;
       const judgeEffort = task.effort ?? profile.effort ?? undefined;
       const goal = task.prompt;
       // Per-message acceptance criteria from the composer (optional).
@@ -1085,6 +1087,7 @@ export class Orchestrator extends EventEmitter {
           reason,
           iteration,
           total_cost_usd: totalCost,
+          billing: usageBillingFor(profile.resolved_provider),
           verdict,
           ...(detail ? { detail } : {}),
         });
@@ -2141,6 +2144,9 @@ export class Orchestrator extends EventEmitter {
         throw new Error("Agent completed without producing a result");
       }
     }
+    // Flat-rate providers report a notional dollar figure; mark the turn so
+    // surfaces show tokens only (usageBillingFor in @vonzio/shared).
+    result.billing = usageBillingFor(profile.resolved_provider);
 
     return result;
     } finally {
@@ -2331,12 +2337,12 @@ export class Orchestrator extends EventEmitter {
     if (!profile) {
       throw new Error(`Profile ${task.profile_id} not found`);
     }
-    // No model anywhere (task → workspace override → profile) on a gateway
-    // provider: the SDK would fall back to its Claude default, which the
-    // upstream rejects ("The 'claude-…' model is not supported…"). Resolve the
-    // key's provider default instead, or fail the turn with a clear message.
-    // Anthropic keys keep the SDK's own Claude default.
-    if (!resolveTaskModel(task, workspace, profile) && !isAnthropicProvider(profile.resolved_provider)) {
+    // No model anywhere (task → workspace override → profile): resolve the
+    // key's provider default (lib/default-model.ts). On a gateway provider the
+    // SDK's Claude default would be rejected upstream ("The 'claude-…' model
+    // is not supported…"), so no default fails the turn with a clear message;
+    // an Anthropic key with no default left keeps the SDK's own choice.
+    if (!resolveTaskModel(task, workspace, profile)) {
       let model: string | null = null;
       // Same key order getResolved used: the override, then the profile's own
       // key (the override may have been deleted).
@@ -2344,8 +2350,8 @@ export class Orchestrator extends EventEmitter {
         if (model || !keyId || !this.deps.defaultModelForKey) continue;
         model = await this.deps.defaultModelForKey(keyId).catch(() => null);
       }
-      if (!model) throw new NoModelError();
-      profile.model = model;
+      if (model) profile.model = model;
+      else if (!isAnthropicProvider(profile.resolved_provider)) throw new NoModelError();
     }
     return profile;
   }

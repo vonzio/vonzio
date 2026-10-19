@@ -36,7 +36,7 @@ examples:                 # optional — example prompts
   - Do the thing
 egress:                   # optional — network allowlist (least privilege!)
   - github.com
-model: claude-opus-4-8    # optional — default model
+model: claude-opus-5-5    # optional — default model
 effort: high              # optional
 tools:                    # optional — allowed tool names
   - Bash

@@ -839,7 +839,7 @@ export function MessageList({
                 >
                   <span>↑ {formatTokens(msg.usage.input_tokens)}</span>
                   <span>↓ {formatTokens(msg.usage.output_tokens)}</span>
-                  {msg.usage.cost_usd > 0 && <span>· ${msg.usage.cost_usd < 0.01 ? msg.usage.cost_usd.toFixed(4) : msg.usage.cost_usd.toFixed(2)}</span>}
+                  {msg.usage.billing !== "flat" && msg.usage.cost_usd > 0 && <span>· ${msg.usage.cost_usd < 0.01 ? msg.usage.cost_usd.toFixed(4) : msg.usage.cost_usd.toFixed(2)}</span>}
                 </div>
               )}
             </MsgRow>

@@ -189,6 +189,28 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Changed
 
+- **No dollar figures for flat-rate providers.** Turns on a Claude or ChatGPT
+  subscription or Ollama Cloud (and any provider kind without per-token
+  billing) now show token counts only in the chat header, message footers,
+  goal-loop summary and task views; the SDK's dollar estimate there was not
+  money spent. Anthropic API keys and OpenAI / OpenAI-compatible keys keep the
+  cost. Task results and `turn.done` usage carry a new `billing`
+  (`"metered"` | `"flat"`) field; older turns without it are treated as
+  metered.
+
+- **Default models follow a per-provider preference list.** When an agent or
+  turn has no model, vonzio now picks the first available model from a fixed
+  preference order instead of the first entry of the provider's catalog (which
+  was alphabetical, so Ollama Cloud defaulted to `beam`): Claude keys prefer
+  `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5`, `claude-fable-5-1`;
+  ChatGPT and OpenAI keys `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`,
+  `gpt-6.1-sol`, `gpt-6-astra`; Ollama `kimi-k3`, `glm-5.3-flash`. A catalog
+  that can't be listed falls back to the first preference, one that lists none
+  of them to its first model. Model-less Claude turns now run on that default
+  instead of the SDK's own pick. The model list endpoints return the chosen
+  `default_model`, which onboarding pre-selects; the keyless Claude fallback
+  list and the static ChatGPT list are updated to match.
+
 - **Self-hosted copy no longer assumes Anthropic or the hosted service.** The
   Settings › Keys header and the agent template "Needs" lists are
   provider-neutral; the login and register pages show Terms, Privacy and

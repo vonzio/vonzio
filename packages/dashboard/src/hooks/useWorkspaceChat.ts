@@ -354,7 +354,8 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
       case "goal_stop": {
         // The goal loop ended — surface the reason + total cost.
         const reason = (msg.reason as string) ?? "stopped";
-        const cost = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : undefined;
+        // Flat-rate providers report a notional cost — show none.
+        const cost = typeof msg.total_cost_usd === "number" && msg.billing !== "flat" ? msg.total_cost_usd : undefined;
         const human: Record<string, string> = {
           done: "Goal complete",
           max_iterations: "Stopped — reached the continuation limit",
@@ -383,7 +384,7 @@ export function useWorkspaceChat({ sessionId, profileId, onContainerIdChange, on
           break;
         }
         const resultText = msg.result_text as string | undefined;
-        const usage = msg.usage as { input_tokens: number; output_tokens: number; cost_usd: number } | undefined;
+        const usage = msg.usage as { input_tokens: number; output_tokens: number; cost_usd: number; billing?: "metered" | "flat" } | undefined;
         // Dedup: when this turn's text already rendered as a "text" event
         // (replay path), appending result_text again duplicates the final
         // paragraph — both strings come through the same signing pipeline,

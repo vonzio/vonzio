@@ -384,13 +384,16 @@ function ModelStep({ profileId, onDone }: { profileId: string; onDone: () => voi
           const body = (await r.json().catch(() => ({}))) as { error?: string };
           throw new Error(body.error ?? `HTTP ${r.status}`);
         }
-        return r.json() as Promise<{ models: ProfileModel[] }>;
+        return r.json() as Promise<{ models: ProfileModel[]; default_model?: string | null }>;
       })
       .then((data) => {
         setModels(data.models);
-        // Sensible default: prefer Sonnet (most users), else first.
-        const sonnet = data.models.find((m) => /sonnet/i.test(m.id));
-        setChosen((sonnet ?? data.models[0])?.id ?? "");
+        // Pre-select the server's provider-preferred default (the same model
+        // a turn falls back to), else the first listed.
+        const preferred = data.default_model
+          ? data.models.find((m) => m.id === data.default_model)
+          : undefined;
+        setChosen((preferred ?? data.models[0])?.id ?? "");
       })
       .catch((err) => {
         const raw = err instanceof Error ? err.message : "Failed to load models";

@@ -8,12 +8,12 @@
  *   ┌────────────────────────────────┐
  *   │ Default          (SDK chooses) │
  *   │ ─────────────                  │
- *   │ Claude Opus 4.7                │
- *   │   claude-opus-4-7              │
- *   │ Claude Sonnet 4.6              │
- *   │   claude-sonnet-4-6            │
- *   │ Claude Haiku 4.5               │
- *   │   claude-haiku-4-5-20251001    │
+ *   │ Claude Opus 5.5                │
+ *   │   claude-opus-5-5              │
+ *   │ Claude Sonnet 5.5              │
+ *   │   claude-sonnet-5-5            │
+ *   │ Claude Fable 5                 │
+ *   │   claude-fable-5               │
  *   └────────────────────────────────┘
  *
  * Aliases (`sonnet` / `opus` / `haiku`) are intentionally NOT offered for

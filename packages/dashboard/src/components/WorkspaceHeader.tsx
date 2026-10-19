@@ -106,9 +106,17 @@ export function WorkspaceHeader({
 
   const statusLabel = connected ? status : "disconnected";
 
-  // Running session token/cost total (sum of per-turn usage on assistant messages).
+  // Running session token/cost total (sum of per-turn usage on assistant
+  // messages). Dollars only count metered turns: a flat-rate provider's cost
+  // is a notional estimate, not money spent.
   const sessionUsage = messages.reduce(
-    (a, m) => m.usage ? { in: a.in + m.usage.input_tokens, out: a.out + m.usage.output_tokens, cost: a.cost + m.usage.cost_usd } : a,
+    (a, m) => m.usage
+      ? {
+          in: a.in + m.usage.input_tokens,
+          out: a.out + m.usage.output_tokens,
+          cost: a.cost + (m.usage.billing === "flat" ? 0 : m.usage.cost_usd),
+        }
+      : a,
     { in: 0, out: 0, cost: 0 },
   );
 

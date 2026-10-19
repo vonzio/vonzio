@@ -49,6 +49,11 @@ export interface ToolCall {
   timestamp: string;
 }
 
+/** "metered": pay-per-token (Anthropic API key, OpenAI API / compatible).
+ *  "flat": subscription or flat-rate plan (Claude/ChatGPT subscription,
+ *  Ollama Cloud, and any other provider kind). */
+export type UsageBilling = "metered" | "flat";
+
 export interface TaskResult {
   text: string;
   structured_output?: unknown;
@@ -58,6 +63,10 @@ export interface TaskResult {
   output_tokens: number;
   cost_usd: number;
   turns: number;
+  /** How the provider bills this turn. "flat" (subscriptions, Ollama Cloud):
+   *  `cost_usd` is the SDK's notional API-price estimate, not money spent, so
+   *  surfaces show token counts only. Absent → "metered" (older results). */
+  billing?: UsageBilling;
   /** True when this turn ended by hitting the per-round turn limit (max_turns)
    *  rather than the agent stopping on its own. The goal loop uses this to
    *  continue without a (blind) judge call. */
@@ -117,4 +126,14 @@ export interface MetricRecord {
   value: number;
   labels?: Record<string, string>;
   timestamp: string;
+}
+
+/** Provider kinds billed per token. Every other kind (claude_subscription,
+ *  openai_subscription, ollama, and any kind added later) is a flat-rate plan,
+ *  where the SDK's dollar estimate is not money the user spent. An unset
+ *  provider is the legacy "api_key" default. */
+const METERED_PROVIDERS: ReadonlySet<string> = new Set(["api_key", "openai"]);
+
+export function usageBillingFor(provider: string | null | undefined): UsageBilling {
+  return METERED_PROVIDERS.has(provider || "api_key") ? "metered" : "flat";
 }
