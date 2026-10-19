@@ -29,3 +29,9 @@ services:
   agent:
     image: ghcr.io/vonzio/vonzio/agent:${VONZIO_IMAGE_TAG:-latest}
     profiles: ["images"]
+
+  # The egress enforcement point, published by the release workflow alongside
+  # server/agent at the same tag (the server signs tokens the proxy verifies,
+  # so the two move together).
+  egress-proxy:
+    image: ghcr.io/vonzio/vonzio/egress-proxy:${VONZIO_IMAGE_TAG:-latest}

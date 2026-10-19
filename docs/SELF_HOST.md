@@ -178,6 +178,11 @@ make docker-dev-oss        # rebuild + restart
 
 Either way, the data migrations under `packages/core-server/src/db/migrations.ts` are applied automatically at boot.
 
+**Egress enforcement on upgrade.** New installs enforce agent egress by default. When you
+re-run the installer over an existing `.env` that has no `EGRESS_ENFORCEMENT` line, it writes
+`EGRESS_ENFORCEMENT=0` so agents keep the access they had; set it to `1` to opt in (see
+[HARDENING.md](HARDENING.md#restrict-agent-egress)).
+
 ## Backup
 
 The state lives in two places:
@@ -207,6 +212,9 @@ The full env var reference is in [packages/core-server/src/config.ts](../package
 | `POOL_MIN_SIZE` | `0` | Warm container count |
 | `SESSION_IDLE_TTL_SECS` | `14400` | How long a paused session sticks around |
 | `SESSION_IDLE_PAUSE_SECS` | `900` | Idle seconds before a chat's container is paused (`docker pause`) — near-zero CPU while parked, instant resume on the next message. `0` disables. Persistent workstations use `WORKSTATION_IDLE_PAUSE_SECS` instead. |
+| `EGRESS_ENFORCEMENT` | `1` (new installs) | Agents reach the internet only through the egress proxy (model endpoint + built-in registries/git hosts + allowlists). `0` = unrestricted. Upgraded installs are pinned to `0` — see [HARDENING.md](HARDENING.md#restrict-agent-egress). |
+| `EGRESS_ALLOWED_HOSTS` | unset | Comma-separated extra hosts every agent may reach (subdomains included) |
+| `EGRESS_BUILTIN_ALLOWLIST` | `true` | `false` drops the built-in list of model providers, package registries and git hosts |
 
 OAuth integrations (GitHub, Google, Slack, etc.) require their client id/secret pairs — see `config.ts` for the variable names.
 

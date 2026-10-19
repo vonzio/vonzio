@@ -37,11 +37,14 @@ agent-image: ## Build the Docker agent image
 agent-base-local: ## Build agent-base locally (required on non-amd64 dev machines)
 	docker build -t ghcr.io/vonzio/vonzio/agent-base:latest -f docker/Dockerfile.agent.base .
 
+# Host mode has no egress-proxy service, so egress enforcement (on by default)
+# would refuse every agent — default it off here; export EGRESS_ENFORCEMENT=1
+# with your own proxy running to override.
 api: node_modules ## Start the API server in dev mode (auto-reload)
-	TOOLS_DIR=./tools SKILLS_DIR=./skills npx tsx watch --clear-screen=false packages/core-server/src/index.ts
+	EGRESS_ENFORCEMENT=$${EGRESS_ENFORCEMENT:-0} TOOLS_DIR=./tools SKILLS_DIR=./skills npx tsx watch --clear-screen=false packages/core-server/src/index.ts
 
 api-once: node_modules ## Start the API server (no auto-reload, clean shutdown)
-	TOOLS_DIR=./tools SKILLS_DIR=./skills npx tsx packages/core-server/src/index.ts
+	EGRESS_ENFORCEMENT=$${EGRESS_ENFORCEMENT:-0} TOOLS_DIR=./tools SKILLS_DIR=./skills npx tsx packages/core-server/src/index.ts
 
 dashboard: node_modules ## Start the customer dashboard dev server (port 5173)
 	cd packages/dashboard && npx vite
@@ -65,7 +68,7 @@ better-auth-migrate: ## Create Better Auth tables on a fresh DB (run once after 
 	npx @better-auth/cli@latest migrate -y
 
 docker-dev-oss: ## Like `make docker-dev` but OSS single-user mode + egress enforcement ON (dogfood the secure path; builds the egress-proxy service)
-	REGISTRATION_ENABLED=false EGRESS_ENFORCEMENT=1 COMPOSE_PROFILES=egress $(MAKE) docker-dev
+	REGISTRATION_ENABLED=false EGRESS_ENFORCEMENT=1 $(MAKE) docker-dev
 
 plugin: ## Plugin policy CLI. Usage: make plugin ARGS="approve @scope/plugin-x --reason '...'" | "list" | "diff @scope/plugin-x"
 	npx tsx packages/core-server/src/plugins/cli.ts $(ARGS)

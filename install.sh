@@ -845,9 +845,9 @@ do_uninstall() {
   # (its containers keep running on the image ID; its next docker-pull-oss
   # re-pulls). agent-base only goes with --remove-base (it's the ~GB one with
   # the slow rebuild, so we keep it unless asked).
-  docker image rm -f vonzio-server:latest vonzio-agent:latest >/dev/null 2>&1 || true
+  docker image rm -f vonzio-server:latest vonzio-agent:latest vonzio-egress-proxy:latest >/dev/null 2>&1 || true
   docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-    | grep -E '^(vonzio-agent-|ghcr\.io/vonzio/vonzio/(server|agent):)' \
+    | grep -E '^(vonzio-agent-|ghcr\.io/vonzio/vonzio/(server|agent|egress-proxy):)' \
     | xargs -r docker image rm -f >/dev/null 2>&1 || true
   if $REMOVE_BASE; then
     docker image rm -f ghcr.io/vonzio/vonzio/agent-base:latest >/dev/null 2>&1 || true
@@ -1035,6 +1035,7 @@ setup_env() {
   step "[4/6] Configuration"
   if [[ -f .env ]] && ! $RESET_ENV; then
     ok ".env exists — keeping it (re-run with --reset-env to regenerate)."
+    pin_egress_for_upgrade
   else
     if [[ ! -f .env.example ]]; then
       err "No .env.example in $INSTALL_DIR — is this a vonzio checkout?"
@@ -1080,6 +1081,21 @@ setup_env() {
     # as setup_env's last statement that fails the function under `set -e`.
     if $PORTS_BUMPED; then apply_bumped_ports; fi
   fi
+}
+
+# Upgrade guard for the egress-enforcement default (on since the release that
+# made the compose default `${EGRESS_ENFORCEMENT:-true}`). A kept .env from an
+# older install has no EGRESS_ENFORCEMENT line, so the new default would
+# silently cut its agents off from every host outside the allowlist on
+# upgrade. Pin the old behavior (0) instead and say how to turn it on. Fresh
+# installs get EGRESS_ENFORCEMENT=1 from .env.example and never reach this.
+# Skew guard: only when THIS compose file actually defaults it on.
+pin_egress_for_upgrade() {
+  grep -qE '^EGRESS_ENFORCEMENT=' .env 2>/dev/null && return 0
+  grep -q 'EGRESS_ENFORCEMENT=\${EGRESS_ENFORCEMENT:-true}' docker/docker-compose.yml 2>/dev/null || return 0
+  set_env_var "EGRESS_ENFORCEMENT" "0"
+  warn "Egress enforcement is now on by default for new installs; kept it OFF for this existing install."
+  warn "  Enable it: set EGRESS_ENFORCEMENT=1 in .env and re-run (see docs/HARDENING.md)."
 }
 
 # Upsert KEY=VALUE in .env (replace the line if present, else append).

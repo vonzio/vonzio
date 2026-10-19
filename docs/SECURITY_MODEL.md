@@ -55,6 +55,13 @@ provide. Bugs in any of these are in-scope for security reports.
   bearer-protected).
 - **No default admin credentials.** First-run lands on `/setup`; no
   default username or password ships in the image.
+- **Agent egress enforcement (on by default).** Agent containers sit on
+  an internal Docker network and reach the internet only through the
+  egress proxy, which allows the agent's model endpoint, a built-in list
+  of package registries and git hosts, and operator/per-agent
+  allowlists, and refuses private, loopback and cloud-metadata
+  addresses. Opt-out (`EGRESS_ENFORCEMENT=0`) and limits are in
+  [HARDENING.md](./HARDENING.md#restrict-agent-egress).
 - **CSRF protection** on cookie-authenticated routes.
 - **Signed widget tokens** for embedded chat sessions, scoped per profile.
 - **Secret scanning in CI.** Every PR runs TruffleHog against the
