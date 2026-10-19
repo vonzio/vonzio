@@ -26,6 +26,36 @@ const BYOK_MODEL_HINT = /\s*Pick (?:another|a different) model in Settings\.?/i;
 // The SDK's own wording for a 404 on the model (refers to its CLI /model command).
 const SDK_SELECTED_MODEL = /^There's an issue with the selected model \(([^)]*)\)\.[\s\S]*$/;
 
+// The SDK's wrapper around a failed turn's result ("<tool> returned an error
+// result: <text>") — internal wording that must never reach the user.
+const SDK_RESULT_PREFIX = /^\s*(?:Error:\s*)?Claude Code returned an error result:\s*/i;
+
+// The SDK's lead-in before a rejected-credential `API Error: 401 …`.
+const SDK_AUTH_LEAD = /^(?:Failed to authenticate|Authentication failed|Invalid API key)\s*[.·:]?\s*(?=API Error:)/i;
+
+// The SDK's own copy for a rejected key, with no status attached
+// ("Invalid API key · Please run /login"). Whole-message only, so model prose
+// that merely starts with these words is left alone.
+const SDK_INVALID_KEY = /^(?:Invalid API key|Invalid bearer token|OAuth token (?:has expired|revoked))(?:\s*[·.][^\n]{0,120})?$/i;
+
+const AUTH_HINT = "Check the key, or sign in again, in Settings → Keys.";
+
+/**
+ * Drop the SDK's internal "… returned an error result:" prefix from a failure
+ * message, so the turn's own error text is all the user sees.
+ */
+export function stripSdkErrorPrefix(text: string): string {
+  return text.replace(SDK_RESULT_PREFIX, "").trim();
+}
+
+/** True when a failure is the provider rejecting the credential (401/403) —
+ *  not worth retrying, the key has to change first. */
+export function isAuthFailure(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = stripSdkErrorPrefix(text).replace(SDK_AUTH_LEAD, "");
+  return /^(?:API Error|HTTP):?\s*(?:401|403)\b/.test(t) || SDK_INVALID_KEY.test(t);
+}
+
 function tryParse(text: string): unknown {
   const t = text.trim();
   if (!t.startsWith("{") && !t.startsWith("[")) return undefined;
@@ -77,7 +107,7 @@ function sentence(text: string): string {
 }
 
 function statusHint(status: number): string {
-  if (status === 401 || status === 403) return " Check the key, or sign in again, in Settings → Keys.";
+  if (status === 401 || status === 403) return ` ${AUTH_HINT}`;
   if (status === 429) return " The provider's rate or plan limit was reached — wait a moment and try again.";
   return "";
 }
@@ -87,7 +117,10 @@ function statusHint(status: number): string {
  * one (callers keep the original). Recognises:
  * - `API Error: <status> <json body>` (the SDK's wording of a rejected call),
  * - `HTTP <status>: <json body>` (byok's wording, e.g. in a failed task),
- * - the SDK's "There's an issue with the selected model (…)" 404 copy.
+ * - the SDK's "There's an issue with the selected model (…)" 404 copy,
+ * - the SDK's rejected-credential copy ("Failed to authenticate. API Error:
+ *   401 Unauthorized", "Invalid API key · …"), with its internal
+ *   "… returned an error result:" prefix stripped.
  *
  * `opts.httpForm: false` skips the bare `HTTP <status>` form — for model
  * output (assistant text), where only the SDK's own error wording is safe to
@@ -98,7 +131,11 @@ export function humanizeProviderError(
   opts: { httpForm?: boolean } = {},
 ): string | null {
   if (!text) return null;
-  const trimmed = text.trim();
+  const trimmed = stripSdkErrorPrefix(text).replace(SDK_AUTH_LEAD, "");
+
+  if (SDK_INVALID_KEY.test(trimmed)) {
+    return `The model provider rejected the key. ${AUTH_HINT}`;
+  }
 
   const selected = SDK_SELECTED_MODEL.exec(trimmed);
   if (selected) {
@@ -123,6 +160,12 @@ export function humanizeProviderError(
   if (detail && MODEL_REJECTED.test(detail)) {
     const cleaned = detail.replace(BYOK_MODEL_HINT, "").trim() || "The provider rejected the model";
     return `${sentence(cleaned)} ${SWITCH_MODEL_HINT}`;
+  }
+  // A rejected credential always gets the key hint, even with a plain-text
+  // body ("API Error: 401 Unauthorized").
+  if (!parsed && (status === 401 || status === 403)) {
+    const said = detail && !/^(?:Unauthorized|Forbidden)\.?$/i.test(detail) ? `: ${sentence(detail)}` : ".";
+    return `The model provider rejected the key (HTTP ${status})${said} ${AUTH_HINT}`;
   }
   // Only reword a structured body; plain SDK copy ("API Error: Request was
   // aborted.") is already readable, and a bare HTTP line without JSON is left

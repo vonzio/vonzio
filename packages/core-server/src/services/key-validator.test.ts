@@ -49,12 +49,38 @@ describe("validateAnthropicKey — api_key", () => {
 });
 
 describe("validateAnthropicKey — ollama / openai", () => {
-  it("validates an Ollama key by listing models", async () => {
-    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: "m" }] }), { status: 200 }));
+  it("validates an Ollama key against an endpoint that requires it", async () => {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ purchased: { balance_usd: 1 } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchSpy);
     expect(await validateAnthropicKey("ok", "ollama")).toEqual({ valid: true });
-    const [url] = fetchSpy.mock.calls[0] as unknown as [URL | string];
-    expect(String(url)).toBe("https://ollama.com/v1/models");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toBe("https://ollama.com/api/balance");
+    expect(headerOf(init, "authorization")).toBe("Bearer ok");
+  });
+
+  it("rejects a bad Ollama key even though the model list is public", async () => {
+    // ollama.com answers /v1/models with 200 for anyone; only the balance call checks the key.
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL) =>
+      String(url).endsWith("/api/balance")
+        ? new Response(JSON.stringify({ error: "invalid credentials" }), { status: 401 })
+        : new Response(JSON.stringify({ data: [{ id: "m" }] }), { status: 200 })));
+    expect(await validateAnthropicKey("junkjunkjunkjunkjunk-real", "ollama")).toEqual({ valid: false, error: "Invalid API key" });
+  });
+
+  it("falls back to listing models when the root has no balance endpoint", async () => {
+    const fetchSpy = vi.fn(async (url: string | URL) =>
+      String(url).endsWith("/api/balance")
+        ? new Response("not found", { status: 404 })
+        : new Response(JSON.stringify({ data: [{ id: "m" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    expect(await validateAnthropicKey("ok", "ollama")).toEqual({ valid: true });
+    expect(String((fetchSpy.mock.calls[1] as unknown as [URL | string])[0])).toBe("https://ollama.com/v1/models");
+  });
+
+  it("reports an Ollama outage in words", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
+    expect(await validateAnthropicKey("ok", "ollama")).toEqual({ valid: false, error: "HTTP 503: down" });
   });
 
   it("reports the provider's own 401 wording for an OpenAI-compatible key", async () => {

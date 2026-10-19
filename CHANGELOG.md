@@ -71,6 +71,26 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **A rejected key fails the turn at once, in words.** A 401/403 from the
+  provider used to be retried by the SDK for minutes behind "Working…", then
+  shown twice: the SDK's raw "Failed to authenticate. API Error: 401
+  Unauthorized" as assistant text and again as the error line, behind the
+  SDK's internal error-result prefix. The agent runner now stops on the first
+  auth retry, reports the failure once, and the server strips the SDK's
+  prefix, rewords it with the "check your key" hint and skips the task-level
+  retry.
+
+- **Ollama Cloud "Test connection" checks the key.** ollama.com serves its
+  model list without authentication, so validation passed any string and the
+  first chat turn then failed with 401. The key is now checked against
+  `GET /api/balance` (free, authenticated); a rejected key reads "Invalid API
+  key". A root without that endpoint falls back to listing models.
+
+- **The dashboard dev server starts after `npm ci`.** The lockfile listed
+  `@vitejs/plugin-react` without its dependencies, so `react-refresh` was
+  never installed and `vite` failed on the first import. They are locked
+  again.
+
 - **Home "Start" sends on a fresh page load.** The new chat briefly saw an
   empty agent list on mount, read it as "no key" and dropped the handed-off
   task, leaving it in the composer. It now waits until an agent resolves and

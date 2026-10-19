@@ -20,7 +20,7 @@ import { buildPresenceSection, type Presence } from "./presence.js";
 import type { SessionPresenceRegistry } from "../lib/session-presence.js";
 import { resolveTaskModel } from "../lib/model-resolution.js";
 import { NoModelError, isAnthropicProvider, pickDefaultModel } from "../lib/default-model.js";
-import { humanizeProviderError } from "../lib/provider-error.js";
+import { humanizeProviderError, isAuthFailure, stripSdkErrorPrefix } from "../lib/provider-error.js";
 import { ContainerPool } from "../container/pool.js";
 import { ensureContainerRunning } from "../container/ensure-running.js";
 import { CONTAINER_MODE_LABEL, ContainerMode, AGENT_UID, AGENT_GID, parseMemory } from "../container/docker-manager.js";
@@ -2273,7 +2273,12 @@ export class Orchestrator extends EventEmitter {
 
   private async handleFailure(task: Task, err: unknown): Promise<void> {
     const rawMessage = err instanceof Error ? err.message : String(err);
-    const errorMessage = humanizeProviderError(rawMessage) ?? rawMessage;
+    // The SDK wraps a failed result in its own internal prefix; the user
+    // only sees the turn's error, in words.
+    const cleanMessage = stripSdkErrorPrefix(rawMessage);
+    const errorMessage = humanizeProviderError(cleanMessage) ?? cleanMessage;
+    // A rejected key fails the same way on every attempt — don't retry it.
+    const authFailure = isAuthFailure(rawMessage);
     const errorType = rawMessage.includes("timeout") ? "timeout" as const : "error" as const;
     this.log.error({ taskId: task.id, sessionId: task.session_id, error: rawMessage, errorType }, "Task failed");
 
@@ -2292,7 +2297,7 @@ export class Orchestrator extends EventEmitter {
       }
     }
 
-    if (this.retry.shouldRetry(task, errorType)) {
+    if (!authFailure && this.retry.shouldRetry(task, errorType)) {
       const delay = this.retry.nextDelay(task);
       const retryTask = this.retry.prepareRetry(task);
 

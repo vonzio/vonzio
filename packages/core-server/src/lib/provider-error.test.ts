@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SWITCH_MODEL_HINT, humanizeProviderError } from "./provider-error.js";
+import { SWITCH_MODEL_HINT, humanizeProviderError, isAuthFailure, stripSdkErrorPrefix } from "./provider-error.js";
 
 describe("humanizeProviderError", () => {
   it("rewords a Codex model rejection with a switch-model hint", () => {
@@ -54,5 +54,41 @@ describe("humanizeProviderError", () => {
   it("skips the bare HTTP form for model output when asked", () => {
     expect(humanizeProviderError('HTTP 400: {"error":"x"}', { httpForm: false })).toBeNull();
     expect(humanizeProviderError('API Error: 400 {"error":"x"}', { httpForm: false })).toMatch(/HTTP 400/);
+  });
+});
+
+describe("rejected credentials", () => {
+  const HINT = "Check the key, or sign in again, in Settings → Keys.";
+
+  it("rewords the SDK's failed-to-authenticate copy with the key hint", () => {
+    expect(humanizeProviderError("Failed to authenticate. API Error: 401 Unauthorized"))
+      .toBe(`The model provider rejected the key (HTTP 401). ${HINT}`);
+    expect(humanizeProviderError("Failed to authenticate. API Error: 401 Unauthorized", { httpForm: false }))
+      .toBe(`The model provider rejected the key (HTTP 401). ${HINT}`);
+    expect(humanizeProviderError("API Error: 403 Forbidden")).toBe(`The model provider rejected the key (HTTP 403). ${HINT}`);
+    expect(humanizeProviderError("API Error: 401 key revoked")).toBe(`The model provider rejected the key (HTTP 401): key revoked. ${HINT}`);
+    expect(humanizeProviderError("HTTP 401: Unauthorized")).toBe(`The model provider rejected the key (HTTP 401). ${HINT}`);
+    expect(humanizeProviderError("Invalid API key · Please run /login")).toBe(`The model provider rejected the key. ${HINT}`);
+  });
+
+  it("strips the SDK's error-result prefix", () => {
+    const raw = "Error: Claude Code returned an error result: Failed to authenticate. API Error: 401 Unauthorized";
+    const out = humanizeProviderError(raw);
+    expect(out).toBe(`The model provider rejected the key (HTTP 401). ${HINT}`);
+    expect(stripSdkErrorPrefix("Claude Code returned an error result: something odd")).toBe("something odd");
+    expect(stripSdkErrorPrefix("plain")).toBe("plain");
+  });
+
+  it("detects auth failures and nothing else", () => {
+    expect(isAuthFailure("Claude Code returned an error result: Failed to authenticate. API Error: 401 Unauthorized")).toBe(true);
+    expect(isAuthFailure("HTTP 403: nope")).toBe(true);
+    expect(isAuthFailure("Invalid API key · Please run /login")).toBe(true);
+    expect(isAuthFailure("API Error: 429 slow down")).toBe(false);
+    expect(isAuthFailure("Invalid API key handling is covered in section 3 of the doc.")).toBe(false);
+    expect(isAuthFailure(undefined)).toBe(false);
+  });
+
+  it("leaves model prose about keys alone", () => {
+    expect(humanizeProviderError("Invalid API key handling is covered in section 3 of the doc.", { httpForm: false })).toBeNull();
   });
 });

@@ -147,10 +147,27 @@ export async function runTask(payload: TaskPayload): Promise<void> {
   // If attachments were written to /workspace by the orchestrator, the prompt already references them
   const prompt = payload.prompt;
 
+  // Aborted when the provider rejects the credential: the SDK would otherwise
+  // retry a 401/403 for minutes before giving up with the same error.
+  const abortController = new AbortController();
+  options.abortController = abortController;
+
   const q = query({
     prompt,
     options,
   });
+
+  // The SDK reports a failed API call twice: as a synthetic assistant message
+  // carrying the error text, then as an error result (and finally a thrown
+  // "… returned an error result: <text>"). Hold the assistant copy back and
+  // report the failure once, as an error.
+  let heldErrorText: string | null = null;
+  let errorEmitted = false;
+  const emitError = (error: string) => {
+    if (errorEmitted) return;
+    errorEmitted = true;
+    emit({ type: "error", error: stripSdkErrorPrefix(error) });
+  };
 
   // Track active tool_use blocks being streamed
   const toolUseNames = new Map<string, string>();
@@ -159,7 +176,15 @@ export async function runTask(payload: TaskPayload): Promise<void> {
 
   try {
   for await (const message of q) {
-    if (message.type === "system" && (message as Record<string, unknown>).subtype === "init") {
+    if (message.type === "system" && (message as Record<string, unknown>).subtype === "api_retry") {
+      // A rejected key won't start working on a retry — fail the turn now.
+      const status = (message as Record<string, unknown>).error_status;
+      if (status === 401 || status === 403) {
+        emitError(`API Error: ${status} ${status === 401 ? "Unauthorized" : "Forbidden"}`);
+        abortController.abort();
+        break;
+      }
+    } else if (message.type === "system" && (message as Record<string, unknown>).subtype === "init") {
       emit({
         type: "init",
         session_id: (message as Record<string, unknown>).session_id as string,
@@ -168,7 +193,10 @@ export async function runTask(payload: TaskPayload): Promise<void> {
       // New SDK: full assistant message with content blocks.
       const m = message as Record<string, unknown>;
       const msg = m.message as Record<string, unknown> | undefined;
-      if (msg?.content && Array.isArray(msg.content)) {
+      if (m.error && m.error !== "max_output_tokens") {
+        // The SDK's synthetic error message — reported once, via the result.
+        heldErrorText = textOf(msg) || heldErrorText;
+      } else if (msg?.content && Array.isArray(msg.content)) {
         const blocks = msg.content as Array<Record<string, unknown>>;
         // Emit the turn's narration (text) BEFORE its tool calls. Within one
         // assistant turn the model speaks then acts, but some providers/gateways
@@ -257,7 +285,23 @@ export async function runTask(payload: TaskPayload): Promise<void> {
       }
     } else if (message.type === "result") {
       const m = message as Record<string, unknown>;
-      if (m.subtype === "success") {
+      if (m.subtype === "success" && m.is_error) {
+        // A failed API call: keep usage/session, report the text as the error.
+        emit({
+          type: "result",
+          session_id: m.session_id as string,
+          result: {
+            text: "",
+            input_tokens: ((m.usage as Record<string, number>)?.input_tokens) ?? 0,
+            output_tokens: ((m.usage as Record<string, number>)?.output_tokens) ?? 0,
+            cost_usd: (m.total_cost_usd as number) ?? 0,
+            turns: (m.num_turns as number) ?? 0,
+          },
+        });
+        emitError((m.result as string) || heldErrorText || "The model call failed");
+      } else if (m.subtype === "success") {
+        // An error message the result didn't flag: show it as before.
+        if (heldErrorText) emit({ type: "token", text: heldErrorText });
         emit({
           type: "result",
           session_id: m.session_id as string,
@@ -284,17 +328,31 @@ export async function runTask(payload: TaskPayload): Promise<void> {
             turns: (m.num_turns as number) ?? 0,
           },
         });
-        emit({
-          type: "error",
-          error: `Agent failed: ${m.subtype}`,
-        });
+        emitError(`Agent failed: ${m.subtype}`);
       }
     }
   }
   } catch (err) {
-    emit({
-      type: "error",
-      error: err instanceof Error ? err.message : String(err),
-    });
+    // Already reported (an error result, or the abort after a rejected key).
+    if (errorEmitted) return;
+    emitError(err instanceof Error ? err.message : String(err));
   }
+}
+
+/** Text of an assistant message's text blocks. */
+function textOf(msg: Record<string, unknown> | undefined): string {
+  const content = msg?.content;
+  if (!Array.isArray(content)) return "";
+  return (content as Array<Record<string, unknown>>)
+    .filter((b) => b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("");
+}
+
+// The SDK's internal wrapper around a failed result's text.
+const SDK_RESULT_PREFIX = /^\s*(?:Error:\s*)?Claude Code returned an error result:\s*/i;
+
+/** The failure text without the SDK's internal "… returned an error result:" prefix. */
+export function stripSdkErrorPrefix(text: string): string {
+  return text.replace(SDK_RESULT_PREFIX, "").trim() || text;
 }
