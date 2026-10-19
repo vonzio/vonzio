@@ -4,6 +4,7 @@ import { PROVIDER_CATALOG, type ProviderInfo } from "@vonzio/shared";
 import { createProfile } from "../api/client.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 import { useChatGptSignIn, ChatGptSignInPanel } from "../components/ChatGptSignIn.js";
+import { useOpencodeSignIn, OpencodeSignInPanel } from "../components/OpencodeSignIn.js";
 import { useClaudeSignIn, ClaudeSignInPanel } from "../components/ClaudeSignIn.js";
 import { useEntitlements } from "../registry/index.js";
 import "./login.css";
@@ -200,19 +201,26 @@ function CredentialStep({
   // route creates the credential + default profile server-side, so success
   // just advances the wizard.
   const codex = useChatGptSignIn(onOauthConnected);
+  // OpenCode device sign-in: same shape, its own flow.
+  const opencode = useOpencodeSignIn(onOauthConnected);
   // Claude subscription: browser sign-in is the primary path; the legacy
   // paste-a-setup-token field stays available behind a toggle.
   const claude = useClaudeSignIn(onOauthConnected);
   const [usePasteToken, setUsePasteToken] = useState(false);
   const claudeSelected = kind === "anthropic_oauth" && !usePasteToken;
   const oauthSelected = !!CRED_META[kind].oauthLogin;
-  const signingIn = codex.status === "starting" || codex.status === "waiting";
+  // The device flow for the selected oauthLogin provider, and its name.
+  const isOpencode = kind === "opencode_oauth";
+  const device = isOpencode ? opencode : codex;
+  const deviceName = isOpencode ? "OpenCode" : "ChatGPT";
+  const signingIn = device.status === "starting" || device.status === "waiting";
   const claudeBusy = claude.status === "starting" || claude.status === "completing";
   // Switching provider mid-sign-in abandons the flows — stop poll/paste.
   // Keyed on `kind` (not the derived booleans) so any provider change
   // cancels whichever flow was running.
   useEffect(() => {
-    if (!CRED_META[kind].oauthLogin) codex.cancel();
+    if (kind !== "openai_oauth") codex.cancel();
+    if (kind !== "opencode_oauth") opencode.cancel();
     if (kind !== "anthropic_oauth") { claude.cancel(); setUsePasteToken(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
@@ -229,13 +237,13 @@ function CredentialStep({
           {(Object.keys(CRED_META) as CredentialKind[])
             // Entitlement-gated providers only show for entitled users (OSS
             // grants subscription_oauth by default). Of the oauthLogin
-            // providers, the ChatGPT device login is wired into this wizard
-            // via the shared ChatGptSignIn flow; any future ones stay hidden
-            // until they are.
+            // providers, the ChatGPT and OpenCode device logins are wired into
+            // this wizard via the shared DeviceSignIn flow; any future ones
+            // stay hidden until they are.
             .filter((k) => {
               const m = CRED_META[k];
               if (m.entitlement && !entitlements.includes(m.entitlement)) return false;
-              return !m.oauthLogin || m.kind === "openai_oauth";
+              return !m.oauthLogin || m.kind === "openai_oauth" || m.kind === "opencode_oauth";
             })
             .map((k) => (
             <CredOption
@@ -281,7 +289,7 @@ function CredentialStep({
           />
         </label>}
 
-        {oauthSelected && codex.status !== "idle" && <ChatGptSignInPanel state={codex} />}
+        {oauthSelected && device.status !== "idle" && (isOpencode ? <OpencodeSignInPanel state={opencode} /> : <ChatGptSignInPanel state={codex} />)}
 
         {claudeSelected && claude.status !== "idle" && <ClaudeSignInPanel state={claude} />}
 
@@ -334,11 +342,11 @@ function CredentialStep({
         ) : oauthSelected ? (
           <button
             type="button"
-            onClick={() => { onErrorClear(); codex.start(); }}
+            onClick={() => { onErrorClear(); device.start(); }}
             className="vz-btn vz-btn--primary vz-btn--mono login-submit"
             disabled={signingIn || skipping}
           >
-            {signingIn ? "Waiting for ChatGPT approval…" : "Sign in with ChatGPT →"}
+            {signingIn ? `Waiting for ${deviceName} approval…` : `Sign in with ${deviceName} →`}
           </button>
         ) : (
           <button

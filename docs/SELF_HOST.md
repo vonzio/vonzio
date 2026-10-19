@@ -119,7 +119,7 @@ Host mode serves the dashboard via Vite on `http://localhost:5173`, API on `:300
 Visit your URL. You'll see:
 
 1. **`/setup`** — creates the lone admin account and signs you in. Fill in name, email, password (≥8 chars). Submit.
-2. **`/onboarding`** — pick a provider (Anthropic API key, Claude subscription, ChatGPT subscription, Ollama Cloud, or an OpenAI-compatible endpoint), paste your key, click Continue.
+2. **`/onboarding`** — pick a provider (Anthropic API key, Claude subscription, ChatGPT subscription, OpenCode on a paid plan, Ollama Cloud, or an OpenAI-compatible endpoint), paste your key or sign in, click Continue. OpenCode's free tier only works in OpenCode's own apps, so signing in with OpenCode needs a paid plan.
 3. **`/onboarding` step 2** — pick a default model from your provider's list. Click Finish setup. Skipping this step leaves the default agent without a model; add one later under Agents → default → Model.
 4. **Workspace** — type "Hello" to chat. First message spins up a fresh agent container (~5 sec).
 

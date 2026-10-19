@@ -33,7 +33,7 @@ Open http://localhost:3000, connect a model provider, and send your first task.
 ## Why vonzio
 
 - **Bring your own model.** An Anthropic API key, a Claude or ChatGPT subscription,
-  Ollama (local or Cloud), or any OpenAI-compatible endpoint. Switch per profile or per
+  an OpenCode paid plan, Ollama (local or Cloud), or any OpenAI-compatible endpoint. Switch per profile or per
   workspace — no lock-in to one provider.
 - **One container per conversation.** Each chat runs in its own fresh Docker container
   with a bind-mounted workspace. Sessions remember; cleanup is automatic.

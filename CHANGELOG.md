@@ -7,6 +7,16 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Added
 
+- **Sign in with OpenCode.** Settings → Keys and onboarding offer an OpenCode
+  device sign-in next to ChatGPT's: approve the code on opencode.ai (the page
+  names the client "vonzio") and the account becomes an `opencode` key — the
+  access and refresh tokens encrypted, the expiry and organization stored
+  (migration 38 adds `api_keys.account_id`), refreshed before use. Agents run
+  through the in-container gateway's new `opencode` mode, which picks each
+  model's protocol (Claude on Messages, GPT on Responses, Gemini on the Gemini
+  API, the rest on Chat Completions); the model list is OpenCode's live one
+  and `opencode.ai` joins the egress allowlist. Paid plans only: OpenCode's
+  free tier answers 403 to third-party clients, and vonzio says so.
 - **Sign-in flows run on byok too.** The Claude subscription PKCE flow and
   the ChatGPT device flow now come from `@amenophis1er/byok/core/auth`; the
   two vonzio services keep only what a server owns (the encrypted, user-bound
