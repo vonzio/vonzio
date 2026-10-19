@@ -1,5 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { CLAUDE_DEFAULT_MODEL, NO_MODEL_MESSAGE, NoModelError, defaultModelForProvider, isAnthropicProvider } from "./default-model.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  CLAUDE_DEFAULT_MODEL,
+  DEFAULT_MODEL_PREFERENCES,
+  NO_MODEL_MESSAGE,
+  NoModelError,
+  defaultModelForProvider,
+  isAnthropicProvider,
+  modelPreferences,
+  pickDefaultModel,
+} from "./default-model.js";
 import { CODEX_MODELS } from "../services/codex-oauth-service.js";
 
 describe("isAnthropicProvider", () => {
@@ -15,35 +24,74 @@ describe("isAnthropicProvider", () => {
   });
 });
 
+describe("preference lists", () => {
+  it("match the decided order per provider kind", () => {
+    const claude = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-fable-5-1"];
+    const gpt = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol", "gpt-6-astra"];
+    expect(modelPreferences("api_key")).toEqual(claude);
+    expect(modelPreferences("claude_subscription")).toEqual(claude);
+    expect(modelPreferences(null)).toEqual(claude);
+    expect(modelPreferences("openai")).toEqual(gpt);
+    expect(modelPreferences("openai_subscription")).toEqual(gpt);
+    expect(modelPreferences("ollama")).toEqual(["kimi-k3", "glm-5.3-flash"]);
+    expect(modelPreferences("some_new_kind")).toEqual([]);
+    expect(CLAUDE_DEFAULT_MODEL).toBe("claude-opus-5-5");
+  });
+
+  it("keeps the static ChatGPT fallback list in sync with the preferences", () => {
+    expect([...CODEX_MODELS]).toEqual([...DEFAULT_MODEL_PREFERENCES.openai_subscription]);
+  });
+});
+
+describe("pickDefaultModel", () => {
+  it("picks the first preference present in the catalog, not the first listed", () => {
+    expect(pickDefaultModel("ollama", ["beam", "deepseek-v4", "glm-5.3-flash", "kimi-k3"])).toBe("kimi-k3");
+    expect(pickDefaultModel("ollama", ["beam", "glm-5.3-flash"])).toBe("glm-5.3-flash");
+    expect(pickDefaultModel("openai_subscription", ["gpt-5.5", "gpt-6-astra", "gpt-5.6-luna"])).toBe("gpt-5.6-luna");
+    expect(pickDefaultModel("openai", ["gpt-4.1", "gpt-5.6-terra"])).toBe("gpt-5.6-terra");
+    expect(pickDefaultModel("claude_subscription", ["claude-haiku-5-5", "claude-sonnet-5-5"])).toBe("claude-sonnet-5-5");
+  });
+
+  it("compares ids case-insensitively and returns the catalog's spelling", () => {
+    expect(pickDefaultModel("ollama", ["Beam", "Kimi-K3"])).toBe("Kimi-K3");
+  });
+
+  it("falls back to the first preference when the catalog is unavailable or empty", () => {
+    expect(pickDefaultModel("api_key", null)).toBe("claude-opus-5-5");
+    expect(pickDefaultModel("claude_subscription", [])).toBe("claude-opus-5-5");
+    expect(pickDefaultModel("openai_subscription", null)).toBe("gpt-5.6-sol");
+    expect(pickDefaultModel("openai", undefined)).toBe("gpt-5.6-sol");
+    expect(pickDefaultModel("ollama", null)).toBe("kimi-k3");
+  });
+
+  it("falls back to the first listed model when no preference is listed", () => {
+    expect(pickDefaultModel("ollama", ["beam", "llama4"])).toBe("beam");
+    expect(pickDefaultModel("openai", ["mistral-large", "gpt-4.1"])).toBe("mistral-large");
+  });
+
+  it("prefers a listed claude-* model on Anthropic kinds when no preference is listed", () => {
+    expect(pickDefaultModel("api_key", ["other-model", "claude-haiku-5-5", "claude-opus-4-8"])).toBe("claude-haiku-5-5");
+    expect(pickDefaultModel("api_key", ["other-model"])).toBe("other-model");
+  });
+
+  it("handles a provider kind without preferences", () => {
+    expect(pickDefaultModel("some_new_kind", ["b-model", "a-model"])).toBe("b-model");
+    expect(pickDefaultModel("some_new_kind", null)).toBeNull();
+  });
+});
+
 describe("defaultModelForProvider", () => {
-  afterEach(() => {
-    delete process.env.CODEX_MODELS;
+  it("resolves against the listed catalog", async () => {
+    const lister = vi.fn(async () => ["beam", "kimi-k3"]);
+    expect(await defaultModelForProvider("ollama", lister)).toBe("kimi-k3");
+    expect(lister).toHaveBeenCalledOnce();
   });
 
-  it("returns the Claude default for Anthropic kinds without listing", async () => {
-    const lister = vi.fn(async () => "something-else");
-    expect(await defaultModelForProvider("api_key", lister)).toBe(CLAUDE_DEFAULT_MODEL);
-    expect(await defaultModelForProvider("claude_subscription", lister)).toBe(CLAUDE_DEFAULT_MODEL);
-    expect(lister).not.toHaveBeenCalled();
-  });
-
-  it("returns the first catalog model for other providers", async () => {
-    expect(await defaultModelForProvider("ollama", async () => "kimi-k2")).toBe("kimi-k2");
-    expect(await defaultModelForProvider("openai", async () => "gpt-4.1")).toBe("gpt-4.1");
-    expect(await defaultModelForProvider("openai_subscription", async () => "gpt-5.5")).toBe("gpt-5.5");
-  });
-
-  it("falls back to the Codex list for a ChatGPT subscription when the catalog is empty or fails", async () => {
-    expect(await defaultModelForProvider("openai_subscription", async () => null)).toBe(CODEX_MODELS[0]);
-    expect(await defaultModelForProvider("openai_subscription", async () => { throw new Error("down"); })).toBe(CODEX_MODELS[0]);
-    process.env.CODEX_MODELS = "gpt-pinned";
-    expect(await defaultModelForProvider("openai_subscription")).toBe("gpt-pinned");
-  });
-
-  it("returns null (never a Claude id) when nothing can be determined", async () => {
-    expect(await defaultModelForProvider("ollama", async () => null)).toBeNull();
-    expect(await defaultModelForProvider("openai", async () => { throw new Error("401"); })).toBeNull();
-    expect(await defaultModelForProvider("openai")).toBeNull();
+  it("treats a failing or missing lister as an unavailable catalog", async () => {
+    expect(await defaultModelForProvider("openai_subscription", async () => { throw new Error("down"); })).toBe("gpt-5.6-sol");
+    expect(await defaultModelForProvider("api_key")).toBe("claude-opus-5-5");
+    expect(await defaultModelForProvider("ollama", async () => null)).toBe("kimi-k3");
+    expect(await defaultModelForProvider("some_new_kind", async () => null)).toBeNull();
   });
 });
 

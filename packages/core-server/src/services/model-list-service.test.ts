@@ -64,7 +64,7 @@ describe("ModelListService", () => {
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_1");
-    expect(result).toEqual({ ok: true, models: [], profileDefault: null });
+    expect(result).toEqual({ ok: true, models: [], profileDefault: null, defaultModel: null });
     svc.stop();
   });
 
@@ -173,7 +173,7 @@ describe("ModelListService", () => {
     );
     const svc = new ModelListService(profileService, apiKeyService);
     const result = await svc.listForProfile("prof_2");
-    expect(result).toEqual({ ok: true, models: [], profileDefault: null });
+    expect(result).toEqual({ ok: true, models: [], profileDefault: null, defaultModel: null });
     svc.stop();
   });
 

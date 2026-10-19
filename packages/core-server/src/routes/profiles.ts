@@ -303,7 +303,7 @@ export const profileRoutes = fp(
             result.error,
           ));
         }
-        return { models: result.models };
+        return { models: result.models, default_model: result.defaultModel };
       },
     );
 
@@ -334,7 +334,7 @@ export const profileRoutes = fp(
             result.error,
           ));
         }
-        return { models: result.models };
+        return { models: result.models, default_model: result.defaultModel };
       },
     );
 
@@ -349,7 +349,7 @@ export const profileRoutes = fp(
         schema: {
           summary: "List models grouped by each of the caller's API keys",
           description:
-            "Returns `{ keys: [{ key_id, key_name, provider, models[], error? }] }` across every key the user " +
+            "Returns `{ keys: [{ key_id, key_name, provider, models[], default_model, error? }] }` across every key the user " +
             "can use (own + shared/org). Used by the workspace model picker to select across providers.",
           tags: ["Profiles"],
         },
@@ -371,7 +371,7 @@ export const profileRoutes = fp(
               ),
             ]);
             return result.ok
-              ? { ...base, models: result.models, error: undefined }
+              ? { ...base, models: result.models, default_model: result.defaultModel, error: undefined }
               : { ...base, models: [], error: result.error };
           }),
         );

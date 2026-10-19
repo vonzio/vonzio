@@ -30,12 +30,10 @@ import {
  *  Actual availability depends on the plan tier. */
 export const CODEX_MODELS = [
   "gpt-5.6-sol",
-  "gpt-5.6-luna",
   "gpt-5.6-terra",
-  "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex-spark",
+  "gpt-5.6-luna",
+  "gpt-6.1-sol",
+  "gpt-6-astra",
 ] as const;
 
 /** The Codex model list to surface, honoring a `CODEX_MODELS` env override

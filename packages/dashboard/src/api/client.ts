@@ -228,6 +228,8 @@ export interface KeyModelGroup {
   key_name: string;
   provider: string;
   models: ProfileModel[];
+  /** Provider-preferred default model for this key (server-chosen). */
+  default_model?: string | null;
   error?: string;
 }
 export function fetchAllUserModels(): Promise<{ keys: KeyModelGroup[] }> {
@@ -407,13 +409,13 @@ export interface ProfileModel {
   provider: "anthropic" | "ollama" | "openai";
 }
 
-export function fetchProfileModels(profileId: string): Promise<{ models: ProfileModel[] }> {
+export function fetchProfileModels(profileId: string): Promise<{ models: ProfileModel[]; default_model?: string | null }> {
   return request(`/profiles/${encodeURIComponent(profileId)}/models`);
 }
 
 /** Models for a specific API key — lets the agent editor refresh the picker
  *  when the key dropdown changes before the profile is saved. */
-export function fetchModelsForApiKey(apiKeyId: string): Promise<{ models: ProfileModel[] }> {
+export function fetchModelsForApiKey(apiKeyId: string): Promise<{ models: ProfileModel[]; default_model?: string | null }> {
   return request(`/anthropic-keys/${encodeURIComponent(apiKeyId)}/models`);
 }
 

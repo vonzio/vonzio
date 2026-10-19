@@ -240,7 +240,7 @@ export async function buildServer(deps: ServerDeps) {
     if (!key) return null;
     return defaultModelForProvider(key.provider, async () => {
       const r = await modelListService.listForApiKey(apiKeyId);
-      return r.ok ? (r.models[0]?.id ?? null) : null;
+      return r.ok ? r.models.map((m) => m.id) : null;
     });
   };
   profileService.setDefaultModelResolver(defaultModelForKey);

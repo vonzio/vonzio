@@ -166,11 +166,11 @@ export class ProfileService {
     this.defaultModelResolver = fn;
   }
 
-  /** When a key is attached but no model is chosen, pick a provider-appropriate
-   *  default. Only for non-Anthropic kinds (ollama/openai/ChatGPT) — an empty
-   *  model on those resolves to a Claude id at run time and fails ("model …
-   *  not supported"). Anthropic keeps an empty model (the SDK picks a valid
-   *  Claude default). */
+  /** When a key is attached but no model is chosen, store the provider's
+   *  preferred default (lib/default-model.ts via the injected resolver). Only
+   *  for non-Anthropic kinds (ollama/openai/ChatGPT) — an empty model on those
+   *  must never reach the SDK. Anthropic keeps an empty model; the orchestrator
+   *  resolves the same preference list for it at turn time. */
   private async pickDefaultModel(model: string | null, apiKeyId: string | null): Promise<string | null> {
     if (model || !apiKeyId || !this.defaultModelResolver || !this.apiKeyService) return model;
     const key = await this.apiKeyService.get(apiKeyId);
