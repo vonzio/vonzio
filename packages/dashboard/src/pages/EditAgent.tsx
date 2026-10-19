@@ -123,6 +123,8 @@ export function EditAgent() {
   // no truthful per-agent control to show (domains do nothing) — we show an
   // operator note instead of a toggle.
   const egressEnforced = !!(window as unknown as { __VONZIO_EGRESS_ENFORCEMENT?: boolean }).__VONZIO_EGRESS_ENFORCEMENT;
+  // Hosts every agent may reach on this server (built-in + EGRESS_ALLOWED_HOSTS).
+  const egressBaseline = (window as unknown as { __VONZIO_EGRESS_BASELINE?: string[] }).__VONZIO_EGRESS_BASELINE ?? [];
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
@@ -848,7 +850,9 @@ export function EditAgent() {
                             <div style={{ fontSize: 12, color: "var(--vz-muted)", marginTop: 3, lineHeight: 1.5 }}>
                               {allowAllEgress
                                 ? "Off — the agent can reach any host on the internet."
-                                : "On — the agent reaches only the model endpoint and the domains below; everything else is blocked (including shell commands like curl)."}
+                                : egressBaseline.length
+                                  ? "On — the agent reaches only its model endpoint, the server-wide hosts listed below the field, and the domains you add; everything else is blocked (including shell commands like curl)."
+                                  : "On — the agent reaches only the model endpoint and the domains below; everything else is blocked (including shell commands like curl)."}
                             </div>
                           </div>
                         </div>
@@ -889,8 +893,13 @@ export function EditAgent() {
                           }
                         }}
                         onBlur={() => addEgressDomains(egressInput)}
-                        placeholder="github.com"
+                        placeholder="docs.example.com"
                       />
+                      {egressBaseline.length > 0 && (
+                        <div style={{ fontSize: 11.5, color: "var(--vz-muted-2)", marginTop: 6, lineHeight: 1.5 }}>
+                          Always allowed on this server: {egressBaseline.join(", ")}.
+                        </div>
+                      )}
                     </Field>
                       )}
                     </>

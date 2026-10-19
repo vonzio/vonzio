@@ -9,8 +9,14 @@ import { createRequire } from "node:module";
  */
 const require = createRequire(import.meta.url);
 const proxy = require("../../../../docker/egress-proxy.cjs") as {
-  signToken: (domains: string[], secret: string, ttlSeconds?: number) => string;
-  verifyToken: (token: string | null, secret: string, nowSeconds?: number) => { domains: string[] } | null;
+  signToken: (domains: string[], secret: string, ttlSeconds?: number, models?: string[]) => string;
+  verifyToken: (token: string | null, secret: string, nowSeconds?: number) => { domains: string[]; models: string[] } | null;
+  isMetadataIp: (ip: string) => boolean;
+  isModelEndpoint: (host: string, port: number, models: string[]) => boolean;
+  authorize: (
+    header: string | undefined, host: string, port: number,
+    ctx: { secret: string; allowedPorts: Set<number> },
+  ) => { ok: boolean; code?: number; allowPrivate?: boolean };
   hostMatches: (host: string, domains: string[]) => boolean;
   isBlockedIp: (ip: string) => boolean;
   parseConnectTarget: (t: string) => { host: string; port: number } | null;
@@ -22,7 +28,7 @@ const SECRET = "test-secret-key";
 describe("egress-proxy token sign/verify", () => {
   it("round-trips the allowlist", () => {
     const t = proxy.signToken(["api.github.com", "registry.npmjs.org"], SECRET);
-    expect(proxy.verifyToken(t, SECRET)).toEqual({ domains: ["api.github.com", "registry.npmjs.org"] });
+    expect(proxy.verifyToken(t, SECRET)).toEqual({ domains: ["api.github.com", "registry.npmjs.org"], models: [] });
   });
 
   it("rejects a token signed with a different secret", () => {
@@ -170,5 +176,46 @@ describe("egress-proxy tokenFromProxyAuth", () => {
   it("returns null for non-Basic or missing headers", () => {
     expect(proxy.tokenFromProxyAuth(undefined)).toBeNull();
     expect(proxy.tokenFromProxyAuth("Bearer xyz")).toBeNull();
+  });
+});
+
+describe("egress-proxy model endpoints (private / custom-port model servers)", () => {
+  const ctx = { secret: SECRET, allowedPorts: new Set([80, 443]) };
+  const basic = (t: string) => "Basic " + Buffer.from(`${t}:`).toString("base64");
+
+  it("round-trips the model endpoint claim", () => {
+    const t = proxy.signToken(["mock-llm"], SECRET, undefined, ["mock-llm:8080"]);
+    expect(proxy.verifyToken(t, SECRET)).toEqual({ domains: ["mock-llm"], models: ["mock-llm:8080"] });
+  });
+
+  it("matches only the exact host:port", () => {
+    expect(proxy.isModelEndpoint("Mock-LLM", 8080, ["mock-llm:8080"])).toBe(true);
+    expect(proxy.isModelEndpoint("mock-llm", 8081, ["mock-llm:8080"])).toBe(false);
+    expect(proxy.isModelEndpoint("api.mock-llm", 8080, ["mock-llm:8080"])).toBe(false);
+  });
+
+  it("authorizes the model endpoint on a custom port and flags it private-ok", () => {
+    const t = proxy.signToken(["mock-llm"], SECRET, undefined, ["mock-llm:8080"]);
+    expect(proxy.authorize(basic(t), "mock-llm", 8080, ctx)).toEqual({ ok: true, allowPrivate: true });
+  });
+
+  it("keeps the port + public-IP rules for every other host", () => {
+    const t = proxy.signToken(["github.com", "mock-llm"], SECRET, undefined, ["mock-llm:8080"]);
+    expect(proxy.authorize(basic(t), "github.com", 443, ctx)).toEqual({ ok: true, allowPrivate: false });
+    expect(proxy.authorize(basic(t), "github.com", 22, ctx).code).toBe(403);
+    expect(proxy.authorize(basic(t), "mock-llm", 9000, ctx).code).toBe(403);
+    expect(proxy.authorize(basic(t), "example.com", 443, ctx).code).toBe(403);
+  });
+
+  it("isMetadataIp still blocks metadata, loopback, unspecified and multicast", () => {
+    for (const ip of ["169.254.169.254", "127.0.0.1", "0.0.0.0", "224.0.0.1", "::1", "::", "fe80::1", "::ffff:169.254.169.254", "64:ff9b::a9fe:a9fe"]) {
+      expect(proxy.isMetadataIp(ip), ip).toBe(true);
+    }
+  });
+
+  it("isMetadataIp allows LAN / docker-network addresses", () => {
+    for (const ip of ["10.0.0.5", "172.18.0.4", "192.168.1.20", "100.64.0.1", "fd00::1", "8.8.8.8"]) {
+      expect(proxy.isMetadataIp(ip), ip).toBe(false);
+    }
   });
 });

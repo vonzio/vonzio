@@ -146,6 +146,9 @@ jobs:
             packages/core-server/src/services/scope.test.ts \
             packages/core-server/src/services/title-service.test.ts \
             packages/core-server/src/lib/safe-webhook-fetch.test.ts \
+            packages/core-server/src/config.test.ts \
+            packages/core-server/src/orchestrator/egress.test.ts \
+            packages/core-server/src/services/egress-proxy.test.ts \
             packages/core-server/src/lib/default-model.test.ts \
             packages/core-server/src/lib/provider-error.test.ts \
             packages/core-server/src/mcp/mail-mcp.test.ts \

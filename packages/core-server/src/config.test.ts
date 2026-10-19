@@ -21,7 +21,7 @@ describe("loadConfig", () => {
     expect(config.SESSION_IDLE_PAUSE_SECS).toBe(900);
     expect(config.RATE_LIMIT_CALLER_RPM).toBe(60);
     expect(config.CONTAINER_MEMORY_LIMIT_BATCH).toBe("1g");
-    expect(config.CONTAINER_MEMORY_LIMIT_SESSION).toBe("768m");
+    expect(config.CONTAINER_MEMORY_LIMIT_SESSION).toBe("4g");
     expect(config.PROMETHEUS_ENABLED).toBe(false);
   });
 
@@ -58,5 +58,28 @@ describe("loadConfig", () => {
         ENCRYPTION_KEY: "a]Kz#mR9!pL$2wF&vQ8nX5bJ@cY7hT4d",
       }),
     ).toThrow("Invalid configuration");
+  });
+
+  describe("egress enforcement", () => {
+    it("is ON by default with the built-in allowlist and no extra hosts", () => {
+      const config = loadConfig(validEnv);
+      expect(config.EGRESS_ENFORCEMENT).toBe(true);
+      expect(config.EGRESS_BUILTIN_ALLOWLIST).toBe(true);
+      expect(config.EGRESS_ALLOWED_HOSTS).toBe("");
+      expect(config.EGRESS_PROXY_NETWORK).toBe("vonzio-egress");
+    });
+
+    it.each(["0", "false", "off", "no", ""])("opts out with EGRESS_ENFORCEMENT=%j", (v) => {
+      expect(loadConfig({ ...validEnv, EGRESS_ENFORCEMENT: v }).EGRESS_ENFORCEMENT).toBe(false);
+    });
+
+    it.each(["1", "true", "on"])("stays on with EGRESS_ENFORCEMENT=%j", (v) => {
+      expect(loadConfig({ ...validEnv, EGRESS_ENFORCEMENT: v }).EGRESS_ENFORCEMENT).toBe(true);
+    });
+
+    it("drops the built-in allowlist only on an explicit false", () => {
+      expect(loadConfig({ ...validEnv, EGRESS_BUILTIN_ALLOWLIST: "false" }).EGRESS_BUILTIN_ALLOWLIST).toBe(false);
+      expect(loadConfig({ ...validEnv, EGRESS_BUILTIN_ALLOWLIST: "" }).EGRESS_BUILTIN_ALLOWLIST).toBe(true);
+    });
   });
 });

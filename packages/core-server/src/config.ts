@@ -125,12 +125,25 @@ const configSchema = z.object({
   // internal (no-direct-internet) docker network and reach the outside world
   // ONLY through a shared egress proxy that permits the model endpoint + the
   // profile/task egress allowlist; everything else is refused at the network
-  // layer. Default OFF: OSS self-hosters keep today's advisory behavior so an
-  // upgrade doesn't suddenly cut agents' internet; SaaS sets EGRESS_ENFORCEMENT=1.
+  // layer. Default ON (fail-closed: an agent won't start if the proxy service
+  // isn't running). Opt out with EGRESS_ENFORCEMENT=0. install.sh pins 0 into
+  // an upgraded install's .env that predates this default, so an upgrade never
+  // silently cuts agents' internet; host-mode `make api` passes 0 too (no proxy).
   EGRESS_ENFORCEMENT: z.string().transform((v) => {
     const lower = v.trim().toLowerCase();
     return !["false", "0", "no", "off", ""].includes(lower);
-  }).default("false"),
+  }).default("true"),
+  // Extra hosts (comma-separated; each also allows its subdomains) every
+  // enforced agent may reach, on top of the built-in allowlist and the agent's
+  // own Network egress list. E.g. "docs.python.org,my-registry.internal.example".
+  EGRESS_ALLOWED_HOSTS: z.string().default(""),
+  // Built-in allowlist (model providers, package registries, git hosts — see
+  // DEFAULT_EGRESS_ALLOWLIST in orchestrator/egress.ts). Set false for a strict
+  // posture: model endpoint + EGRESS_ALLOWED_HOSTS + per-agent list only.
+  EGRESS_BUILTIN_ALLOWLIST: z.string().transform((v) => {
+    const lower = v.trim().toLowerCase();
+    return !["false", "0", "no", "off"].includes(lower);
+  }).default("true"),
   EGRESS_PROXY_IMAGE: z.string().default("vonzio-egress-proxy:latest"),
   // The internal docker network agents are placed on under enforcement.
   EGRESS_PROXY_NETWORK: z.string().default("vonzio-egress"),

@@ -35,6 +35,7 @@ import { CONTAINER_MODE_LABEL, ContainerMode } from "./container/docker-manager.
 import { SessionRegistry } from "./container/session-registry.js";
 import { WorkspaceProvisioner } from "./container/workspace.js";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
+import { egressBaseline, parseHostList } from "./orchestrator/egress.js";
 import { MetricsCollector } from "./metrics/collector.js";
 import { TaskService } from "./services/task-service.js";
 import { WorkspaceService } from "./services/workspace-service.js";
@@ -159,10 +160,18 @@ export async function buildServer(deps: ServerDeps) {
   const connectionManager = new ConnectionManager({ maxPerCaller: config.WS_MAX_CONNECTIONS_PER_CALLER });
   const eventLog = new EventLog(config.EVENT_LOG_DIR);
 
+  const egressAllowBaseline = egressBaseline({
+    builtin: config.EGRESS_BUILTIN_ALLOWLIST,
+    extra: parseHostList(config.EGRESS_ALLOWED_HOSTS),
+  });
+
   const containerPool = new ContainerPool(
     containerManager,
     {
-      minSize: config.POOL_MIN_SIZE,
+      // Pre-warmed pool containers are profile-agnostic, so under egress
+      // enforcement the orchestrator never claims them (pooled tasks fall back
+      // to a dedicated proxied container). Don't keep idle ones warm for nothing.
+      minSize: config.EGRESS_ENFORCEMENT ? 0 : config.POOL_MIN_SIZE,
       maxSize: config.POOL_MAX_SIZE,
       idleDrainSecs: config.POOL_IDLE_DRAIN_SECS,
       maxRecycles: config.POOL_MAX_RECYCLES,
@@ -376,6 +385,7 @@ export async function buildServer(deps: ServerDeps) {
       egressEnforcement: config.EGRESS_ENFORCEMENT,
       egressProxyNetwork: config.EGRESS_PROXY_NETWORK,
       egressProxySecret: config.EGRESS_PROXY_SECRET ?? config.ENCRYPTION_KEY,
+      egressBaseline: egressAllowBaseline,
     },
   });
 
@@ -493,6 +503,9 @@ export async function buildServer(deps: ServerDeps) {
       // (feature 0005). Drives the Network panel banner: "enforced" vs the
       // advisory note when off.
       egressEnforcement: config.EGRESS_ENFORCEMENT,
+      // Hosts every agent may reach under enforcement (shown in the Network
+      // panel so the per-agent list isn't mistaken for the whole allowlist).
+      egressBaseline: config.EGRESS_ENFORCEMENT ? egressAllowBaseline : [],
     };
   });
 
