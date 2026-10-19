@@ -71,6 +71,12 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **Ollama Cloud "Test connection" checks the key.** ollama.com serves its
+  model list without authentication, so validation passed any string and the
+  first chat turn then failed with 401. The key is now checked against
+  `GET /api/balance` (free, authenticated); a rejected key reads "Invalid API
+  key". A root without that endpoint falls back to listing models.
+
 - **The dashboard dev server starts after `npm ci`.** The lockfile listed
   `@vitejs/plugin-react` without its dependencies, so `react-refresh` was
   never installed and `vite` failed on the first import. They are locked
