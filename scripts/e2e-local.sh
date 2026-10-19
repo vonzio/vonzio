@@ -143,8 +143,9 @@ if [ "${MODE}" = "chat" ] && [ "${E2E_EGRESS}" = "1" ]; then
   [ "${code}" = "200" ] || egress_fail "built-in allowlisted registry.npmjs.org should pass, got HTTP ${code}"
   code="$(ax 'curl -s -o /dev/null -w "%{http_connect}" --max-time 30 https://example.com/' || true)"
   [ "${code}" = "403" ] || egress_fail "non-allowlisted example.com should be refused by the proxy (403), got ${code}"
-  ax 'curl -s -o /dev/null --max-time 15 http://169.254.169.254/latest/meta-data/' \
-    && egress_fail "metadata address must not be reachable"
+  # Plain HTTP: the proxy answers the request itself, so assert its 403.
+  code="$(ax 'curl -s -o /dev/null -w "%{http_code}" --max-time 15 http://169.254.169.254/latest/meta-data/' || true)"
+  [ "${code}" = "403" ] || egress_fail "metadata address must be refused by the proxy (403), got ${code}"
   ax 'curl -s -o /dev/null --noproxy "*" --max-time 10 https://1.1.1.1/' \
     && egress_fail "direct (proxy-bypassing) egress must have no route"
   echo ">> egress enforcement OK (allowlisted host passes, others refused, no direct route)"
