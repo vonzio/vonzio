@@ -81,6 +81,12 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **Keys are checked before they are saved.** Onboarding and Settings saved a
+  pasted key without asking the provider, so a mistyped or autofilled key only
+  failed on the first chat. The key is now checked first and a definite
+  refusal ("Invalid API key") is shown inline; an unreachable provider still
+  saves.
+
 - **A rejected key fails the turn at once, in words.** A 401/403 from the
   provider used to be retried by the SDK for minutes behind "Working…", then
   shown twice: the SDK's raw "Failed to authenticate. API Error: 401
