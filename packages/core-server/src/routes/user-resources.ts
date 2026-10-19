@@ -472,8 +472,19 @@ export const userResourceRoutes = fp(
       if (cleanApiKey && nonAscii.test(cleanApiKey)) {
         return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, "API key contains a non-ASCII character — re-copy from the source (smart quotes or hidden characters break HTTP headers)."));
       }
+      // Check the key with the provider before saving it, so a mistyped or
+      // autofilled key fails here instead of on the first chat. A provider we
+      // can't reach doesn't block the save: only a definite refusal does.
+      const cleanBase = provider === "openai" ? base_url?.trim() || null : null;
+      if (cleanApiKey) {
+        const { validateAnthropicKey } = await import("../services/key-validator.js");
+        const check = await validateAnthropicKey(cleanApiKey, provider, cleanBase).catch(() => ({ valid: true as const }));
+        if (!check.valid && check.error && !/unreachable|timed out|timeout/i.test(check.error)) {
+          return reply.code(400).send(errorResponse(ErrorCodes.BAD_REQUEST, check.error));
+        }
+      }
       const key = await apiKeyService.create(
-        { name, provider, api_key: cleanApiKey, base_url: provider === "openai" ? base_url?.trim() || null : null },
+        { name, provider, api_key: cleanApiKey, base_url: cleanBase },
         request.user!.id,
       );
 
