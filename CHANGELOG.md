@@ -71,6 +71,11 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **Home "Start" sends on a fresh page load.** The new chat briefly saw an
+  empty agent list on mount, read it as "no key" and dropped the handed-off
+  task, leaving it in the composer. It now waits until an agent resolves and
+  only gives up when that agent really has no key.
+
 - **Path-mode previews load their own assets.** An app served under
   `/preview/<slug>/<port>/` that links `/static/style.css` used to fetch it
   from the dashboard and render unstyled. The proxy now prefixes root-relative

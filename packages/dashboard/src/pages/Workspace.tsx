@@ -910,14 +910,16 @@ export function Workspace() {
   }
 
   // Home "Start": send the handed-off task once the new chat can dispatch —
-  // socket open, profiles loaded, an agent with a key selected. If it can't
-  // (no agent / no key), drop the auto-send and leave the text in the composer.
+  // socket open, an agent resolved, and that agent has a key. If the agent
+  // has no key, drop the auto-send and leave the text in the composer.
   const autoSendProfileId = selectedProfileId || defaultProfileId;
   useEffect(() => {
     if (autoSendText === null || autoSendFiredRef.current) return;
     if (activeWorkspaceId) { setAutoSendText(null); return; }
-    if (profiles === undefined) return;
-    if (!autoSendProfileId || keyMissing) { setAutoSendText(null); return; }
+    // Wait for an agent to resolve: the profile list can read as loaded but
+    // empty for a render or two on mount, which used to drop the send.
+    if (profiles === undefined || !autoSendProfileId) return;
+    if (keyMissing) { setAutoSendText(null); return; }
     if (!chat.connected || chat.streaming) return;
     autoSendFiredRef.current = true;
     void handleSend(autoSendText);
