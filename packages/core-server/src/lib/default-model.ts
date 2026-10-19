@@ -16,6 +16,7 @@ import type { ProfileProvider } from "@vonzio/shared";
 const CLAUDE_PREFERENCES = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-fable-5-1"] as const;
 const OPENAI_PREFERENCES = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol", "gpt-6-astra"] as const;
 const OLLAMA_PREFERENCES = ["kimi-k3", "glm-5.3-flash"] as const;
+const OPENCODE_PREFERENCES = ["kimi-k3", "claude-sonnet-5-5", "gpt-6.1-sol", "glm-5.3"] as const;
 
 export const DEFAULT_MODEL_PREFERENCES: Readonly<Record<string, readonly string[]>> = {
   api_key: CLAUDE_PREFERENCES,
@@ -23,7 +24,38 @@ export const DEFAULT_MODEL_PREFERENCES: Readonly<Record<string, readonly string[
   openai: OPENAI_PREFERENCES,
   openai_subscription: OPENAI_PREFERENCES,
   ollama: OLLAMA_PREFERENCES,
+  opencode: OPENCODE_PREFERENCES,
 };
+
+/**
+ * OpenCode free-tier models answer 403 to any client but OpenCode's own apps,
+ * so they are never listed or picked for an OpenCode key.
+ *
+ * The signal is the id: OpenCode's model list (`/inference/v1/models`) carries
+ * no pricing or tier metadata, and byok passes it through as-is. Free models
+ * are published with a `-free` suffix (beam-free, glm-5.3-flash-free, …), plus
+ * a few named exceptions that are free without one. models.dev prices all of
+ * them at zero, but it is not consulted at runtime (one more network
+ * dependency for a self-hosted install), so new unsuffixed free models must be
+ * added here.
+ */
+const OPENCODE_FREE_IDS: ReadonlySet<string> = new Set(["big-pickle"]);
+
+export function isOpencodeFreeModel(id: string): boolean {
+  const k = id.toLowerCase();
+  return k.endsWith("-free") || OPENCODE_FREE_IDS.has(k);
+}
+
+/** Drop the models a provider kind lists but can never run (today: OpenCode's
+ *  free tier). Every other kind's catalog is returned unchanged. */
+export function runnableModels<T>(
+  provider: ProfileProvider | string | null | undefined,
+  models: readonly T[],
+  idOf: (m: T) => string,
+): T[] {
+  if (provider !== "opencode") return [...models];
+  return models.filter((m) => !isOpencodeFreeModel(idOf(m)));
+}
 
 /** The Claude model used where a concrete id is required on an Anthropic
  *  provider and no catalog is at hand. */
@@ -67,6 +99,8 @@ export function pickDefaultModel(
   listed: readonly string[] | null | undefined,
 ): string | null {
   const prefs = modelPreferences(provider);
+  // Never default to a model the key can't run, even from an unfiltered list.
+  if (listed) listed = runnableModels(provider, listed, (id) => id);
   if (!listed || listed.length === 0) return prefs[0] ?? null;
   const byLower = new Map<string, string>();
   for (const id of listed) {

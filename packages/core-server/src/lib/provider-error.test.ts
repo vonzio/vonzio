@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SWITCH_MODEL_HINT, humanizeProviderError, isAuthFailure, stripSdkErrorPrefix } from "./provider-error.js";
+import { OPENCODE_FREE_TIER_MESSAGE, SWITCH_MODEL_HINT, humanizeProviderError, isAuthFailure, stripSdkErrorPrefix } from "./provider-error.js";
 
 describe("humanizeProviderError", () => {
   it("rewords a Codex model rejection with a switch-model hint", () => {
@@ -90,5 +90,29 @@ describe("rejected credentials", () => {
 
   it("leaves model prose about keys alone", () => {
     expect(humanizeProviderError("Invalid API key handling is covered in section 3 of the doc.", { httpForm: false })).toBeNull();
+  });
+});
+
+describe("OpenCode free tier", () => {
+  const OLD = "OpenCode's free tier only works in OpenCode's own apps; a paid plan is needed.";
+
+  it("says the model is free-tier, without the key hint or a doubled status", () => {
+    for (const raw of [
+      `API Error: 403 HTTP 403: ${OLD}`,
+      `API Error: 403 ${JSON.stringify({ type: "error", error: { type: "permission_error", message: `HTTP 403: ${OLD}` } })}`,
+      `Claude Code returned an error result: API Error: 403 HTTP 403: ${OPENCODE_FREE_TIER_MESSAGE}`,
+      `HTTP 403: ${OLD}`,
+    ]) {
+      const out = humanizeProviderError(raw);
+      expect(out).toBe(OPENCODE_FREE_TIER_MESSAGE);
+      expect(out).not.toMatch(/Settings → Keys|HTTP 403/);
+    }
+  });
+
+  it("does not repeat byok's HTTP status in other failures", () => {
+    expect(humanizeProviderError("API Error: 403 HTTP 403: account suspended"))
+      .toBe("The model provider rejected the key (HTTP 403): account suspended. Check the key, or sign in again, in Settings → Keys.");
+    expect(humanizeProviderError("API Error: HTTP 401: token expired"))
+      .toBe("The model provider rejected the key (HTTP 401): token expired. Check the key, or sign in again, in Settings → Keys.");
   });
 });

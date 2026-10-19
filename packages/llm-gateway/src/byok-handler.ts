@@ -21,9 +21,10 @@ export interface ByokModeOptions {
   opencodeOrgId?: string;
 }
 
-/** What a third-party client gets from OpenCode on its free tier. */
+/** What a third-party client gets from OpenCode on a free-tier model. The
+ *  key is fine; the model isn't (core-server's provider-error matches this). */
 export const OPENCODE_FREE_TIER =
-  "OpenCode's free tier only works in OpenCode's own apps; a paid plan is needed.";
+  "This OpenCode model is free-tier, which only works in OpenCode's own apps. Pick a paid model from the model picker.";
 
 /** The byok connection for a request's credential. */
 export function connectionFor(opts: ByokModeOptions, credential: string): Connection {
