@@ -71,6 +71,15 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Fixed
 
+- **A rejected key fails the turn at once, in words.** A 401/403 from the
+  provider used to be retried by the SDK for minutes behind "Working…", then
+  shown twice: the SDK's raw "Failed to authenticate. API Error: 401
+  Unauthorized" as assistant text and again as the error line, behind the
+  SDK's internal error-result prefix. The agent runner now stops on the first
+  auth retry, reports the failure once, and the server strips the SDK's
+  prefix, rewords it with the "check your key" hint and skips the task-level
+  retry.
+
 - **Ollama Cloud "Test connection" checks the key.** ollama.com serves its
   model list without authentication, so validation passed any string and the
   first chat turn then failed with 401. The key is now checked against

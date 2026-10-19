@@ -119,6 +119,63 @@ describe("runTask", () => {
     expect((err as Record<string, unknown>).error).toContain("Agent failed");
   });
 
+  it("reports a failed API call once, as an error without the SDK prefix", async () => {
+    const text = "Failed to authenticate. API Error: 401 Unauthorized";
+    mockQuery.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        yield { type: "assistant", error: "authentication_failed", message: { content: [{ type: "text", text }] } };
+        yield { type: "result", subtype: "success", is_error: true, result: text, session_id: "s", usage: { input_tokens: 0, output_tokens: 0 }, total_cost_usd: 0, num_turns: 1 };
+        throw new Error(`Claude Code returned an error result: ${text}`);
+      },
+    } as unknown as ReturnType<typeof query>);
+
+    await runTask({ prompt: "hi" });
+    const msgs = parsedOutput();
+
+    expect(msgs.filter((m) => m.type === "token")).toEqual([]);
+    expect(msgs.filter((m) => m.type === "error")).toEqual([{ type: "error", error: text }]);
+    expect((msgs.find((m) => m.type === "result") as { result: { text: string } }).result.text).toBe("");
+  });
+
+  it("aborts instead of retrying a rejected key", async () => {
+    let pulledAfterRetry = false;
+    mockQuery.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        yield { type: "system", subtype: "api_retry", attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: 401, error: "authentication_failed" };
+        pulledAfterRetry = true;
+        yield { type: "system", subtype: "api_retry", attempt: 2, max_retries: 10, retry_delay_ms: 1000, error_status: 401, error: "authentication_failed" };
+      },
+    } as unknown as ReturnType<typeof query>);
+
+    await runTask({ prompt: "hi" });
+    const opts = (mockQuery.mock.calls.at(-1)?.[0] as { options: { abortController: AbortController } }).options;
+
+    expect(pulledAfterRetry).toBe(false);
+    expect(opts.abortController.signal.aborted).toBe(true);
+    expect(parsedOutput().filter((m) => m.type === "error")).toEqual([{ type: "error", error: "API Error: 401 Unauthorized" }]);
+  });
+
+  it("keeps retrying transient failures", async () => {
+    mockMessages([
+      { type: "system", subtype: "api_retry", attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: 529, error: "overloaded" },
+      { type: "result", subtype: "success", result: "ok", session_id: "s", usage: { input_tokens: 0, output_tokens: 0 }, total_cost_usd: 0, num_turns: 1 },
+    ]);
+    await runTask({ prompt: "hi" });
+    const msgs = parsedOutput();
+    expect(msgs.some((m) => m.type === "error")).toBe(false);
+    expect((msgs.find((m) => m.type === "result") as { result: { text: string } }).result.text).toBe("ok");
+  });
+
+  it("strips the SDK prefix from a thrown failure", async () => {
+    mockQuery.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        throw new Error("Claude Code returned an error result: something broke");
+      },
+    } as unknown as ReturnType<typeof query>);
+    await runTask({ prompt: "hi" });
+    expect(parsedOutput()).toEqual([{ type: "error", error: "something broke" }]);
+  });
+
   it("resumes session when resume flag is set", async () => {
     mockMessages([
       { type: "result", subtype: "success", result: "ok", session_id: "s", usage: { input_tokens: 0, output_tokens: 0 }, total_cost_usd: 0, num_turns: 1 },
