@@ -189,6 +189,15 @@ All notable changes to vonzio OSS core are recorded here. Releases are cut as
 
 ### Changed
 
+- **No dollar figures for flat-rate providers.** Turns on a Claude or ChatGPT
+  subscription or Ollama Cloud (and any provider kind without per-token
+  billing) now show token counts only in the chat header, message footers,
+  goal-loop summary and task views; the SDK's dollar estimate there was not
+  money spent. Anthropic API keys and OpenAI / OpenAI-compatible keys keep the
+  cost. Task results and `turn.done` usage carry a new `billing`
+  (`"metered"` | `"flat"`) field; older turns without it are treated as
+  metered.
+
 - **Default models follow a per-provider preference list.** When an agent or
   turn has no model, vonzio now picks the first available model from a fixed
   preference order instead of the first entry of the provider's catalog (which

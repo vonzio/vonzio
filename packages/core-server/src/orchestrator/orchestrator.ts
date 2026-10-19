@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TaskQueue } from "@vonzio/shared";
 import type { Task, TaskResult } from "@vonzio/shared";
+import { usageBillingFor } from "@vonzio/shared";
 import type { ContainerManager } from "@vonzio/shared";
 import { FILE_SERVER_PORT } from "@vonzio/shared";
 import type { ConcurrencyLimiter, VpnTunnelProvider } from "@vonzio/shared";
@@ -1086,6 +1087,7 @@ export class Orchestrator extends EventEmitter {
           reason,
           iteration,
           total_cost_usd: totalCost,
+          billing: usageBillingFor(profile.resolved_provider),
           verdict,
           ...(detail ? { detail } : {}),
         });
@@ -2142,6 +2144,9 @@ export class Orchestrator extends EventEmitter {
         throw new Error("Agent completed without producing a result");
       }
     }
+    // Flat-rate providers report a notional dollar figure; mark the turn so
+    // surfaces show tokens only (usageBillingFor in @vonzio/shared).
+    result.billing = usageBillingFor(profile.resolved_provider);
 
     return result;
     } finally {

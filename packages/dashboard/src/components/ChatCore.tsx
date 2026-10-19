@@ -23,8 +23,10 @@ export interface ChatMessage {
   timestamp: Date;
   images?: string[]; // base64 data URLs for display
   files?: Array<{ name: string; type: "image" | "document" }>; // all attachment metadata
-  /** Per-turn token usage + cost, attached to the assistant message on turn.done. */
-  usage?: { input_tokens: number; output_tokens: number; cost_usd: number };
+  /** Per-turn token usage + cost, attached to the assistant message on turn.done.
+   *  `billing: "flat"` (subscriptions, Ollama Cloud): cost_usd is a notional
+   *  estimate, so only tokens are shown. Absent on older turns → metered. */
+  usage?: { input_tokens: number; output_tokens: number; cost_usd: number; billing?: "metered" | "flat" };
   /** Acceptance criteria attached to a goal-mode user turn — rendered under
    *  the user bubble and persisted so they survive a refresh. */
   acceptanceCriteria?: string[];

@@ -144,20 +144,23 @@ export function setupWsHandler(
   orchestrator.on("task:goal_eval", (taskId: string, sessionId: string | undefined, info: { iteration: number; verdict: unknown }) => {
     relayToSubscribers(taskId, sessionId, { type: "goal_eval", task_id: taskId, session_id: sessionId, ...info });
   });
-  orchestrator.on("task:goal_stop", (taskId: string, sessionId: string | undefined, info: { reason: string; iteration: number; total_cost_usd: number; verdict?: unknown; detail?: string }) => {
+  orchestrator.on("task:goal_stop", (taskId: string, sessionId: string | undefined, info: { reason: string; iteration: number; total_cost_usd: number; billing?: string; verdict?: unknown; detail?: string }) => {
     relayToSubscribers(taskId, sessionId, { type: "goal_stop", task_id: taskId, session_id: sessionId, ...info });
   });
 
-  orchestrator.on("task:done", async (taskId: string, sessionId: string | undefined, result?: { text: string; input_tokens?: number; output_tokens?: number; cost_usd?: number }) => {
+  orchestrator.on("task:done", async (taskId: string, sessionId: string | undefined, result?: { text: string; input_tokens?: number; output_tokens?: number; cost_usd?: number; billing?: "metered" | "flat" }) => {
     if (sessionId) {
       const rawText = result?.text;
       // Per-turn usage for the dashboard (in/out tokens + cost). Persisted in the
       // log too so it survives replay/reload. Some providers (ollama/openai-compat)
       // may report 0 — the UI hides the footer when both token counts are 0.
+      // `billing: "flat"` (subscriptions, Ollama Cloud) tells the UI the cost
+      // is a notional estimate and to show tokens only.
       const usage = {
         input_tokens: result?.input_tokens ?? 0,
         output_tokens: result?.output_tokens ?? 0,
         cost_usd: result?.cost_usd ?? 0,
+        billing: result?.billing ?? "metered",
       };
       // Persist the RAW result text synchronously *before* awaiting the
       // image-signing roundtrip. Order matters: any follow-up event (next

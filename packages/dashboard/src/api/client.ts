@@ -67,6 +67,8 @@ export interface TaskResult {
   output_tokens: number;
   cost_usd: number;
   turns: number;
+  /** "flat" → cost_usd is a notional estimate (subscription / flat-rate plan). */
+  billing?: "metered" | "flat";
 }
 
 export interface TaskSummary {

@@ -717,7 +717,7 @@ function EventEntry({ event }: { event: SessionEvent }) {
 // ─── Task detail modal ────────────────────────────────────────────────
 
 function TaskModal({ task, onClose }: { task: TaskSummary; onClose: () => void }) {
-  type ResultShape = { text?: string; input_tokens?: number; output_tokens?: number; cost_usd?: number };
+  type ResultShape = { text?: string; input_tokens?: number; output_tokens?: number; cost_usd?: number; billing?: "metered" | "flat" };
   const result = task.result as unknown as ResultShape | undefined;
   return (
     <Modal
@@ -787,7 +787,7 @@ function TaskModal({ task, onClose }: { task: TaskSummary; onClose: () => void }
           <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--vz-muted-2)", fontFamily: "var(--vz-font-mono)", display: "flex", gap: 16 }}>
             <span>input: {result.input_tokens ?? 0}</span>
             <span>output: {result.output_tokens ?? 0}</span>
-            <span>cost: ${(result.cost_usd ?? 0).toFixed(4)}</span>
+            {result.billing !== "flat" && <span>cost: ${(result.cost_usd ?? 0).toFixed(4)}</span>}
           </div>
         </div>
       )}

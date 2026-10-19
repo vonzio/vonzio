@@ -859,7 +859,9 @@ async function handleToolCall(
         `Status: ${task.status}`,
         `Mode: ${task.mode}`,
         `Turns: ${task.result?.turns ?? 0}`,
-        `Cost: $${task.result?.cost_usd?.toFixed(4) ?? "0.0000"}`,
+        task.result?.billing === "flat"
+          ? `Tokens: ${task.result.input_tokens ?? 0} in / ${task.result.output_tokens ?? 0} out (flat-rate plan)`
+          : `Cost: $${task.result?.cost_usd?.toFixed(4) ?? "0.0000"}`,
       ];
       if (task.result?.text) lines.push(`Result: ${task.result.text.slice(0, 2000)}`);
       if (task.error) lines.push(`Error: ${task.error}`);
@@ -877,7 +879,7 @@ async function handleToolCall(
       if (tasks.length === 0) return toolResult("No tasks found.");
 
       const lines = tasks.map((t) =>
-        `${t.id} | ${t.status} | ${t.mode} | turns:${t.result?.turns ?? 0} | $${t.result?.cost_usd?.toFixed(4) ?? "0"} | ${t.created_at}`,
+        `${t.id} | ${t.status} | ${t.mode} | turns:${t.result?.turns ?? 0} | ${t.result?.billing === "flat" ? "flat-rate" : `$${t.result?.cost_usd?.toFixed(4) ?? "0"}`} | ${t.created_at}`,
       );
       return toolResult(`Tasks (${tasks.length}):\n${lines.join("\n")}`);
     }

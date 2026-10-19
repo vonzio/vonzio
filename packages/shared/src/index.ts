@@ -3,6 +3,7 @@ export {
   TASK_STATUSES,
   TASK_PRIORITIES,
   LOG_LEVELS,
+  usageBillingFor,
 } from "./types/task.js";
 
 export type {
@@ -11,6 +12,7 @@ export type {
   TaskPriority,
   Task,
   TaskResult,
+  UsageBilling,
   TaskAttachment,
   RetryPolicy,
   WorkspaceConfig,
