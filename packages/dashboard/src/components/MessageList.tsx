@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { Image, FileText, Loader2, Target, Check, Copy, BookOpen } from "lucide-react";
 import { type ChatMessage, ToolBlock, MarkdownContent, detectCSV, TableView, extractCitations } from "./ChatCore.js";
 import { ResponseFeedback } from "./ResponseFeedback.js";
+import { OfficeFileCards } from "./OfficeFileCards.js";
 import { DocViewerModal, type DocViewerTarget } from "./DocViewerModal.js";
 import {
   fetchProfileDocuments, fetchWorkspaceDocuments,
@@ -831,6 +832,10 @@ export function MessageList({
                   })}
                 </div>
               ) : null}
+              {/* Download cards for office documents the agent reports having
+                  produced (they're created via Bash, so the stated path is the
+                  only signal — see OfficeFileCards). */}
+              <OfficeFileCards text={cleanContent} containerId={containerId} />
               {msg.usage && (msg.usage.input_tokens > 0 || msg.usage.output_tokens > 0) && (
                 <div
                   className="flex items-center gap-2 mt-2"

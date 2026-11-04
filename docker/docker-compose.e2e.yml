@@ -35,6 +35,10 @@ services:
       # in scripts/e2e-chat.sh.
       - BETTER_AUTH_URL=http://localhost:5273
       - CORS_ORIGIN=http://localhost:5273,http://localhost:3100
+      # The mock round-trip needs a fraction of the 4g default, and the
+      # orchestrator's admission check rejects a 4g workspace when the host
+      # runs a dev stack beside this one. 2g keeps e2e green on dev machines.
+      - CONTAINER_MEMORY_LIMIT_SESSION=2g
 
 # Override the `vonzio` network KEY's name (base sets it to vonzio-network) so
 # this whole stack — server, postgres, proxy, mock-llm, AND the agent
